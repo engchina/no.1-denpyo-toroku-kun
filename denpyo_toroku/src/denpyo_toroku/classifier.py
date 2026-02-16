@@ -1,5 +1,5 @@
 """
-本番向け意図分類器
+本番向け伝票登録器
 エラーハンドリング、ロギング、性能監視、キャッシュを含む。
 """
 
@@ -129,7 +129,7 @@ def retry_on_failure(
 
 class ProductionIntentClassifier:
     """
-    本番向け意図分類器
+    本番向け伝票登録器
 
     特徴:
     - エラーハンドリング
@@ -152,7 +152,7 @@ class ProductionIntentClassifier:
                  cache_size: int = 10000,
                  enable_monitoring: bool = True):
         """
-        本番向け意図分類器を初期化する。
+        本番向け伝票登録器を初期化する。
 
         Args:
             config_path: OCI config file path
@@ -168,7 +168,7 @@ class ProductionIntentClassifier:
         """
         self._setup_logger(log_level, log_file)
         self.logger.info("=" * 70)
-        self.logger.info("本番向け意図分類器を初期化しています…")
+        self.logger.info("本番向け伝票登録器を初期化しています…")
         self.logger.info("=" * 70)
 
         try:

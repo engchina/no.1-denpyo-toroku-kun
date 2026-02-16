@@ -80,7 +80,7 @@ export function Header() {
       <header role="banner" id="aaiHeader" class="aaiLayout--item aaiLayout--item__span3">
         <div class="oj-flex-bar oj-sm-align-items-center" style={{ marginLeft: '1vw' }}>
           <div
-            aria-label="Oracle 意図分類くん"
+            aria-label="Oracle 伝票登録くん"
             aria-readonly="true"
             tabIndex={0}
             class="oj-flex-bar-middle oj-sm-align-items-baseline"
@@ -92,11 +92,11 @@ export function Header() {
               class="oj-icon oracle-icon"
             />
             <h1
-              title="意図分類くん"
+              title="伝票登録くん"
               aria-hidden="true"
               class="oj-sm-only-hide oj-web-applayout-header-title"
             >
-              意図分類くん
+              伝票登録くん
             </h1>
           </div>
         </div>

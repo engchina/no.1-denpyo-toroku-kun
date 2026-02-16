@@ -1,6 +1,6 @@
 /**
  * SideTabBar - 参照（AgentStudio）のレイアウトに合わせた常設サイドナビ。
- * グループ: 意図分類 / 設定
+ * グループ: 伝票登録 / 設定
  * 参照 MHTML に合わせて Lucide React のアイコンを使用。
  */
 import { h } from 'preact';

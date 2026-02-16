@@ -6,7 +6,7 @@
  * @ignore
  */
 /**
- * 意図分類サービスのメインアプリケーションコントローラー
+ * 伝票登録サービスのメインアプリケーションコントローラー
  * ナビゲーション、モジュール読み込み、グローバル状態を管理
  */
 define(['knockout', 'ojs/ojcontext', 'ojs/ojmodule-element-utils', 'ojs/ojknockouttemplateutils',

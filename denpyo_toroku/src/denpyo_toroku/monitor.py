@@ -1,4 +1,4 @@
-"""意図分類サービスの性能監視モジュール。"""
+"""伝票登録サービスの性能監視モジュール。"""
 
 import numpy as np
 import threading

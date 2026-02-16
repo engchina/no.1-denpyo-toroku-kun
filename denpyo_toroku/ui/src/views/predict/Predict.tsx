@@ -1103,7 +1103,7 @@ export function Predict() {
 
             <div class="predictView__inputMeta">
               <span class="oj-typography-body-sm oj-text-color-secondary">{singleText.trim().length} 文字</span>
-              <span class="oj-typography-body-sm oj-text-color-secondary">言語に依存しない意図分類</span>
+              <span class="oj-typography-body-sm oj-text-color-secondary">言語に依存しない伝票登録</span>
             </div>
 
             <div class="predictView__sampleRow">

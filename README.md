@@ -1,6 +1,6 @@
 # Intent Classifier Service
 
-OCI GenAI Embedding + GradientBoostingClassifier による意図分類サービス。  
+OCI GenAI Embedding + GradientBoostingClassifier による伝票登録サービス。  
 Flask / Gunicorn バックエンドと Oracle JET (Redwood) フロントエンドで構成。
 
 ---

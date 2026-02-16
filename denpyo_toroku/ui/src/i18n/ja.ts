@@ -1,7 +1,7 @@
 export const ja = {
   'app.aria.mainRegion': 'Oracle AI Database Private Agent Factory メイン領域',
 
-  'nav.section.intentClassifier': '意図分類',
+  'nav.section.intentClassifier': '伝票登録',
   'nav.section.settings': '設定',
   'nav.dashboard': 'ダッシュボード',
   'nav.statistics': '統計',
