@@ -1,0 +1,95 @@
+<div class="oj-sm-padding-2x-horizontal">
+    <div class="oj-flex oj-sm-justify-content-space-between oj-sm-align-items-center oj-sm-margin-4x-bottom">
+        <h4 class="oj-flex-item">Dashboard</h4>
+        <oj-button on-oj-action="[[refresh]]" chroming="callToAction">
+            <span slot="startIcon" class="oj-ux-ico-refresh"></span>
+            Refresh
+        </oj-button>
+    </div>
+
+    <!-- Service Status Card -->
+    <div class="oj-flex oj-sm-flex-wrap-wrap oj-sm-margin-2x-bottom" style="gap: 16px;">
+        <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 280px; flex: 1;">
+            <h5>Service Status</h5>
+            <div class="oj-sm-margin-2x-top">
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
+                    <span class="oj-text-secondary-color">Status:</span>
+                    <span :class="[[serviceStatusClass]]">
+                        <oj-bind-text value="[[serviceStatus]]"></oj-bind-text>
+                    </span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
+                    <span class="oj-text-secondary-color">Model Loaded:</span>
+                    <span>
+                        <oj-bind-if test="[[modelLoaded]]"><span class="span-green">Yes</span></oj-bind-if>
+                        <oj-bind-if test="[[!modelLoaded()]]"><span class="span-red">No</span></oj-bind-if>
+                    </span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
+                    <span class="oj-text-secondary-color">Version:</span>
+                    <span><oj-bind-text value="[[version]]"></oj-bind-text></span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between">
+                    <span class="oj-text-secondary-color">Uptime:</span>
+                    <span><oj-bind-text value="[[uptime]]"></oj-bind-text></span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-top">
+                    <span class="oj-text-secondary-color">Cache Enabled:</span>
+                    <span>
+                        <oj-bind-if test="[[cacheEnabled]]"><span class="span-green">Yes</span></oj-bind-if>
+                        <oj-bind-if test="[[!cacheEnabled()]]"><span class="span-red">No</span></oj-bind-if>
+                    </span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-top">
+                    <span class="oj-text-secondary-color">Monitoring Enabled:</span>
+                    <span>
+                        <oj-bind-if test="[[monitoringEnabled]]"><span class="span-green">Yes</span></oj-bind-if>
+                        <oj-bind-if test="[[!monitoringEnabled()]]"><span class="span-red">No</span></oj-bind-if>
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Performance Summary -->
+        <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 280px; flex: 1;">
+            <h5>Performance</h5>
+            <div class="oj-sm-margin-2x-top">
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
+                    <span class="oj-text-secondary-color">Total Predictions:</span>
+                    <span style="font-weight: 600;"><oj-bind-text value="[[totalPredictions]]"></oj-bind-text></span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
+                    <span class="oj-text-secondary-color">Total Errors:</span>
+                    <span><oj-bind-text value="[[totalErrors]]"></oj-bind-text></span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
+                    <span class="oj-text-secondary-color">Error Rate:</span>
+                    <span><oj-bind-text value="[[errorRate]]"></oj-bind-text></span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between">
+                    <span class="oj-text-secondary-color">Avg Prediction Time:</span>
+                    <span><oj-bind-text value="[[avgPredictionTime]]"></oj-bind-text></span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-top">
+                    <span class="oj-text-secondary-color">Avg Embedding Time:</span>
+                    <span><oj-bind-text value="[[avgEmbeddingTime]]"></oj-bind-text></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cache Summary -->
+        <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 280px; flex: 1;">
+            <h5>Cache</h5>
+            <div class="oj-sm-margin-2x-top">
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
+                    <span class="oj-text-secondary-color">Hit Rate:</span>
+                    <span style="font-weight: 600;"><oj-bind-text value="[[cacheHitRate]]"></oj-bind-text></span>
+                </div>
+                <div class="oj-flex oj-sm-justify-content-space-between">
+                    <span class="oj-text-secondary-color">Size:</span>
+                    <span><oj-bind-text value="[[cacheSize]]"></oj-bind-text></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

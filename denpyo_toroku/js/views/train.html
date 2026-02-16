@@ -1,0 +1,201 @@
+<div class="oj-sm-padding-2x-horizontal">
+    <div class="oj-flex oj-sm-justify-content-space-between oj-sm-align-items-center oj-sm-margin-4x-bottom">
+        <h4 class="oj-flex-item">Model Training</h4>
+        <div class="oj-flex" style="gap: 8px;">
+            <oj-button on-oj-action="[[reloadModel]]" chroming="outlined">
+                <span slot="startIcon" class="oj-ux-ico-refresh"></span>
+                Reload Model
+            </oj-button>
+        </div>
+    </div>
+
+    <!-- Success Message -->
+    <oj-bind-if test="[[successMessage()]]">
+        <div class="oj-sm-margin-2x-bottom" style="color: #28a745; font-weight: 600; padding: 8px; background: #d4edda; border-radius: 4px;">
+            <oj-bind-text value="[[successMessage]]"></oj-bind-text>
+        </div>
+    </oj-bind-if>
+
+    <!-- Error Message -->
+    <oj-bind-if test="[[errorMessage()]]">
+        <div class="oj-sm-margin-2x-bottom" style="color: #dc3545; font-weight: 600; padding: 8px; background: #f8d7da; border-radius: 4px;">
+            <oj-bind-text value="[[errorMessage]]"></oj-bind-text>
+        </div>
+    </oj-bind-if>
+
+    <div class="oj-flex oj-sm-flex-wrap-wrap" style="gap: 16px;">
+        <!-- Left: Training Data Input -->
+        <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 400px; flex: 2;">
+            <h5>Training Data</h5>
+            <p class="oj-text-secondary-color" style="font-size: 13px;">
+                Enter training data as JSON array. Each item: {"text": "...", "label": "..."}
+            </p>
+            <div class="oj-sm-margin-2x-top">
+                <oj-text-area style="width: 100%;"
+                    label-hint="Training Data (JSON)"
+                    value="{{trainingDataText}}"
+                    rows="12"
+                    placeholder='[{"text": "注文の配送状況を確認したい", "label": "order_tracking"}, ...]'>
+                </oj-text-area>
+            </div>
+            <div class="oj-flex oj-sm-margin-4x-top" style="gap: 8px;">
+                <oj-button on-oj-action="[[loadSampleData]]" chroming="outlined">
+                    <span slot="startIcon" class="oj-ux-ico-file-text"></span>
+                    Load Sample
+                </oj-button>
+                <oj-button on-oj-action="[[validateData]]" chroming="outlined">
+                    <span slot="startIcon" class="oj-ux-ico-check"></span>
+                    Validate Data
+                </oj-button>
+                <oj-button on-oj-action="[[clearAll]]" chroming="outlined">
+                    Clear
+                </oj-button>
+            </div>
+        </div>
+
+        <!-- Right: Parameters -->
+        <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 300px; flex: 1;">
+            <h5>Training Parameters</h5>
+            <div class="oj-sm-margin-4x-top">
+                <oj-input-number class="oj-sm-margin-2x-bottom" style="max-width: 250px;"
+                    label-hint="Test Size"
+                    value="{{testSize}}"
+                    min="0.05" max="0.5" step="0.05">
+                </oj-input-number>
+                <oj-input-number class="oj-sm-margin-2x-bottom" style="max-width: 250px;"
+                    label-hint="Number of Estimators"
+                    value="{{nEstimators}}"
+                    min="50" max="1000" step="50">
+                </oj-input-number>
+                <oj-input-number class="oj-sm-margin-2x-bottom" style="max-width: 250px;"
+                    label-hint="Learning Rate"
+                    value="{{learningRate}}"
+                    min="0.001" max="0.5" step="0.005">
+                </oj-input-number>
+                <oj-input-number class="oj-sm-margin-2x-bottom" style="max-width: 250px;"
+                    label-hint="Max Depth"
+                    value="{{maxDepth}}"
+                    min="2" max="15" step="1">
+                </oj-input-number>
+            </div>
+
+            <div class="oj-sm-margin-4x-top">
+                <oj-button on-oj-action="[[startTraining]]" chroming="callToAction"
+                    disabled="[[isTraining()]]">
+                    <span slot="startIcon" class="oj-ux-ico-education"></span>
+                    Start Training
+                </oj-button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Validation Indicator -->
+    <oj-bind-if test="[[isValidating()]]">
+        <div class="oj-sm-margin-4x-top" style="text-align: center;">
+            <oj-progress-circle size="md" value="-1"></oj-progress-circle>
+            <p class="oj-text-secondary-color">Validating data quality...</p>
+        </div>
+    </oj-bind-if>
+
+    <!-- Validation Results -->
+    <oj-bind-if test="[[validationResult() && !isValidating()]]">
+        <div class="oj-flex oj-sm-flex-wrap-wrap oj-sm-margin-4x-top" style="gap: 16px;">
+            <!-- Class Distribution -->
+            <oj-bind-if test="[[classDistribution().length > 0]]">
+                <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 300px; flex: 1;">
+                    <h5>Class Distribution
+                        (<oj-bind-text value="[[validationResult().total_samples]]"></oj-bind-text> samples,
+                        <oj-bind-text value="[[validationResult().num_classes]]"></oj-bind-text> classes)
+                    </h5>
+                    <oj-table class="oj-sm-margin-2x-top"
+                        aria-label="Class distribution"
+                        data="[[classDistributionProvider]]"
+                        columns='[{"headerText":"Label","field":"label","sortable":"enabled"},{"headerText":"Count","field":"count","sortable":"enabled","style":"width:80px"}]'
+                        style="width: 100%; max-width: 400px;">
+                    </oj-table>
+                </div>
+            </oj-bind-if>
+
+            <!-- Quality Issues -->
+            <oj-bind-if test="[[qualityIssues().length > 0]]">
+                <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 300px; flex: 1;">
+                    <h5 style="color: #dc3545;">Quality Issues</h5>
+                    <oj-table class="oj-sm-margin-2x-top"
+                        aria-label="Quality issues"
+                        data="[[qualityIssuesProvider]]"
+                        columns='[{"headerText":"#","field":"index","style":"width:40px"},{"headerText":"Issue","field":"description"}]'
+                        style="width: 100%;">
+                    </oj-table>
+                </div>
+            </oj-bind-if>
+        </div>
+    </oj-bind-if>
+
+    <!-- Training Progress -->
+    <oj-bind-if test="[[isTraining()]]">
+        <div class="oj-panel oj-sm-padding-4x oj-sm-margin-4x-top" style="text-align: center;">
+            <h5>Training in Progress</h5>
+            <oj-progress-circle class="oj-sm-margin-4x-top" size="lg" value="-1"></oj-progress-circle>
+            <p class="oj-text-secondary-color oj-sm-margin-2x-top" style="font-size: 14px;">
+                <oj-bind-text value="[[trainingProgress]]"></oj-bind-text>
+            </p>
+            <p class="oj-text-secondary-color" style="font-size: 12px;">
+                Training may take several minutes depending on data size...
+            </p>
+        </div>
+    </oj-bind-if>
+
+    <!-- Training Results -->
+    <oj-bind-if test="[[trainingResults() && !isTraining()]]">
+        <div class="oj-panel oj-sm-padding-4x oj-sm-margin-4x-top">
+            <div class="oj-flex oj-sm-justify-content-space-between oj-sm-align-items-center">
+                <h5>Training Results</h5>
+                <oj-bind-if test="[[trainingResults().quality_ok]]">
+                    <span class="span-green">Quality Passed</span>
+                </oj-bind-if>
+                <oj-bind-if test="[[!trainingResults().quality_ok]]">
+                    <span class="span-yellow">Quality Issues</span>
+                </oj-bind-if>
+            </div>
+
+            <!-- Key metrics -->
+            <div class="oj-flex oj-sm-flex-wrap-wrap oj-sm-margin-4x-top" style="gap: 16px;">
+                <div class="oj-panel oj-bg-neutral-10 oj-sm-padding-4x" style="flex: 1; min-width: 140px; text-align: center;">
+                    <div class="oj-text-secondary-color" style="font-size: 12px;">Train Accuracy</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #0572ce;">
+                        <oj-bind-text value="[[(trainingResults().train_accuracy * 100).toFixed(2) + '%']]"></oj-bind-text>
+                    </div>
+                </div>
+                <div class="oj-panel oj-bg-neutral-10 oj-sm-padding-4x" style="flex: 1; min-width: 140px; text-align: center;">
+                    <div class="oj-text-secondary-color" style="font-size: 12px;">Test Accuracy</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #0572ce;">
+                        <oj-bind-text value="[[(trainingResults().test_accuracy * 100).toFixed(2) + '%']]"></oj-bind-text>
+                    </div>
+                </div>
+                <div class="oj-panel oj-bg-neutral-10 oj-sm-padding-4x" style="flex: 1; min-width: 140px; text-align: center;">
+                    <div class="oj-text-secondary-color" style="font-size: 12px;">Overfitting Gap</div>
+                    <div style="font-size: 24px; font-weight: 700;">
+                        <oj-bind-text value="[[trainingResults().overfitting_gap.toFixed(4)]]"></oj-bind-text>
+                    </div>
+                </div>
+                <div class="oj-panel oj-bg-neutral-10 oj-sm-padding-4x" style="flex: 1; min-width: 140px; text-align: center;">
+                    <div class="oj-text-secondary-color" style="font-size: 12px;">Estimators Used</div>
+                    <div style="font-size: 24px; font-weight: 700;">
+                        <oj-bind-text value="[[trainingResults().n_estimators_used]]"></oj-bind-text>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Full details table -->
+            <oj-bind-if test="[[resultsDetails().length > 0]]">
+                <h6 class="oj-sm-margin-4x-top">Full Details</h6>
+                <oj-table class="oj-sm-margin-2x-top"
+                    aria-label="Training results details"
+                    data="[[resultsDetailsProvider]]"
+                    columns='[{"headerText":"Property","field":"name"},{"headerText":"Value","field":"value"}]'
+                    style="width: 100%; max-width: 600px;">
+                </oj-table>
+            </oj-bind-if>
+        </div>
+    </oj-bind-if>
+</div>

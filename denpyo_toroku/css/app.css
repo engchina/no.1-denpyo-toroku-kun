@@ -1,0 +1,125 @@
+/*
+    Intent Classifier Service - Application Styles
+    Based on Oracle JET Redwood Theme
+*/
+
+.sendOffScreen {
+    position: absolute;
+    left: -10000px;
+    top: auto;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
+.demo-oracle-icon {
+    width: 137px;
+    height: 18px;
+}
+
+.demo-appheader-avatar {
+    width: 24px;
+    height: 24px;
+}
+
+/* Status badges */
+.span-green {
+    background-color: #28a745 !important;
+    border-radius: 4px;
+    display: inline-block;
+    font-weight: 600;
+    padding: 5px;
+    color: white;
+}
+
+.span-red {
+    background-color: #dc3545 !important;
+    border-radius: 4px;
+    display: inline-block;
+    font-weight: 600;
+    padding: 5px;
+    color: white;
+}
+
+.span-blue {
+    background-color: #24a3a9 !important;
+    border-radius: 4px;
+    display: inline-block;
+    font-weight: 600;
+    padding: 5px;
+    color: white;
+}
+
+.span-yellow {
+    background-color: #ffc107 !important;
+    border-radius: 4px;
+    display: inline-block;
+    font-weight: 600;
+    padding: 5px;
+    color: #333;
+}
+
+/* Side menu button */
+.side-menu-btn {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    z-index: 100;
+}
+
+/* Main container */
+.main_container {
+    min-height: calc(100vh - 180px);
+}
+
+/* Tab menu adjustments */
+.tab-menu {
+    border-bottom: 1px solid var(--oj-core-divider-color, #dee2e6);
+}
+
+/* Panel styles */
+.oj-panel {
+    border-radius: 8px;
+    border: 1px solid var(--oj-core-divider-color, #dee2e6);
+}
+
+/* Popup styles */
+.demo-popup {
+    display: none;
+}
+
+.demo-popup-body {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.demo-popup-header {
+    align-self: flex-end;
+}
+
+.demo-popup-content {
+    align-self: stretch;
+    overflow: hidden;
+}
+
+.popup-table {
+    border-spacing: 10px;
+    border-collapse: separate;
+}
+
+.popup-table td {
+    padding: 10px;
+}
+
+/* Drawer style */
+.demo-drawer-start {
+    width: 280px;
+}
+
+/* Responsive overrides */
+@media (max-width: 768px) {
+    .main_container {
+        min-height: auto;
+    }
+}

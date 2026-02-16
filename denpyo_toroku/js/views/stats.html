@@ -1,0 +1,104 @@
+<div class="oj-sm-padding-2x-horizontal">
+    <div class="oj-flex oj-sm-justify-content-space-between oj-sm-align-items-center oj-sm-margin-4x-bottom">
+        <h4 class="oj-flex-item">Statistics</h4>
+        <div class="oj-flex" style="gap: 8px;">
+            <oj-button on-oj-action="[[clearCache]]" chroming="outlined">
+                <span slot="startIcon" class="oj-ux-ico-delete"></span>
+                Clear Cache
+            </oj-button>
+            <oj-button on-oj-action="[[refresh]]" chroming="callToAction">
+                <span slot="startIcon" class="oj-ux-ico-refresh"></span>
+                Refresh
+            </oj-button>
+        </div>
+    </div>
+
+    <div class="oj-text-secondary-color oj-sm-margin-2x-bottom">
+        Last Updated: <oj-bind-text value="[[lastUpdated]]"></oj-bind-text>
+    </div>
+
+    <div class="oj-flex oj-sm-flex-wrap-wrap" style="gap: 16px;">
+        <!-- Performance Metrics -->
+        <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 350px; flex: 1;">
+            <h5>Performance Metrics</h5>
+            <table class="popup-table oj-sm-margin-2x-top" style="width: 100%;">
+                <tr>
+                    <td class="oj-text-secondary-color">Total Predictions</td>
+                    <td style="font-weight: 600; text-align: right;"><oj-bind-text value="[[totalPredictions]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Total Errors</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[totalErrors]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Error Rate</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[errorRate]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Avg Prediction Time</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[avgPredictionTime]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">P95 Prediction Time</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[p95PredictionTime]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">P99 Prediction Time</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[p99PredictionTime]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Min Prediction Time</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[minPredictionTime]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Max Prediction Time</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[maxPredictionTime]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Avg Embedding Time</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[avgEmbeddingTime]]"></oj-bind-text></td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Cache Metrics -->
+        <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 350px; flex: 1;">
+            <h5>Cache Metrics</h5>
+            <table class="popup-table oj-sm-margin-2x-top" style="width: 100%;">
+                <tr>
+                    <td class="oj-text-secondary-color">Cache Hits</td>
+                    <td style="font-weight: 600; text-align: right;"><oj-bind-text value="[[cacheHits]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Cache Misses</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[cacheMisses]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Hit Rate</td>
+                    <td style="font-weight: 600; text-align: right;"><oj-bind-text value="[[cacheHitRate]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Cache Size</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[cacheSize]]"></oj-bind-text></td>
+                </tr>
+                <tr>
+                    <td class="oj-text-secondary-color">Max Size</td>
+                    <td style="text-align: right;"><oj-bind-text value="[[cacheMaxSize]]"></oj-bind-text></td>
+                </tr>
+            </table>
+        </div>
+    </div>
+
+    <!-- Intent Distribution Table -->
+    <oj-bind-if test="[[intentDistribution().length > 0]]">
+        <div class="oj-panel oj-sm-padding-4x oj-sm-margin-4x-top">
+            <h5>Intent Distribution</h5>
+            <oj-table class="oj-sm-margin-2x-top"
+                aria-label="Intent distribution"
+                data="[[intentDistributionProvider]]"
+                columns='[{"headerText":"Intent","field":"intent","sortable":"enabled"},{"headerText":"Count","field":"count","sortable":"enabled","style":"width:100px"}]'
+                style="width: 100%; max-width: 600px;">
+            </oj-table>
+        </div>
+    </oj-bind-if>
+</div>
