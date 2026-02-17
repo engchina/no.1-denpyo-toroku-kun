@@ -1,35 +1,35 @@
-# Intent Classifier Service のエラーコード定義
+# Denpyo Toroku Service のエラーコード定義
 
 # 内部エラー
 ERR_INTERNAL = 1000
 
-# モデル関連
-ERR_MODEL_NOT_LOADED = 2001
-ERR_MODEL_LOAD_FAILED = 2002
-ERR_MODEL_SAVE_FAILED = 2003
-ERR_MODEL_NOT_TRAINED = 2004
+# OCI Object Storage 関連
+ERR_STORAGE_UPLOAD_FAILED = 2001
+ERR_STORAGE_DOWNLOAD_FAILED = 2002
+ERR_STORAGE_DELETE_FAILED = 2003
+ERR_STORAGE_LIST_FAILED = 2004
+ERR_STORAGE_NOT_CONFIGURED = 2005
 
-# 埋め込み関連
-ERR_EMBEDDING_FAILED = 3001
-ERR_EMBEDDING_TIMEOUT = 3002
-ERR_EMBEDDING_INVALID_INPUT = 3003
+# AI 分析関連
+ERR_AI_ANALYSIS_FAILED = 3001
+ERR_AI_TIMEOUT = 3002
+ERR_AI_INVALID_INPUT = 3003
+ERR_AI_MODEL_NOT_AVAILABLE = 3004
 
-# 予測関連
-ERR_PREDICTION_FAILED = 4001
-ERR_PREDICTION_EMPTY_INPUT = 4002
-ERR_PREDICTION_BATCH_TOO_LARGE = 4003
+# データベース関連
+ERR_DB_CONNECTION_FAILED = 4001
+ERR_DB_QUERY_FAILED = 4002
+ERR_DB_TABLE_CREATE_FAILED = 4003
+ERR_DB_REGISTRATION_FAILED = 4004
 
-# 学習関連
-ERR_TRAINING_FAILED = 5001
-ERR_TRAINING_DATA_INVALID = 5002
-ERR_TRAINING_INSUFFICIENT_DATA = 5003
+# 伝票処理関連
+ERR_DENPYO_INVALID_FILE = 5001
+ERR_DENPYO_CLASSIFICATION_FAILED = 5002
+ERR_DENPYO_FIELD_EXTRACTION_FAILED = 5003
 
 # 設定関連
 ERR_CONFIG_INVALID = 6001
 ERR_OCI_CONFIG_MISSING = 6002
-
-# 分類器タイプ関連
-ERR_INVALID_CLASSIFIER_TYPE = 7001
 
 
 ERR_MESSAGES = {
@@ -39,82 +39,100 @@ ERR_MESSAGES = {
         "action": "詳細はログを確認してください。解決しない場合はサポートへ連絡してください。",
         "exit_code": 1
     },
-    ERR_MODEL_NOT_LOADED: {
-        "message": "モデルが読み込まれていません。",
-        "cause": "分類モデルがメモリに読み込まれていません。",
-        "action": "学習済みモデルを読み込むか、新しく学習してください。",
-        "exit_code": 1
-    },
-    ERR_MODEL_LOAD_FAILED: {
-        "message": "モデルの読み込みに失敗しました: {path}",
-        "cause": "モデルファイルを読み込めない、または破損している可能性があります。",
-        "action": "モデルファイルの存在と形式（pickle）を確認してください。",
-        "exit_code": 1
-    },
-    ERR_MODEL_SAVE_FAILED: {
-        "message": "モデルの保存に失敗しました: {path}",
-        "cause": "モデルをディスクに書き込めませんでした。",
-        "action": "ディスク容量と権限を確認してください。",
-        "exit_code": 1
-    },
-    ERR_MODEL_NOT_TRAINED: {
-        "message": "保存できる学習済みモデルがありません。",
-        "cause": "分類器がまだ学習されていません。",
-        "action": "保存する前に学習してください。",
-        "exit_code": 1
-    },
-    ERR_EMBEDDING_FAILED: {
-        "message": "埋め込みの取得に失敗しました: {error}",
-        "cause": "埋め込み API の呼び出しに失敗しました。",
+    ERR_STORAGE_UPLOAD_FAILED: {
+        "message": "ファイルのアップロードに失敗しました: {error}",
+        "cause": "OCI Object Storage へのアップロード中にエラーが発生しました。",
         "action": "OCI 設定とネットワーク接続を確認してください。",
         "exit_code": 1
     },
-    ERR_EMBEDDING_TIMEOUT: {
-        "message": "埋め込みリクエストがタイムアウトしました。",
-        "cause": "埋め込み API がタイムアウト時間内に応答しませんでした。",
-        "action": "タイムアウトを延長するか、バッチサイズを小さくしてください。",
+    ERR_STORAGE_DOWNLOAD_FAILED: {
+        "message": "ファイルのダウンロードに失敗しました: {error}",
+        "cause": "OCI Object Storage からのダウンロード中にエラーが発生しました。",
+        "action": "オブジェクト名とバケット設定を確認してください。",
         "exit_code": 1
     },
-    ERR_EMBEDDING_INVALID_INPUT: {
-        "message": "埋め込み入力が不正です: {error}",
-        "cause": "入力テキストが不正、または空です。",
-        "action": "入力が空でないことと文字コードを確認してください。",
+    ERR_STORAGE_DELETE_FAILED: {
+        "message": "ファイルの削除に失敗しました: {error}",
+        "cause": "OCI Object Storage のオブジェクト削除中にエラーが発生しました。",
+        "action": "オブジェクト名と権限を確認してください。",
         "exit_code": 1
     },
-    ERR_PREDICTION_FAILED: {
-        "message": "予測に失敗しました: {error}",
-        "cause": "予測処理中にエラーが発生しました。",
-        "action": "入力データとモデル状態を確認してください。",
+    ERR_STORAGE_LIST_FAILED: {
+        "message": "ファイル一覧の取得に失敗しました: {error}",
+        "cause": "OCI Object Storage のオブジェクト一覧取得中にエラーが発生しました。",
+        "action": "バケット設定と権限を確認してください。",
         "exit_code": 1
     },
-    ERR_PREDICTION_EMPTY_INPUT: {
-        "message": "予測対象のテキストが指定されていません。",
-        "cause": "予測リクエストのテキスト一覧が空です。",
-        "action": "少なくとも 1 件のテキストを指定してください。",
+    ERR_STORAGE_NOT_CONFIGURED: {
+        "message": "OCI Object Storage が設定されていません。",
+        "cause": "バケット名またはネームスペースが未設定です。",
+        "action": "OCI_BUCKET と OCI_NAMESPACE 環境変数を設定してください。",
         "exit_code": 1
     },
-    ERR_PREDICTION_BATCH_TOO_LARGE: {
-        "message": "バッチサイズ {size} は上限 {max_size} を超えています。",
-        "cause": "1 回の予測リクエストに含まれるテキストが多すぎます。",
-        "action": "テキスト数を減らすか、複数回に分割してください。",
+    ERR_AI_ANALYSIS_FAILED: {
+        "message": "AI 分析に失敗しました: {error}",
+        "cause": "Generative AI API の呼び出し中にエラーが発生しました。",
+        "action": "OCI 設定とモデル ID を確認してください。",
         "exit_code": 1
     },
-    ERR_TRAINING_FAILED: {
-        "message": "学習に失敗しました: {error}",
-        "cause": "モデル学習中にエラーが発生しました。",
-        "action": "学習データとパラメータを確認してください。",
+    ERR_AI_TIMEOUT: {
+        "message": "AI 分析がタイムアウトしました。",
+        "cause": "Generative AI API がタイムアウト時間内に応答しませんでした。",
+        "action": "リトライするか、画像サイズを小さくしてください。",
         "exit_code": 1
     },
-    ERR_TRAINING_DATA_INVALID: {
-        "message": "学習データ形式が不正です。",
-        "cause": "学習データが期待する形式と一致しません。",
-        "action": "（text, label）の組の一覧であることを確認してください。",
+    ERR_AI_INVALID_INPUT: {
+        "message": "AI 分析の入力が不正です: {error}",
+        "cause": "入力ファイルが不正、または対応していない形式です。",
+        "action": "対応ファイル形式（PDF, JPEG, PNG）を確認してください。",
         "exit_code": 1
     },
-    ERR_TRAINING_INSUFFICIENT_DATA: {
-        "message": "学習データが不足しています: {count} 件（最小: {minimum} 件）。",
-        "cause": "信頼できるモデルを作るにはサンプル数が足りません。",
-        "action": "少数クラスのデータを中心に追加してください。",
+    ERR_AI_MODEL_NOT_AVAILABLE: {
+        "message": "AI モデルが利用できません: {model}",
+        "cause": "指定されたモデルが使用できない状態です。",
+        "action": "モデル ID と OCI リージョンを確認してください。",
+        "exit_code": 1
+    },
+    ERR_DB_CONNECTION_FAILED: {
+        "message": "データベース接続に失敗しました: {error}",
+        "cause": "Oracle Database への接続中にエラーが発生しました。",
+        "action": "接続文字列、Wallet、データベースの状態を確認してください。",
+        "exit_code": 1
+    },
+    ERR_DB_QUERY_FAILED: {
+        "message": "クエリの実行に失敗しました: {error}",
+        "cause": "SQL クエリの実行中にエラーが発生しました。",
+        "action": "SQL 文とテーブル構造を確認してください。",
+        "exit_code": 1
+    },
+    ERR_DB_TABLE_CREATE_FAILED: {
+        "message": "テーブルの作成に失敗しました: {error}",
+        "cause": "DDL の実行中にエラーが発生しました。",
+        "action": "テーブル名と権限を確認してください。",
+        "exit_code": 1
+    },
+    ERR_DB_REGISTRATION_FAILED: {
+        "message": "伝票の登録に失敗しました: {error}",
+        "cause": "伝票データのデータベース登録中にエラーが発生しました。",
+        "action": "データ形式とテーブル構造を確認してください。",
+        "exit_code": 1
+    },
+    ERR_DENPYO_INVALID_FILE: {
+        "message": "無効なファイルです: {error}",
+        "cause": "アップロードされたファイルが処理できません。",
+        "action": "対応ファイル形式（PDF, JPEG, PNG）と最大サイズを確認してください。",
+        "exit_code": 1
+    },
+    ERR_DENPYO_CLASSIFICATION_FAILED: {
+        "message": "伝票の分類に失敗しました: {error}",
+        "cause": "AI による伝票種別の判定中にエラーが発生しました。",
+        "action": "画像の品質と AI 設定を確認してください。",
+        "exit_code": 1
+    },
+    ERR_DENPYO_FIELD_EXTRACTION_FAILED: {
+        "message": "フィールド抽出に失敗しました: {error}",
+        "cause": "AI による伝票フィールドの読み取り中にエラーが発生しました。",
+        "action": "画像の品質を確認してください。",
         "exit_code": 1
     },
     ERR_CONFIG_INVALID: {
@@ -127,12 +145,6 @@ ERR_MESSAGES = {
         "message": "OCI 設定ファイルが見つかりません: {path}",
         "cause": "OCI 設定ファイルが存在しません。",
         "action": "OCI 設定ファイルを作成するか、OCI_CONFIG_PATH 環境変数を設定してください。",
-        "exit_code": 1
-    },
-    ERR_INVALID_CLASSIFIER_TYPE: {
-        "message": "分類器タイプの指定が不正です。",
-        "cause": "指定された分類器タイプはサポートされていません。",
-        "action": "サポートされる分類器タイプ（例: 'GradientBoosting', 'LogisticRegression'）を指定してください。",
         "exit_code": 1
     },
 }

@@ -33,33 +33,8 @@ denpyo_toroku_import.register_blueprints(app)
 denpyo_toroku_import.register_global_middlewares(app)
 denpyo_toroku_import.register_error_handlers(app)
 
-# Initialize classifier (lazy - will be None until model is loaded)
-app.classifier = None
-
-# Try to initialize classifier if OCI config is available
-try:
-    model_path = AppConfig.MODEL_PATH
-    if os.path.exists(model_path):
-        from denpyo_toroku.src.denpyo_toroku.classifier import ProductionIntentClassifier
-        classifier = ProductionIntentClassifier(
-            config_path=AppConfig.OCI_CONFIG_PATH,
-            profile=AppConfig.OCI_CONFIG_PROFILE,
-            service_endpoint=AppConfig.OCI_SERVICE_ENDPOINT,
-            compartment_id=AppConfig.OCI_CONFIG_COMPARTMENT,
-            embedding_model_id=AppConfig.EMBEDDING_MODEL_ID,
-            log_level=AppConfig.LOG_LEVEL,
-            enable_cache=AppConfig.ENABLE_CACHE,
-            cache_size=AppConfig.CACHE_SIZE,
-            enable_monitoring=True
-        )
-        classifier.load_model(model_path)
-        app.classifier = classifier
-        logging.info("Intent classifier initialized and model loaded from %s", model_path)
-    else:
-        logging.warning("Model file not found at %s - classifier not initialized", model_path)
-except Exception as e:
-    logging.warning("Failed to initialize classifier: %s", e)
-    logging.info("Service will start without a loaded model. Use the training script to create one.")
+# Initialize services (lazy - will be created on first use)
+app.services = {}
 
 
 webapp_port = os.environ.get("WEBAPP_PORT", None)

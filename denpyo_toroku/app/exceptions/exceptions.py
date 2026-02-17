@@ -1,6 +1,6 @@
 """Denpyo Toroku Service の例外定義。
 
-IntentServiceError はサービスの各種エラーで送出され、エラー内容・原因・推奨対処を整形して返す。
+DenpyoServiceError はサービスの各種エラーで送出され、エラー内容・原因・推奨対処を整形して返す。
 """
 
 import os
@@ -8,8 +8,8 @@ import os
 from denpyo_toroku.app.exceptions.errors import ERR_MESSAGES, ERR_INTERNAL
 
 
-class IntentServiceError(Exception):
-    """Intent Classifier Service のエラー例外。"""
+class DenpyoServiceError(Exception):
+    """Denpyo Toroku Service のエラー例外。"""
 
     def __init__(self, err_num: int, err_params: dict = None) -> None:
         """指定されたエラー番号の例外を送出する。
@@ -23,7 +23,7 @@ class IntentServiceError(Exception):
             self.message = self._format_error_message(
                 ERR_INTERNAL,
                 params={
-                    "error": "不明なエラーコードに対して IntentServiceError が送出されました。"
+                    "error": "不明なエラーコードに対して DenpyoServiceError が送出されました。"
                 }
             )
             self.exit_code = 1
@@ -43,7 +43,7 @@ class IntentServiceError(Exception):
         Returns:
             str: Formatted error message.
         """
-        err_id = f"ICS-{str(err_num).rjust(4, '0')}:"
+        err_id = f"DTS-{str(err_num).rjust(4, '0')}:"
         cause_id = "原因:"
         action_id = "対処:"
         err_data = ERR_MESSAGES[err_num]

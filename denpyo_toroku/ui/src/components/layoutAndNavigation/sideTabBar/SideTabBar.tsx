@@ -11,11 +11,11 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   LayoutDashboard,
-  Send,
-  GraduationCap,
-  BarChart3,
-  Cpu,
-  Database
+  Database,
+  Upload,
+  FileText,
+  Tags,
+  Search
 } from 'lucide-react';
 
 type TKey = Parameters<typeof t>[0];
@@ -33,13 +33,13 @@ interface NavGroup {
 
 const navGroups: NavGroup[] = [
   {
-    labelKey: 'nav.section.intentClassifier',
+    labelKey: 'nav.section.denpyo',
     items: [
       { id: 'dashboard', nameKey: 'nav.dashboard', Icon: LayoutDashboard },
-      { id: 'stats', nameKey: 'nav.statistics', Icon: BarChart3 },
-      { id: 'predict', nameKey: 'nav.predict', Icon: Send },
-      { id: 'train', nameKey: 'nav.training', Icon: GraduationCap },
-      { id: 'modelInfo', nameKey: 'nav.modelInfo', Icon: Cpu }
+      { id: 'upload', nameKey: 'nav.upload', Icon: Upload },
+      { id: 'fileList', nameKey: 'nav.fileList', Icon: FileText },
+      { id: 'categoryManagement', nameKey: 'nav.categoryManagement', Icon: Tags },
+      { id: 'search', nameKey: 'nav.dataSearch', Icon: Search }
     ]
   },
   {

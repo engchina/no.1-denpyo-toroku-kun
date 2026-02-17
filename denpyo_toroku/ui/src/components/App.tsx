@@ -13,12 +13,14 @@ import { SideTabBar } from './layoutAndNavigation/sideTabBar/SideTabBar';
 import { Footer } from './layoutAndNavigation/footer/Footer';
 import { WelcomeView } from '../views/welcome/WelcomeView';
 import { Dashboard } from '../views/dashboard/Dashboard';
-import { Predict } from '../views/predict/Predict';
-import { Train } from '../views/train/Train';
-import { Stats } from '../views/stats/Stats';
-import { ModelInfo } from '../views/modelInfo/ModelInfo';
 import { ApplicationSettings } from '../views/applicationSettings/ApplicationSettings';
 import { DatabaseSettings } from '../views/databaseSettings/DatabaseSettings';
+import { UploadView } from '../views/upload/UploadView';
+import { ListView } from '../views/fileList/ListView';
+import { AnalysisView } from '../views/analysis/AnalysisView';
+import { RegistrationView } from '../views/registration/RegistrationView';
+import { CategoryView } from '../views/category/CategoryView';
+import { SearchView } from '../views/search/SearchView';
 import { NotificationContainer } from './NotificationContainer';
 import { LoginView } from '../views/login/LoginView';
 import { setAuthenticated, setUserName } from '../redux/slices/applicationSlice';
@@ -34,20 +36,24 @@ function ViewSwitcher() {
       return <WelcomeView />;
     case 'dashboard':
       return <Dashboard />;
-    case 'predict':
-      return <Predict />;
-    case 'train':
-      return <Train />;
-    case 'stats':
-      return <Stats />;
-    case 'modelInfo':
-      return <ModelInfo />;
+    case 'upload':
+      return <UploadView />;
+    case 'fileList':
+      return <ListView />;
+    case 'analysis':
+      return <AnalysisView />;
+    case 'registration':
+      return <RegistrationView />;
+    case 'categoryManagement':
+      return <CategoryView />;
+    case 'search':
+      return <SearchView />;
     case 'applicationSettings':
       return <ApplicationSettings />;
     case 'databaseSettings':
       return <DatabaseSettings />;
     default:
-      return <WelcomeView />;
+      return <Dashboard />;
   }
 }
 

@@ -2,7 +2,6 @@ import configparser
 import logging
 import time
 import json
-import threading
 import os
 import shutil
 import tempfile
@@ -10,10 +9,9 @@ import zipfile
 import datetime as dt
 import hashlib
 import re
-import statistics
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional
 from flask import Blueprint, request, jsonify, g, current_app, make_response, session, redirect
 from dotenv import load_dotenv
 try:
@@ -44,24 +42,6 @@ if Counter is not None and Histogram is not None:
 else:
     REQUEST_COUNT = None
     REQUEST_LATENCY_SECONDS = None
-
-# 学習データのインメモリストア（リクエスト間で共有）
-_training_data_store = []
-
-# 学習データファイルパス（固定ファイル名）
-_TRAINING_DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "data", "training_data.xlsx")
-
-# 学習状態（モジュール変数としてリクエスト間で共有）
-_training_state = {
-    'status': 'idle',       # idle | running | completed | failed
-    'progress': '',
-    'results': None,
-    'error': None,
-    'started_at': None,
-    'finished_at': None,
-    'previous_model_summary': None
-}
-_training_state_lock = threading.Lock()
 
 _default_auth_username = os.environ.get("DENPYO_TOROKU_LOGIN_USERNAME", "admin")
 _default_auth_password = os.environ.get("DENPYO_TOROKU_LOGIN_PASSWORD", "admin")
@@ -766,355 +746,6 @@ def _upload_database_wallet(uploaded_file: Any) -> Dict[str, Any]:
             pass
 
 
-def _sanitize_training_items(training_data: Any) -> Tuple[List[Dict[str, str]], Dict[str, int]]:
-    """Normalize raw training data and return accepted items plus rejection stats."""
-    accepted: List[Dict[str, str]] = []
-    stats = {
-        "invalid_item_count": 0,
-        "missing_field_count": 0,
-        "empty_text_count": 0,
-        "empty_label_count": 0,
-    }
-
-    if not isinstance(training_data, list):
-        return accepted, stats
-
-    for item in training_data:
-        if not isinstance(item, dict):
-            stats["invalid_item_count"] += 1
-            continue
-        if "text" not in item or "label" not in item:
-            stats["missing_field_count"] += 1
-            continue
-
-        text_val = str(item.get("text", "")).strip()
-        label_val = str(item.get("label", "")).strip()
-        if not text_val:
-            stats["empty_text_count"] += 1
-            continue
-        if not label_val:
-            stats["empty_label_count"] += 1
-            continue
-
-        accepted.append({"text": text_val, "label": label_val})
-
-    return accepted, stats
-
-
-def _ordered_class_distribution(labels: List[str]) -> Dict[str, int]:
-    counts: Dict[str, int] = {}
-    for label in labels:
-        counts[label] = counts.get(label, 0) + 1
-    ordered_items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return {k: v for k, v in ordered_items}
-
-
-def _compute_text_length_stats(texts: List[str]) -> Dict[str, float]:
-    if not texts:
-        return {
-            "avg": 0.0,
-            "median": 0.0,
-            "p95": 0.0,
-            "min": 0.0,
-            "max": 0.0
-        }
-
-    lengths = sorted(len(t) for t in texts)
-    p95_idx = min(len(lengths) - 1, int(round((len(lengths) - 1) * 0.95)))
-    return {
-        "avg": float(round(sum(lengths) / len(lengths), 2)),
-        "median": float(round(statistics.median(lengths), 2)),
-        "p95": float(lengths[p95_idx]),
-        "min": float(lengths[0]),
-        "max": float(lengths[-1])
-    }
-
-
-def _build_training_profile(training_data: List[Dict[str, str]]) -> Dict[str, Any]:
-    """学習データの品質プロファイルと推奨設定を算出する。"""
-    texts = [str(item["text"]).strip() for item in training_data]
-    labels = [str(item["label"]).strip() for item in training_data]
-    total_samples = len(texts)
-    class_distribution = _ordered_class_distribution(labels)
-    num_classes = len(class_distribution)
-    min_class_count = min(class_distribution.values()) if class_distribution else 0
-    max_class_count = max(class_distribution.values()) if class_distribution else 0
-    imbalance_ratio = (max_class_count / min_class_count) if min_class_count > 0 else 0.0
-
-    normalized_texts = [" ".join(t.lower().split()) for t in texts]
-    unique_texts = len(set(normalized_texts))
-    duplicate_count = max(0, total_samples - unique_texts)
-    duplicate_ratio = (duplicate_count / total_samples) if total_samples > 0 else 0.0
-    short_text_count = sum(1 for t in texts if len(t) < 4)
-    long_text_count = sum(1 for t in texts if len(t) > 300)
-    text_length_stats = _compute_text_length_stats(texts)
-
-    issue_details: List[Dict[str, str]] = []
-    recommendations: List[str] = []
-
-    if total_samples < 20:
-        issue_details.append({
-            "level": "error",
-            "message": "サンプル数が 20 件未満のため、モデル品質が不安定になる可能性があります。"
-        })
-        recommendations.append("ベースライン品質のため、総サンプル数を少なくとも 100 件まで増やしてください。")
-    elif total_samples < 100:
-        issue_details.append({
-            "level": "warning",
-            "message": "サンプル数が少ないため、再学習ごとに指標が変動しやすいです。"
-        })
-        recommendations.append("重要な意図ごとに少なくとも 50 件のサンプルを目安にしてください。")
-
-    if num_classes < 2:
-        issue_details.append({
-            "level": "error",
-            "message": "学習には少なくとも 2 つ以上のクラスが必要です。"
-        })
-    elif num_classes < 4:
-        issue_details.append({
-            "level": "info",
-            "message": "クラス数が少ないため、過学習に注意して監視してください。"
-        })
-
-    rare_classes = [k for k, v in class_distribution.items() if v < 5]
-    critical_classes = [k for k, v in class_distribution.items() if v < 2]
-    if critical_classes:
-        issue_details.append({
-            "level": "error",
-            "message": "2 件未満のサンプルしかないクラスがあります: %s" % ", ".join(critical_classes[:5])
-        })
-        recommendations.append("層化検証を有効にするため、2 件未満のクラスにサンプルを追加してください。")
-    elif rare_classes:
-        issue_details.append({
-            "level": "warning",
-            "message": "サンプルが少ないクラス（5 件未満）: %s" % ", ".join(rare_classes[:6])
-        })
-        recommendations.append("少数クラスの例を増やして再現率の改善を図ってください。")
-
-    if imbalance_ratio >= 6:
-        issue_details.append({
-            "level": "warning",
-            "message": "クラスの偏りが大きいです（%.1f:1）。" % imbalance_ratio
-        })
-        recommendations.append("クラスのリバランスを有効にし、少数クラスのデータを重点的に追加してください。")
-    elif imbalance_ratio >= 3:
-        issue_details.append({
-            "level": "info",
-            "message": "クラスの偏りが見られます（%.1f:1）。" % imbalance_ratio
-        })
-        recommendations.append("少数クラスに対してバランス・アップサンプルを検討してください。")
-
-    if duplicate_ratio >= 0.2:
-        issue_details.append({
-            "level": "warning",
-            "message": "テキスト重複率が高いです（%.1f%%）。" % (duplicate_ratio * 100)
-        })
-        recommendations.append("過学習を避けるため、重複テキストを削除してください。")
-    elif duplicate_count > 0:
-        issue_details.append({
-            "level": "info",
-            "message": "重複テキストを %d 件検出しました。" % duplicate_count
-        })
-
-    if short_text_count > 0:
-        issue_details.append({
-            "level": "info",
-            "message": "短すぎるテキスト（4 文字未満）が %d 件あります（曖昧になりやすい）。" % short_text_count
-        })
-    if long_text_count > 0:
-        issue_details.append({
-            "level": "info",
-            "message": "長すぎるテキスト（300 文字超）を %d 件検出しました。意図の例は簡潔にすることを検討してください。" % long_text_count
-        })
-
-    # ヒューリスティックな健全性スコア（0〜100）
-    health_score = 100.0
-    if total_samples < 100:
-        health_score -= min(25.0, (100 - total_samples) * 0.25)
-    if num_classes < 2:
-        health_score -= 40.0
-    if min_class_count < 5:
-        health_score -= min(20.0, (5 - min_class_count) * 4.0)
-    if imbalance_ratio > 3:
-        health_score -= min(20.0, (imbalance_ratio - 3.0) * 4.0)
-    health_score -= min(15.0, duplicate_ratio * 100.0 * 0.5)
-    if short_text_count > total_samples * 0.15 and total_samples > 0:
-        health_score -= 5.0
-    health_score = max(0.0, min(100.0, health_score))
-    health_score = float(round(health_score, 1))
-
-    readiness = "high" if health_score >= 80 else ("medium" if health_score >= 60 else "low")
-    quality_gate_passed = (
-        total_samples >= 20 and
-        num_classes >= 2 and
-        min_class_count >= 2
-    )
-
-    # データセット診断に基づく推奨パラメータ
-    suggested = {
-        "test_size": 0.15,
-        "n_estimators": 300,
-        "learning_rate": 0.05,
-        "max_depth": 6,
-        "algorithm_strategy": "auto",
-        "compare_baselines": True,
-        "auto_tune": total_samples >= 120,
-        "rebalance_strategy": "balanced_upsample" if imbalance_ratio >= 3 else "none"
-    }
-    if total_samples < 120:
-        suggested["test_size"] = 0.2
-        suggested["n_estimators"] = 200
-        suggested["max_depth"] = 4
-        suggested["learning_rate"] = 0.07
-        suggested["auto_tune"] = False
-    elif total_samples > 6000:
-        suggested["test_size"] = 0.12
-        suggested["n_estimators"] = 450
-        suggested["max_depth"] = 7
-        suggested["learning_rate"] = 0.04
-        suggested["auto_tune"] = True
-
-    if num_classes >= 20:
-        suggested["max_depth"] = min(int(suggested["max_depth"]), 6)
-        suggested["compare_baselines"] = True
-
-    # API 制約に合わせてクランプ
-    suggested["test_size"] = float(max(0.05, min(0.40, suggested["test_size"])))
-    suggested["n_estimators"] = int(max(50, min(1000, suggested["n_estimators"])))
-    suggested["learning_rate"] = float(max(0.01, min(0.30, suggested["learning_rate"])))
-    suggested["max_depth"] = int(max(2, min(10, suggested["max_depth"])))
-
-    if quality_gate_passed and not recommendations:
-        recommendations.append("データ品質は良好です。学習を進め、結果の Macro-F1 を監視してください。")
-    if not quality_gate_passed:
-        recommendations.append("不安定なモデルを避けるため、学習開始前にブロッカーとなるデータ問題を解消してください。")
-
-    return {
-        "total_samples": total_samples,
-        "num_classes": num_classes,
-        "class_distribution": class_distribution,
-        "class_distribution_percent": {
-            k: float(round((v / total_samples) * 100, 2)) if total_samples > 0 else 0.0
-            for k, v in class_distribution.items()
-        },
-        "min_class_count": min_class_count,
-        "max_class_count": max_class_count,
-        "imbalance_ratio": float(round(imbalance_ratio, 2)) if imbalance_ratio else 0.0,
-        "duplicate_count": duplicate_count,
-        "duplicate_ratio": float(round(duplicate_ratio, 4)),
-        "short_text_count": short_text_count,
-        "long_text_count": long_text_count,
-        "text_length_stats": text_length_stats,
-        "health_score": health_score,
-        "readiness": readiness,
-        "quality_gate_passed": quality_gate_passed,
-        "issue_details": issue_details,
-        "issues": [item["message"] for item in issue_details],
-        "recommendations": recommendations,
-        "suggested_params": suggested
-    }
-
-
-def _to_optional_float(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _extract_previous_model_summary(classifier: Any) -> Optional[Dict[str, Any]]:
-    """読み込み済み分類器から、比較用の前回モデル要約を抽出する。"""
-    if classifier is None or getattr(classifier, "classifier", None) is None:
-        return None
-
-    training_summary = getattr(classifier, "last_training_summary", None)
-    if not isinstance(training_summary, dict):
-        return None
-
-    previous = {
-        "algorithm": getattr(classifier, "algorithm_name", None),
-        "model_timestamp": getattr(classifier, "model_timestamp", None),
-        "test_accuracy": _to_optional_float(training_summary.get("test_accuracy")),
-        "test_macro_f1": _to_optional_float(training_summary.get("test_macro_f1")),
-        "test_weighted_f1": _to_optional_float(training_summary.get("test_weighted_f1")),
-        "overfitting_gap": _to_optional_float(training_summary.get("overfitting_gap")),
-        "selection_score": _to_optional_float(training_summary.get("selection_score")),
-    }
-
-    # 比較対象の指標がない場合は利用不可とする
-    comparable_exists = any(
-        previous[k] is not None
-        for k in ("test_accuracy", "test_macro_f1", "overfitting_gap", "selection_score")
-    )
-    return previous if comparable_exists else None
-
-
-def _build_model_comparison(previous: Optional[Dict[str, Any]], current: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Build metric deltas between current result and previous model summary."""
-    if not previous:
-        return None
-
-    curr_acc = _to_optional_float(current.get("test_accuracy"))
-    curr_macro_f1 = _to_optional_float(current.get("test_macro_f1"))
-    curr_gap = _to_optional_float(current.get("overfitting_gap"))
-    curr_score = _to_optional_float(current.get("selection_score"))
-
-    prev_acc = _to_optional_float(previous.get("test_accuracy"))
-    prev_macro_f1 = _to_optional_float(previous.get("test_macro_f1"))
-    prev_gap = _to_optional_float(previous.get("overfitting_gap"))
-    prev_score = _to_optional_float(previous.get("selection_score"))
-
-    acc_delta = (curr_acc - prev_acc) if curr_acc is not None and prev_acc is not None else None
-    macro_delta = (curr_macro_f1 - prev_macro_f1) if curr_macro_f1 is not None and prev_macro_f1 is not None else None
-    gap_delta = (curr_gap - prev_gap) if curr_gap is not None and prev_gap is not None else None
-    score_delta = (curr_score - prev_score) if curr_score is not None and prev_score is not None else None
-
-    improvement_signals = 0
-    regression_signals = 0
-    if acc_delta is not None:
-        if acc_delta > 0.003:
-            improvement_signals += 1
-        elif acc_delta < -0.003:
-            regression_signals += 1
-    if macro_delta is not None:
-        if macro_delta > 0.003:
-            improvement_signals += 2
-        elif macro_delta < -0.003:
-            regression_signals += 2
-    if gap_delta is not None:
-        if gap_delta < -0.01:
-            improvement_signals += 1
-        elif gap_delta > 0.01:
-            regression_signals += 1
-    if score_delta is not None:
-        if score_delta > 0.003:
-            improvement_signals += 2
-        elif score_delta < -0.003:
-            regression_signals += 2
-
-    improved = improvement_signals > regression_signals
-    if improvement_signals == regression_signals:
-        improved = None
-
-    if improved is True:
-        summary = "Current model appears better than previous model."
-    elif improved is False:
-        summary = "Current model appears weaker than previous model."
-    else:
-        summary = "Current model is similar to previous model."
-
-    return {
-        "improved": improved,
-        "summary": summary,
-        "test_accuracy_delta": acc_delta,
-        "test_macro_f1_delta": macro_delta,
-        "overfitting_gap_delta": gap_delta,
-        "selection_score_delta": score_delta
-    }
-
-
 @api_blueprint.before_request
 def before_request():
     g.response = Response()
@@ -1465,14 +1096,11 @@ def upload_database_wallet():
 def get_version():
     """Version endpoint."""
     g.response.set_data({
-        "service": "Intent Classifier Service",
+        "service": "Denpyo Toroku Service",
         "version": "1.0.0",
         "status": "running",
         "endpoints": {
-            "predict": "/api/v1/predict",
-            "predict_single": "/api/v1/predict/single",
             "health": "/api/v1/health",
-            "stats": "/api/v1/stats",
             "oci_settings_get": "/api/v1/oci/settings",
             "oci_settings_save": "/api/v1/oci/settings",
             "oci_test": "/api/v1/oci/test",
@@ -1481,13 +1109,8 @@ def get_version():
             "db_settings_env": "/api/v1/database/settings/env",
             "db_settings_test": "/api/v1/database/settings/test",
             "db_wallet_upload": "/api/v1/database/settings/wallet",
-            "model_info": "/api/v1/model/info",
-            "model_reload": "/api/v1/model/reload",
-            "cache_clear": "/api/v1/cache/clear",
-            "train": "/api/v1/train",
-            "train_validate": "/api/v1/train/validate",
-            "train_profile": "/api/v1/train/profile",
-            "train_status": "/api/v1/train/status",
+            "dashboard_stats": "/api/v1/dashboard/stats",
+            "database_init": "/api/v1/database/init",
             "docs": "/"
         }
     })
@@ -1497,24 +1120,839 @@ def get_version():
 @api_blueprint.route("/api/v1/health", methods=["GET"])
 def health_check():
     """Health check endpoint."""
-    classifier = current_app.classifier
-    if classifier is None:
-        # Return basic health even without classifier
+    g.response.set_data({
+        "status": "healthy",
+        "message": "Denpyo Toroku Service is running",
+        "version": "1.0.0"
+    })
+    return jsonify(g.response.get_result())
+
+
+@api_blueprint.route("/api/v1/dashboard/stats", methods=["GET"])
+def dashboard_stats():
+    """ダッシュボード統計情報を返す"""
+    try:
+        from denpyo_toroku.app.services.database_service import DatabaseService
+        db_service = DatabaseService()
+        stats = db_service.get_dashboard_stats()
+    except Exception as e:
+        logging.warning("ダッシュボード統計取得エラー: %s", e)
+        stats = {
+            "upload_stats": {"total_files": 0, "this_month": 0},
+            "registration_stats": {"total_registrations": 0, "this_month": 0},
+            "category_stats": {"total_categories": 0, "active_categories": 0},
+            "recent_activities": []
+        }
+    return jsonify({"data": stats})
+
+
+@api_blueprint.route("/api/v1/database/init", methods=["POST"])
+def database_init():
+    """管理テーブルの初期化"""
+    try:
+        from denpyo_toroku.app.services.database_service import DatabaseService
+        db_service = DatabaseService()
+        result = db_service.initialize_tables()
+        return jsonify({"data": result})
+    except Exception as e:
+        logging.error("テーブル初期化エラー: %s", e, exc_info=True)
+        return jsonify({"data": {"success": False, "message": str(e)}}), 500
+
+
+# ========================================
+# Files API (SCR-001, SCR-002)
+# ========================================
+
+@api_blueprint.route("/api/v1/files/upload", methods=["POST"])
+def upload_files():
+    """伝票ファイルのアップロード（multipart/form-data）"""
+    from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
+    from denpyo_toroku.app.services.database_service import DatabaseService
+    from denpyo_toroku.app.services.document_processor import DocumentProcessor
+
+    uploaded_files = []
+    errors = []
+
+    files = request.files.getlist("files")
+    if not files or (len(files) == 1 and files[0].filename == ""):
+        g.response.set_data({"success": False, "uploaded_files": [], "errors": ["ファイルが選択されていません"]})
+        return jsonify(g.response.get_result()), 400
+
+    storage_service = OCIStorageService()
+    db_service = DatabaseService()
+    doc_processor = DocumentProcessor(max_size_mb=AppConfig.UPLOAD_MAX_SIZE_MB)
+
+    if not storage_service.is_configured:
+        g.response.set_data({"success": False, "uploaded_files": [], "errors": ["OCI Object Storage が未設定です"]})
+        return jsonify(g.response.get_result()), 400
+
+    user = session.get("user", "")
+
+    for f in files:
+        filename = f.filename or ""
+        try:
+            file_data = f.read()
+
+            # バリデーション
+            validation = doc_processor.validate_file(filename, file_data)
+            if not validation.get("valid"):
+                errors.append(f"{filename}: {validation.get('message', '無効なファイル')}")
+                continue
+
+            content_type = doc_processor.detect_content_type(filename, file_data)
+            object_name = doc_processor.generate_object_name(filename)
+
+            # Object Storage アップロード
+            upload_result = storage_service.upload_file(
+                object_name=object_name,
+                file_data=file_data,
+                content_type=content_type,
+                original_filename=filename,
+            )
+            if not upload_result.get("success"):
+                errors.append(f"{filename}: {upload_result.get('message', 'アップロード失敗')}")
+                continue
+
+            # DB レコード作成
+            file_id = db_service.insert_file_record(
+                file_name=object_name,
+                original_file_name=filename,
+                object_storage_path=object_name,
+                content_type=content_type,
+                file_size=len(file_data),
+                uploaded_by=user,
+            )
+
+            if file_id is None:
+                errors.append(f"{filename}: データベース登録失敗")
+                continue
+
+            # アクティビティログ
+            db_service.log_activity(
+                activity_type="UPLOAD",
+                description=f"ファイル '{filename}' をアップロードしました",
+                file_id=file_id,
+                user_name=user,
+            )
+
+            uploaded_files.append({
+                "file_id": str(file_id),
+                "file_name": object_name,
+                "original_file_name": filename,
+                "file_type": content_type,
+                "file_size": len(file_data),
+                "uploaded_at": dt.datetime.now().isoformat(),
+                "status": "UPLOADED",
+            })
+        except Exception as e:
+            logging.error("ファイルアップロードエラー (%s): %s", filename, e, exc_info=True)
+            errors.append(f"{filename}: {str(e)}")
+
+    success = len(uploaded_files) > 0
+    g.response.set_data({
+        "success": success,
+        "uploaded_files": uploaded_files,
+        "errors": errors,
+    })
+    return jsonify(g.response.get_result())
+
+
+@api_blueprint.route("/api/v1/files", methods=["GET"])
+def list_files():
+    """伝票ファイル一覧を取得（ページング + フィルタ）"""
+    from denpyo_toroku.app.services.database_service import DatabaseService
+
+    page = max(1, request.args.get("page", 1, type=int))
+    page_size = min(100, max(1, request.args.get("page_size", 20, type=int)))
+    status = request.args.get("status", None, type=str)
+    if status == "":
+        status = None
+
+    offset = (page - 1) * page_size
+
+    try:
+        db_service = DatabaseService()
+        files = db_service.get_files(status=status, limit=page_size, offset=offset)
+        total = db_service.get_files_count(status=status)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+
         g.response.set_data({
-            "status": "degraded",
-            "message": "分類器が初期化されていません",
-            "model_loaded": False,
-            "version": "1.0.0"
+            "files": files,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+        })
+    except Exception as e:
+        logging.error("ファイル一覧取得エラー: %s", e, exc_info=True)
+        g.response.set_data({
+            "files": [],
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 0,
+        })
+
+    return jsonify(g.response.get_result())
+
+
+@api_blueprint.route("/api/v1/files/<int:file_id>", methods=["DELETE"])
+def delete_file(file_id: int):
+    """伝票ファイルを削除（Object Storage + DB）"""
+    from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
+    from denpyo_toroku.app.services.database_service import DatabaseService
+
+    try:
+        db_service = DatabaseService()
+        file_record = db_service.get_file_by_id(file_id)
+        if not file_record:
+            g.response.set_data({"success": False, "message": "ファイルが見つかりません"})
+            return jsonify(g.response.get_result()), 404
+
+        # Object Storage から削除
+        storage_path = file_record.get("object_storage_path", "")
+        if storage_path:
+            storage_service = OCIStorageService()
+            if storage_service.is_configured:
+                storage_service.delete_file(storage_path)
+
+        # DB レコード削除
+        delete_result = db_service.delete_file_record(file_id)
+        if not delete_result.get("success"):
+            g.response.set_data(delete_result)
+            return jsonify(g.response.get_result()), 400
+
+        # アクティビティログ
+        user = session.get("user", "")
+        db_service.log_activity(
+            activity_type="DELETE",
+            description=f"ファイル '{file_record.get('original_file_name', '')}' を削除しました",
+            user_name=user,
+        )
+
+        g.response.set_data({"success": True, "message": "ファイルを削除しました"})
+        return jsonify(g.response.get_result())
+
+    except Exception as e:
+        logging.error("ファイル削除エラー (id=%s): %s", file_id, e, exc_info=True)
+        g.response.set_data({"success": False, "message": str(e)})
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/files/<int:file_id>/analyze", methods=["POST"])
+def analyze_file(file_id: int):
+    """伝票ファイルをAI分析する（分類 → フィールド抽出 → DDL提案）"""
+    from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
+    from denpyo_toroku.app.services.database_service import DatabaseService
+    from denpyo_toroku.app.services.document_processor import DocumentProcessor
+    from denpyo_toroku.app.services.ai_service import AIService
+
+    db_service = DatabaseService()
+    user = session.get("user", "")
+
+    try:
+        # 1. ファイル取得
+        file_record = db_service.get_file_by_id(file_id)
+        if not file_record:
+            g.response.set_data({"success": False, "message": "ファイルが見つかりません"})
+            return jsonify(g.response.get_result()), 404
+
+        # 2. ステータスチェック（UPLOADED / ERROR のみ分析可能）
+        current_status = file_record.get("status", "")
+        if current_status not in ("UPLOADED", "ERROR"):
+            g.response.set_data({
+                "success": False,
+                "message": f"このファイルは分析できません（現在のステータス: {current_status}）"
+            })
+            return jsonify(g.response.get_result()), 400
+
+        # 3. ステータスを ANALYZING に更新
+        db_service.update_file_status(file_id, "ANALYZING")
+        db_service.log_activity(
+            activity_type="ANALYZE_START",
+            description=f"ファイル '{file_record.get('original_file_name', '')}' の分析を開始",
+            file_id=file_id, user_name=user,
+        )
+
+        # 4. Object Storage からファイルをダウンロード
+        storage_path = file_record.get("object_storage_path", "")
+        if not storage_path:
+            db_service.update_file_status(file_id, "ERROR")
+            g.response.set_data({"success": False, "message": "ストレージパスが設定されていません"})
+            return jsonify(g.response.get_result()), 500
+
+        storage_service = OCIStorageService()
+        file_data = storage_service.download_file(storage_path)
+        if not file_data:
+            db_service.update_file_status(file_id, "ERROR")
+            g.response.set_data({"success": False, "message": "Object Storage からファイルをダウンロードできませんでした"})
+            return jsonify(g.response.get_result()), 500
+
+        # 5. AI分析用に画像を準備（最初の1ページのみ）
+        doc_processor = DocumentProcessor()
+        images = doc_processor.prepare_for_ai(file_data, file_record.get("original_file_name", ""))
+        if not images:
+            db_service.update_file_status(file_id, "ERROR")
+            g.response.set_data({"success": False, "message": "ファイルをAI分析用に変換できませんでした"})
+            return jsonify(g.response.get_result()), 500
+
+        image_data, content_type = images[0]
+
+        # 6. AI分類
+        ai_service = AIService()
+        classification = ai_service.classify_invoice(image_data, content_type)
+        if not classification.get("success"):
+            db_service.update_file_status(file_id, "ERROR")
+            g.response.set_data({
+                "success": False,
+                "message": classification.get("message", "AI分類に失敗しました")
+            })
+            return jsonify(g.response.get_result()), 500
+
+        category = classification.get("category", "")
+
+        # 7. フィールド抽出
+        extraction = ai_service.extract_fields(image_data, category, content_type)
+        if not extraction.get("success"):
+            db_service.update_file_status(file_id, "ERROR")
+            g.response.set_data({
+                "success": False,
+                "message": extraction.get("message", "フィールド抽出に失敗しました")
+            })
+            return jsonify(g.response.get_result()), 500
+
+        # 8. DDL提案
+        header_fields = extraction.get("header_fields", [])
+        line_fields = extraction.get("line_fields", [])
+        ddl_suggestion = ai_service.suggest_ddl(category, header_fields, line_fields)
+        if not ddl_suggestion.get("success"):
+            # DDL提案失敗は致命的ではないため、空の結果で続行
+            logging.warning("DDL提案失敗: %s", ddl_suggestion.get("message", ""))
+            ddl_suggestion = {
+                "table_prefix": "", "header_table_name": "", "line_table_name": "",
+                "header_ddl": "", "line_ddl": ""
+            }
+
+        # 9. ステータスを ANALYZED に更新
+        db_service.update_file_status(file_id, "ANALYZED")
+        db_service.log_activity(
+            activity_type="ANALYZE_COMPLETE",
+            description=f"ファイル '{file_record.get('original_file_name', '')}' の分析が完了（種別: {category}）",
+            file_id=file_id, user_name=user,
+        )
+
+        # 10. レスポンス構築
+        result = {
+            "file_id": str(file_id),
+            "file_name": file_record.get("original_file_name", ""),
+            "status": "ANALYZED",
+            "classification": {
+                "category": classification.get("category", ""),
+                "confidence": classification.get("confidence", 0),
+                "description": classification.get("description", ""),
+                "has_line_items": classification.get("has_line_items", False),
+            },
+            "extraction": {
+                "header_fields": header_fields,
+                "line_fields": line_fields,
+                "line_count": extraction.get("line_count", 0),
+                "raw_lines": extraction.get("raw_lines", []),
+            },
+            "ddl_suggestion": {
+                "table_prefix": ddl_suggestion.get("table_prefix", ""),
+                "header_table_name": ddl_suggestion.get("header_table_name", ""),
+                "line_table_name": ddl_suggestion.get("line_table_name", ""),
+                "header_ddl": ddl_suggestion.get("header_ddl", ""),
+                "line_ddl": ddl_suggestion.get("line_ddl", ""),
+            },
+        }
+
+        g.response.set_data(result)
+        return jsonify(g.response.get_result())
+
+    except Exception as e:
+        logging.error("AI分析エラー (file_id=%s): %s", file_id, e, exc_info=True)
+        db_service.update_file_status(file_id, "ERROR")
+        db_service.log_activity(
+            activity_type="ANALYZE_ERROR",
+            description=f"分析エラー: {str(e)[:200]}",
+            file_id=file_id, user_name=user,
+        )
+        g.response.set_data({"success": False, "message": f"AI分析に失敗しました: {str(e)}"})
+        return jsonify(g.response.get_result()), 500
+
+
+# --- DDL バリデーション ヘルパー ---
+_DDL_FORBIDDEN_KEYWORDS = re.compile(
+    r'\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|GRANT|REVOKE|EXEC|EXECUTE)\b',
+    re.IGNORECASE,
+)
+
+_TABLE_NAME_PATTERN = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,127}$')
+
+
+def _validate_ddl(ddl: str) -> Optional[str]:
+    """DDL文を検証し、問題があればエラーメッセージを返す"""
+    stripped = ddl.strip()
+    if not stripped.upper().startswith("CREATE TABLE"):
+        return "DDLは CREATE TABLE で始まる必要があります"
+    if _DDL_FORBIDDEN_KEYWORDS.search(stripped):
+        return "DDLに禁止キーワードが含まれています"
+    return None
+
+
+@api_blueprint.route("/api/v1/files/<int:file_id>/register", methods=["POST"])
+def register_file(file_id: int):
+    """DB登録: DDL実行 + カテゴリ登録 + 登録レコード作成"""
+    db_service = g.db_service
+    user = session.get("user", "")
+
+    # --- ファイル存在確認 ---
+    file_record = db_service.get_file_by_id(file_id)
+    if not file_record:
+        g.response.set_data({"success": False, "message": "ファイルが見つかりません"})
+        return jsonify(g.response.get_result()), 404
+
+    current_status = file_record.get("status", "")
+    if current_status != "ANALYZED":
+        g.response.set_data({
+            "success": False,
+            "message": f"ステータスが ANALYZED のファイルのみ登録できます (現在: {current_status})"
+        })
+        return jsonify(g.response.get_result()), 400
+
+    # --- リクエスト解析 ---
+    body = request.get_json(silent=True) or {}
+    category_name = (body.get("category_name") or "").strip()
+    category_name_en = (body.get("category_name_en") or "").strip()
+    header_table_name = (body.get("header_table_name") or "").strip()
+    line_table_name = (body.get("line_table_name") or "").strip()
+    header_ddl = (body.get("header_ddl") or "").strip()
+    line_ddl = (body.get("line_ddl") or "").strip()
+    ai_confidence = body.get("ai_confidence", 0)
+    line_count = body.get("line_count", 0)
+    # 抽出データ（データINSERT用）
+    header_fields = body.get("header_fields", [])
+    raw_lines = body.get("raw_lines", [])
+
+    # --- 必須フィールド ---
+    missing = []
+    if not category_name:
+        missing.append("category_name")
+    if not header_table_name:
+        missing.append("header_table_name")
+    if not header_ddl:
+        missing.append("header_ddl")
+    if missing:
+        g.response.set_data({
+            "success": False,
+            "message": f"必須フィールドが不足しています: {', '.join(missing)}"
+        })
+        return jsonify(g.response.get_result()), 400
+
+    # --- テーブル名バリデーション ---
+    if not _TABLE_NAME_PATTERN.match(header_table_name):
+        g.response.set_data({
+            "success": False,
+            "message": f"ヘッダーテーブル名が不正です: {header_table_name}"
+        })
+        return jsonify(g.response.get_result()), 400
+    if line_table_name and not _TABLE_NAME_PATTERN.match(line_table_name):
+        g.response.set_data({
+            "success": False,
+            "message": f"明細テーブル名が不正です: {line_table_name}"
+        })
+        return jsonify(g.response.get_result()), 400
+
+    # --- DDL バリデーション ---
+    header_ddl_error = _validate_ddl(header_ddl)
+    if header_ddl_error:
+        g.response.set_data({
+            "success": False,
+            "message": f"ヘッダーDDLエラー: {header_ddl_error}"
+        })
+        return jsonify(g.response.get_result()), 400
+    if line_ddl:
+        line_ddl_error = _validate_ddl(line_ddl)
+        if line_ddl_error:
+            g.response.set_data({
+                "success": False,
+                "message": f"明細DDLエラー: {line_ddl_error}"
+            })
+            return jsonify(g.response.get_result()), 400
+
+    try:
+        # --- ヘッダーテーブル DDL 実行 ---
+        header_result = db_service.execute_ddl(header_ddl)
+        header_table_created = header_result.get("success", False)
+        if not header_table_created:
+            g.response.set_data({
+                "success": False,
+                "message": f"ヘッダーテーブル作成失敗: {header_result.get('message', '')}"
+            })
+            return jsonify(g.response.get_result()), 400
+
+        # --- 明細テーブル DDL 実行 ---
+        line_table_created = False
+        if line_ddl:
+            line_result = db_service.execute_ddl(line_ddl)
+            line_table_created = line_result.get("success", False)
+            if not line_table_created:
+                g.response.set_data({
+                    "success": False,
+                    "message": f"明細テーブル作成失敗: {line_result.get('message', '')}"
+                })
+                return jsonify(g.response.get_result()), 400
+
+        # --- 抽出データ INSERT ---
+        insert_result = {"header_inserted": 0, "line_inserted": 0}
+        if header_fields or raw_lines:
+            insert_result = db_service.insert_extracted_data(
+                header_table_name=header_table_name,
+                line_table_name=line_table_name,
+                header_fields=header_fields,
+                raw_lines=raw_lines
+            )
+            if not insert_result.get("success", True):
+                logging.warning("データINSERT警告: %s", insert_result.get("message", ""))
+
+        # --- カテゴリ upsert ---
+        category_id = db_service.upsert_category(
+            category_name=category_name,
+            category_name_en=category_name_en,
+            header_table_name=header_table_name,
+            line_table_name=line_table_name,
+        )
+
+        # --- 登録レコード作成 ---
+        registration_id = db_service.insert_registration(
+            file_id=file_id,
+            category_name=category_name,
+            header_table=header_table_name,
+            line_table=line_table_name,
+            header_record_id=None,
+            line_count=line_count,
+            ai_confidence=ai_confidence,
+            registered_by=user,
+        )
+
+        # --- ファイルステータス更新 ---
+        db_service.update_file_status(file_id, "REGISTERED")
+
+        # --- アクティビティログ ---
+        db_service.log_activity(
+            activity_type="REGISTRATION",
+            description=f"テーブル登録完了: {header_table_name}"
+                        + (f", {line_table_name}" if line_table_name else ""),
+            file_id=file_id,
+            registration_id=registration_id,
+            user_name=user,
+        )
+
+        result = {
+            "success": True,
+            "registration_id": registration_id,
+            "category_id": category_id,
+            "header_table_created": header_table_created,
+            "line_table_created": line_table_created,
+            "header_inserted": insert_result.get("header_inserted", 0),
+            "line_inserted": insert_result.get("line_inserted", 0),
+            "message": "DDL実行と登録が完了しました",
+        }
+        g.response.set_data(result)
+        return jsonify(g.response.get_result())
+
+    except Exception as e:
+        logging.error("DB登録エラー (file_id=%s): %s", file_id, e, exc_info=True)
+        g.response.set_data({"success": False, "message": f"DB登録に失敗しました: {str(e)}"})
+        return jsonify(g.response.get_result()), 500
+
+
+# ========================================
+# Category Management API
+# ========================================
+
+@api_blueprint.route("/api/v1/categories", methods=["GET"])
+def get_categories():
+    """カテゴリ一覧を取得"""
+    try:
+        db_service = DatabaseService()
+        categories = db_service.get_categories()
+        g.response.set_data({"categories": categories})
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("カテゴリ一覧取得エラー: %s", e, exc_info=True)
+        g.response.add_error_message(f"カテゴリ一覧の取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/categories/<int:category_id>", methods=["GET"])
+def get_category(category_id: int):
+    """カテゴリ詳細を取得"""
+    try:
+        db_service = DatabaseService()
+        category = db_service.get_category_by_id(category_id)
+        if not category:
+            g.response.add_error_message("カテゴリが見つかりません")
+            return jsonify(g.response.get_result()), 404
+        g.response.set_data(category)
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("カテゴリ取得エラー (id=%s): %s", category_id, e, exc_info=True)
+        g.response.add_error_message(f"カテゴリの取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/categories/<int:category_id>", methods=["PUT"])
+def update_category(category_id: int):
+    """カテゴリを更新（名称・説明のみ）"""
+    try:
+        data = request.get_json(silent=True) or {}
+        category_name = (data.get("category_name") or "").strip()
+        category_name_en = (data.get("category_name_en") or "").strip()
+        description = (data.get("description") or "").strip()
+
+        if not category_name:
+            g.response.add_error_message("カテゴリ名は必須です")
+            return jsonify(g.response.get_result()), 400
+
+        db_service = DatabaseService()
+
+        existing = db_service.get_category_by_id(category_id)
+        if not existing:
+            g.response.add_error_message("カテゴリが見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        success = db_service.update_category(
+            category_id, category_name, category_name_en, description
+        )
+        if not success:
+            g.response.add_error_message("カテゴリの更新に失敗しました")
+            return jsonify(g.response.get_result()), 500
+
+        updated = db_service.get_category_by_id(category_id)
+        g.response.set_data(updated)
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("カテゴリ更新エラー (id=%s): %s", category_id, e, exc_info=True)
+        g.response.add_error_message(f"カテゴリの更新に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/categories/<int:category_id>/toggle", methods=["PATCH"])
+def toggle_category_active(category_id: int):
+    """カテゴリの有効/無効を切り替え"""
+    try:
+        db_service = DatabaseService()
+
+        existing = db_service.get_category_by_id(category_id)
+        if not existing:
+            g.response.add_error_message("カテゴリが見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        new_state = db_service.toggle_category_active(category_id)
+        if new_state is None:
+            g.response.add_error_message("有効/無効の切り替えに失敗しました")
+            return jsonify(g.response.get_result()), 500
+
+        g.response.set_data({
+            "id": category_id,
+            "is_active": new_state,
+            "message": "有効" if new_state else "無効" + "に変更しました"
+        })
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("カテゴリ切替エラー (id=%s): %s", category_id, e, exc_info=True)
+        g.response.add_error_message(f"有効/無効の切り替えに失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/categories/<int:category_id>", methods=["DELETE"])
+def delete_category(category_id: int):
+    """カテゴリを削除（登録がある場合は拒否）"""
+    try:
+        db_service = DatabaseService()
+
+        existing = db_service.get_category_by_id(category_id)
+        if not existing:
+            g.response.add_error_message("カテゴリが見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        result = db_service.delete_category(category_id)
+        if not result["success"]:
+            g.response.add_error_message(result["message"])
+            return jsonify(g.response.get_result()), 400
+
+        g.response.set_data({"success": True, "message": result["message"]})
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("カテゴリ削除エラー (id=%s): %s", category_id, e, exc_info=True)
+        g.response.add_error_message(f"カテゴリの削除に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+# ========================================
+# Data Search API (SCR-006)
+# ========================================
+
+@api_blueprint.route("/api/v1/search/tables", methods=["GET"])
+def get_searchable_tables():
+    """検索可能なテーブル一覧を取得"""
+    try:
+        db_service = DatabaseService()
+        tables = db_service.get_allowed_table_names()
+        g.response.set_data({"tables": tables})
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("検索可能テーブル一覧取得エラー: %s", e, exc_info=True)
+        g.response.add_error_message(f"テーブル一覧の取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/search/nl", methods=["POST"])
+def natural_language_search():
+    """自然言語検索（NL -> SQL -> 実行）"""
+    from denpyo_toroku.app.services.ai_service import AIService
+
+    try:
+        data = request.get_json(silent=True) or {}
+        query = (data.get("query") or "").strip()
+        category_id = data.get("category_id")
+
+        if not query:
+            g.response.add_error_message("検索クエリを入力してください")
+            return jsonify(g.response.get_result()), 400
+
+        db_service = DatabaseService()
+        ai_service = AIService()
+
+        # 許可テーブル一覧を取得
+        allowed_tables = db_service.get_allowed_table_names()
+        if not allowed_tables:
+            g.response.add_error_message("検索可能なテーブルがありません")
+            return jsonify(g.response.get_result()), 400
+
+        # category_id が指定されていれば絞り込み
+        if category_id is not None:
+            allowed_tables = [t for t in allowed_tables if t["category_id"] == int(category_id)]
+            if not allowed_tables:
+                g.response.add_error_message("指定されたカテゴリに検索可能なテーブルがありません")
+                return jsonify(g.response.get_result()), 400
+
+        # 各テーブルのカラム情報を取得
+        table_schemas = []
+        for t in allowed_tables:
+            if t["header_table_name"]:
+                cols = db_service.get_table_columns(t["header_table_name"])
+                if cols:
+                    table_schemas.append({
+                        "table_name": t["header_table_name"],
+                        "columns": cols
+                    })
+            if t["line_table_name"]:
+                cols = db_service.get_table_columns(t["line_table_name"])
+                if cols:
+                    table_schemas.append({
+                        "table_name": t["line_table_name"],
+                        "columns": cols
+                    })
+
+        if not table_schemas:
+            g.response.add_error_message("テーブル情報を取得できませんでした")
+            return jsonify(g.response.get_result()), 400
+
+        # AI で自然言語 -> SQL 変換
+        ai_result = ai_service.text_to_sql(query, table_schemas)
+        if not ai_result.get("success"):
+            g.response.add_error_message(ai_result.get("message", "SQL生成に失敗しました"))
+            return jsonify(g.response.get_result()), 400
+
+        generated_sql = ai_result.get("sql", "")
+        explanation = ai_result.get("explanation", "")
+
+        # 生成された SQL を実行
+        exec_result = db_service.execute_select_query(generated_sql, max_rows=500)
+        if not exec_result.get("success"):
+            g.response.set_data({
+                "generated_sql": generated_sql,
+                "explanation": explanation,
+                "results": {
+                    "columns": [],
+                    "rows": [],
+                    "total": 0
+                },
+                "error": exec_result.get("message", "クエリ実行に失敗しました")
+            })
+            return jsonify(g.response.get_result())
+
+        g.response.set_data({
+            "generated_sql": generated_sql,
+            "explanation": explanation,
+            "results": {
+                "columns": exec_result.get("columns", []),
+                "rows": exec_result.get("rows", []),
+                "total": exec_result.get("total", 0)
+            }
         })
         return jsonify(g.response.get_result())
 
-    try:
-        health = classifier.health_check()
-        g.response.set_data(health)
-        return jsonify(g.response.get_result())
     except Exception as e:
-        logging.error("ヘルスチェックエラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
+        logging.error("自然言語検索エラー: %s", e, exc_info=True)
+        g.response.add_error_message(f"検索に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/search/tables/<int:category_id>/data", methods=["GET"])
+def get_table_data(category_id: int):
+    """カテゴリのテーブルデータを取得（ページング付き）"""
+    try:
+        page = max(1, request.args.get("page", 1, type=int))
+        page_size = min(100, max(1, request.args.get("page_size", 50, type=int)))
+        table_type = request.args.get("table_type", "header")  # header or line
+
+        db_service = DatabaseService()
+
+        # カテゴリ情報を取得
+        category = db_service.get_category_by_id(category_id)
+        if not category:
+            g.response.add_error_message("カテゴリが見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        # テーブル名を決定
+        if table_type == "line":
+            table_name = category.get("line_table_name", "")
+        else:
+            table_name = category.get("header_table_name", "")
+
+        if not table_name:
+            g.response.add_error_message(f"指定されたテーブル（{table_type}）が設定されていません")
+            return jsonify(g.response.get_result()), 400
+
+        offset = (page - 1) * page_size
+        result = db_service.get_table_data(table_name, limit=page_size, offset=offset)
+
+        if not result.get("success"):
+            g.response.add_error_message(result.get("message", "データ取得に失敗しました"))
+            return jsonify(g.response.get_result()), 400
+
+        total = result.get("total", 0)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+
+        g.response.set_data({
+            "table_name": result.get("table_name", ""),
+            "table_type": table_type,
+            "columns": result.get("columns", []),
+            "rows": result.get("rows", []),
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages
+        })
+        return jsonify(g.response.get_result())
+
+    except Exception as e:
+        logging.error("テーブルデータ取得エラー (category_id=%s): %s", category_id, e, exc_info=True)
+        g.response.add_error_message(f"データ取得に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
 
 
@@ -1528,906 +1966,6 @@ def get_metrics():
     response = make_response(payload, 200)
     response.headers["Content-Type"] = CONTENT_TYPE_LATEST
     return response
-
-
-@api_blueprint.route("/api/v1/stats", methods=["GET"])
-def get_stats():
-    """Statistics endpoint."""
-    classifier = current_app.classifier
-    if classifier is None:
-        g.response.set_data({
-            "performance": {
-                "total_predictions": 0,
-                "total_errors": 0,
-                "error_rate": 0,
-                "avg_prediction_time": 0,
-                "p95_prediction_time": 0,
-                "p99_prediction_time": 0,
-                "min_prediction_time": 0,
-                "max_prediction_time": 0
-            },
-            "cache": {
-                "hits": 0,
-                "misses": 0,
-                "hit_rate": 0,
-                "cache_size": 0,
-                "max_size": 0
-            },
-            "model": None,
-            "message": "分類器が初期化されていません"
-        })
-        return jsonify(g.response.get_result())
-
-    try:
-        stats = classifier.get_stats()
-        g.response.set_data(stats)
-        return jsonify(g.response.get_result())
-    except Exception as e:
-        logging.error("統計取得エラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/predict", methods=["POST"])
-def predict():
-    """Batch prediction endpoint."""
-    classifier = current_app.classifier
-    if classifier is None:
-        g.response.add_error_message("分類器が初期化されていません")
-        return jsonify(g.response.get_result()), 503
-
-    start_time = dt.datetime.now()
-
-    try:
-        data = request.get_json()
-        if not data or 'texts' not in data:
-            g.response.add_error_message("「texts」フィールドは必須です")
-            return jsonify(g.response.get_result()), 422
-
-        texts = data['texts']
-        if not isinstance(texts, list) or len(texts) == 0:
-            g.response.add_error_message("「texts」は空でない配列である必要があります")
-            return jsonify(g.response.get_result()), 422
-
-        if len(texts) > 1000:
-            g.response.add_error_message("1 回のリクエストで送信できるテキストは最大 1000 件です")
-            return jsonify(g.response.get_result()), 422
-
-        return_proba = data.get('return_proba', True)
-        confidence_threshold = data.get('confidence_threshold', 0.5)
-        top_k = data.get('top_k', 3)
-        unknown_on_low_conf = _to_bool(data.get('unknown_on_low_conf', True), default=True)
-        unknown_intent_label = data.get('unknown_intent_label', 'UNKNOWN')
-        if not (0.0 <= float(confidence_threshold) <= 1.0):
-            g.response.add_error_message("「confidence_threshold」は 0.0〜1.0 の範囲で指定してください")
-            return jsonify(g.response.get_result()), 422
-        if not (1 <= int(top_k) <= 10):
-            g.response.add_error_message("「top_k」は 1〜10 の範囲で指定してください")
-            return jsonify(g.response.get_result()), 422
-
-        results = classifier.predict(
-            texts=texts,
-            return_proba=return_proba,
-            confidence_threshold=float(confidence_threshold),
-            top_k=int(top_k),
-            unknown_on_low_conf=unknown_on_low_conf,
-            unknown_intent_label=str(unknown_intent_label)
-        )
-
-        processing_time = (dt.datetime.now() - start_time).total_seconds()
-
-        g.response.set_data({
-            "results": results,
-            "total": len(results),
-            "processing_time": processing_time
-        })
-        return jsonify(g.response.get_result())
-
-    except Exception as e:
-        logging.error("予測エラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/predict/single", methods=["POST"])
-def predict_single():
-    """Single text prediction endpoint."""
-    classifier = current_app.classifier
-    if classifier is None:
-        g.response.add_error_message("分類器が初期化されていません")
-        return jsonify(g.response.get_result()), 503
-
-    try:
-        text = request.args.get('text', '')
-        return_proba = request.args.get('return_proba', 'true').lower() == 'true'
-        confidence_threshold = request.args.get('confidence_threshold', type=float)
-        top_k = request.args.get('top_k', default=3, type=int)
-        unknown_on_low_conf = request.args.get('unknown_on_low_conf', default='true').lower() == 'true'
-        unknown_intent_label = request.args.get('unknown_intent_label', default='UNKNOWN', type=str)
-
-        if not text:
-            # JSON ボディも確認
-            data = request.get_json(silent=True)
-            if data:
-                text = data.get('text', '')
-                return_proba = data.get('return_proba', True)
-                if 'confidence_threshold' in data:
-                    confidence_threshold = data.get('confidence_threshold')
-                if 'top_k' in data:
-                    top_k = data.get('top_k')
-                if 'unknown_on_low_conf' in data:
-                    unknown_on_low_conf = _to_bool(data.get('unknown_on_low_conf'), default=True)
-                if 'unknown_intent_label' in data:
-                    unknown_intent_label = data.get('unknown_intent_label')
-
-        if not text:
-            g.response.add_error_message("「text」は必須です")
-            return jsonify(g.response.get_result()), 422
-
-        if confidence_threshold is None:
-            confidence_threshold = 0.5
-        if not (0.0 <= float(confidence_threshold) <= 1.0):
-            g.response.add_error_message("「confidence_threshold」は 0.0〜1.0 の範囲で指定してください")
-            return jsonify(g.response.get_result()), 422
-        if not (1 <= int(top_k) <= 10):
-            g.response.add_error_message("「top_k」は 1〜10 の範囲で指定してください")
-            return jsonify(g.response.get_result()), 422
-
-        results = classifier.predict(
-            texts=[text],
-            return_proba=return_proba,
-            confidence_threshold=float(confidence_threshold),
-            top_k=int(top_k),
-            unknown_on_low_conf=_to_bool(unknown_on_low_conf, default=True),
-            unknown_intent_label=str(unknown_intent_label)
-        )
-
-        g.response.set_data(results[0])
-        return jsonify(g.response.get_result())
-
-    except Exception as e:
-        logging.error("予測エラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/cache/clear", methods=["POST"])
-def clear_cache():
-    """Cache clear endpoint."""
-    classifier = current_app.classifier
-    if classifier is None:
-        g.response.set_data({"message": "キャッシュをクリアできません（分類器が初期化されていません）"})
-        return jsonify(g.response.get_result())
-
-    try:
-        classifier.clear_cache()
-        g.response.set_data({"message": "キャッシュをクリアしました"})
-        return jsonify(g.response.get_result())
-    except Exception as e:
-        logging.error("キャッシュクリアエラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/train/data", methods=["GET"])
-def get_training_data():
-    """Get paginated training data."""
-    global _training_data_store
-    try:
-        page = request.args.get('page', 1, type=int)
-        page_size = request.args.get('page_size', 20, type=int)
-        page = max(1, page)
-        page_size = max(1, min(100, page_size))
-
-        total = len(_training_data_store)
-        total_pages = max(1, (total + page_size - 1) // page_size)
-        start = (page - 1) * page_size
-        end = start + page_size
-        items = _training_data_store[start:end]
-
-        g.response.set_data({
-            "items": items,
-            "page": page,
-            "page_size": page_size,
-            "total": total,
-            "total_pages": total_pages
-        })
-        return jsonify(g.response.get_result())
-    except Exception as e:
-        logging.error("学習データ取得エラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/train/data", methods=["POST"])
-def upload_training_data():
-    """Upload training data (JSON array of {text, label})."""
-    global _training_data_store
-    try:
-        data = request.get_json()
-        if not data or 'training_data' not in data:
-            g.response.add_error_message("「training_data」フィールドは必須です（{text, label} の配列）")
-            return jsonify(g.response.get_result()), 422
-
-        training_data = data['training_data']
-        if not isinstance(training_data, list):
-            g.response.add_error_message("「training_data」は配列である必要があります")
-            return jsonify(g.response.get_result()), 422
-
-        mode = data.get('mode', 'replace')  # 'replace' or 'append'
-        valid_items, reject_stats = _sanitize_training_items(training_data)
-
-        if len(valid_items) == 0:
-            g.response.add_error_message("有効なデータがありません。各要素には「text」と「label」が必要です。")
-            return jsonify(g.response.get_result()), 422
-
-        if mode == 'append':
-            _training_data_store.extend(valid_items)
-        else:
-            _training_data_store = valid_items
-
-        g.response.set_data({
-            "message": "%d 件をアップロードしました（mode: %s）" % (len(valid_items), mode),
-            "total": len(_training_data_store),
-            "rejected": reject_stats
-        })
-        return jsonify(g.response.get_result())
-    except Exception as e:
-        logging.error("学習データアップロードエラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/train/data/upload", methods=["POST"])
-def upload_training_data_xlsx():
-    """Upload training data from xlsx or csv file (text, label columns).
-    
-    The uploaded file will be saved as 'training_data.xlsx' or 'training_data.csv' (overwrite existing).
-    Expects file with 2 columns: 'text' and 'label' (or first 2 columns if no headers match).
-    Supported formats: .xlsx, .csv
-    """
-    global _training_data_store
-    try:
-        # ファイル有無を確認
-        if 'file' not in request.files:
-            g.response.add_error_message("ファイルがありません。.xlsx または .csv ファイルをアップロードしてください。")
-            return jsonify(g.response.get_result()), 422
-        
-        file = request.files['file']
-        if file.filename == '':
-            g.response.add_error_message("ファイルが選択されていません。")
-            return jsonify(g.response.get_result()), 422
-        
-        # 拡張子を検証
-        filename_lower = file.filename.lower()
-        is_xlsx = filename_lower.endswith('.xlsx')
-        is_csv = filename_lower.endswith('.csv')
-        
-        if not is_xlsx and not is_csv:
-            g.response.add_error_message("ファイル形式が不正です。.xlsx / .csv を使用してください。")
-            return jsonify(g.response.get_result()), 422
-        
-        # データディレクトリを作成
-        data_dir = os.path.dirname(_TRAINING_DATA_FILE)
-        os.makedirs(data_dir, exist_ok=True)
-        
-        valid_items = []
-        skipped = 0
-        saved_filename = ""
-        
-        if is_xlsx:
-            # openpyxl を読み込み
-            try:
-                from openpyxl import load_workbook
-            except ImportError:
-                g.response.add_error_message("openpyxl がインストールされていません。pip install openpyxl でインストールしてください。")
-                return jsonify(g.response.get_result()), 500
-            
-            # training_data.xlsx として保存（既存は上書き）
-            xlsx_path = os.path.join(data_dir, "training_data.xlsx")
-            file.save(xlsx_path)
-            saved_filename = "training_data.xlsx"
-            
-            # xlsx を読み込み解析
-            wb = load_workbook(xlsx_path, read_only=True)
-            ws = wb.active
-            
-            # 全行を取得
-            rows = list(ws.iter_rows(values_only=True))
-            if len(rows) < 2:
-                g.response.add_error_message("ファイルが空、またはデータ行がありません。")
-                return jsonify(g.response.get_result()), 422
-            
-            # ヘッダ行を検出（先頭行に text/label があるか）
-            first_row = rows[0]
-            text_col_idx = None
-            label_col_idx = None
-            has_header = False
-            
-            # ヘッダ名から列を推定（大文字小文字無視）
-            if first_row and len(first_row) >= 2:
-                header_lower = [str(h).lower().strip() if h else '' for h in first_row]
-                if 'text' in header_lower:
-                    text_col_idx = header_lower.index('text')
-                if 'label' in header_lower:
-                    label_col_idx = header_lower.index('label')
-                
-                if text_col_idx is not None and label_col_idx is not None:
-                    has_header = True
-            
-            # ヘッダが見つからない場合は先頭 2 列を使用（text=0, label=1）
-            if text_col_idx is None:
-                text_col_idx = 0
-            if label_col_idx is None:
-                label_col_idx = 1
-            
-            # データ行を解析
-            data_rows = rows[1:] if has_header else rows
-            
-            for row in data_rows:
-                if row and len(row) > max(text_col_idx, label_col_idx):
-                    text_val = row[text_col_idx]
-                    label_val = row[label_col_idx]
-                    
-                    if text_val is not None and label_val is not None:
-                        text_str = str(text_val).strip()
-                        label_str = str(label_val).strip()
-                        
-                        if text_str and label_str:
-                            valid_items.append({'text': text_str, 'label': label_str})
-                        else:
-                            skipped += 1
-                    else:
-                        skipped += 1
-                else:
-                    skipped += 1
-            
-            wb.close()
-            
-        else:  # CSV
-            import csv
-            import io
-            
-            # 先にコンテンツを読み込む（file.save()後はストリームが消費されるため）
-            content = file.stream.read().decode('utf-8-sig')  # BOM対応
-            file.stream.seek(0)  # リセットしてから保存
-            
-            # training_data.csv として保存（既存は上書き）
-            csv_path = os.path.join(data_dir, "training_data.csv")
-            file.save(csv_path)
-            saved_filename = "training_data.csv"
-            
-            # CSVを解析
-            reader = csv.reader(io.StringIO(content))
-            rows = list(reader)
-            
-            if len(rows) < 2:
-                g.response.add_error_message("ファイルが空、またはデータ行がありません。")
-                return jsonify(g.response.get_result()), 422
-            
-            # ヘッダ行を検出
-            first_row = rows[0]
-            text_col_idx = None
-            label_col_idx = None
-            has_header = False
-            
-            if first_row and len(first_row) >= 2:
-                header_lower = [str(h).lower().strip() if h else '' for h in first_row]
-                if 'text' in header_lower:
-                    text_col_idx = header_lower.index('text')
-                if 'label' in header_lower:
-                    label_col_idx = header_lower.index('label')
-                
-                if text_col_idx is not None and label_col_idx is not None:
-                    has_header = True
-            
-            # ヘッダが見つからない場合は先頭 2 列を使用
-            if text_col_idx is None:
-                text_col_idx = 0
-            if label_col_idx is None:
-                label_col_idx = 1
-            
-            # データ行を解析
-            data_rows = rows[1:] if has_header else rows
-            
-            for row in data_rows:
-                if row and len(row) > max(text_col_idx, label_col_idx):
-                    text_val = row[text_col_idx]
-                    label_val = row[label_col_idx]
-                    
-                    if text_val is not None and label_val is not None:
-                        text_str = str(text_val).strip()
-                        label_str = str(label_val).strip()
-                        
-                        if text_str and label_str:
-                            valid_items.append({'text': text_str, 'label': label_str})
-                        else:
-                            skipped += 1
-                    else:
-                        skipped += 1
-                else:
-                    skipped += 1
-        
-        if len(valid_items) == 0:
-            g.response.add_error_message("有効なデータがありません。各行に「text」と「label」の値が必要です。")
-            return jsonify(g.response.get_result()), 422
-        
-        # 学習データストアを置換（上書き）
-        _training_data_store = valid_items
-        profile = _build_training_profile(_training_data_store)
-
-        file_type = "xlsx" if is_xlsx else "csv"
-        g.response.set_data({
-            "message": "%s から学習サンプル %d 件をアップロードしました" % (file_type, len(valid_items)),
-            "total": len(_training_data_store),
-            "file_saved": saved_filename,
-            "skipped_rows": skipped,
-            "profile": profile
-        })
-        return jsonify(g.response.get_result())
-        
-    except Exception as e:
-        logging.error("学習データアップロードエラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/train/data", methods=["DELETE"])
-def clear_training_data():
-    """Clear all training data."""
-    global _training_data_store
-    _training_data_store = []
-    g.response.set_data({"message": "学習データをクリアしました", "total": 0})
-    return jsonify(g.response.get_result())
-
-
-@api_blueprint.route("/api/v1/train/data/download", methods=["GET"])
-def download_training_data():
-    """Download all training data as JSON file."""
-    global _training_data_store
-    response = make_response(json.dumps(_training_data_store, ensure_ascii=False, indent=2))
-    response.headers['Content-Type'] = 'application/json'
-    response.headers['Content-Disposition'] = 'attachment; filename=training_data.json'
-    return response
-
-
-@api_blueprint.route("/api/v1/train/profile", methods=["GET", "POST"])
-def profile_training_data():
-    """Profile training data quality and return recommendations."""
-    global _training_data_store
-    try:
-        if request.method == "POST":
-            data = request.get_json(silent=True) or {}
-            raw_training_data = data.get("training_data", None)
-            if raw_training_data is None:
-                g.response.add_error_message("「training_data」フィールドは必須です")
-                return jsonify(g.response.get_result()), 422
-            valid_items, reject_stats = _sanitize_training_items(raw_training_data)
-        else:
-            valid_items = list(_training_data_store)
-            reject_stats = {
-                "invalid_item_count": 0,
-                "missing_field_count": 0,
-                "empty_text_count": 0,
-                "empty_label_count": 0
-            }
-
-        profile = _build_training_profile(valid_items)
-        profile["rejected"] = reject_stats
-        profile["source"] = "request_payload" if request.method == "POST" else "in_memory_store"
-        g.response.set_data(profile)
-        return jsonify(g.response.get_result())
-
-    except Exception as e:
-        logging.error("学習データ診断エラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/train/validate", methods=["POST"])
-def validate_training_data():
-    """Validate training data quality without training."""
-    try:
-        data = request.get_json()
-        if not data or 'training_data' not in data:
-            g.response.add_error_message("「training_data」フィールドは必須です（{text, label} の配列）")
-            return jsonify(g.response.get_result()), 422
-
-        training_data = data['training_data']
-        if not isinstance(training_data, list) or len(training_data) == 0:
-            g.response.add_error_message("「training_data」は空でない配列である必要があります")
-            return jsonify(g.response.get_result()), 422
-
-        valid_items, reject_stats = _sanitize_training_items(training_data)
-        if len(valid_items) == 0:
-            g.response.add_error_message("有効なデータがありません。各要素の「text」と「label」は空でない必要があります。")
-            return jsonify(g.response.get_result()), 422
-
-        profile = _build_training_profile(valid_items)
-        issue_levels = {
-            "errors": [i["message"] for i in profile["issue_details"] if i["level"] == "error"],
-            "warnings": [i["message"] for i in profile["issue_details"] if i["level"] == "warning"],
-            "info": [i["message"] for i in profile["issue_details"] if i["level"] == "info"]
-        }
-        g.response.set_data({
-            "valid": profile["quality_gate_passed"],
-            "total_samples": profile["total_samples"],
-            "num_classes": profile["num_classes"],
-            "class_distribution": profile["class_distribution"],
-            "issues": profile["issues"],
-            "issue_levels": issue_levels,
-            "health_score": profile["health_score"],
-            "readiness": profile["readiness"],
-            "imbalance_ratio": profile["imbalance_ratio"],
-            "duplicate_ratio": profile["duplicate_ratio"],
-            "text_length_stats": profile["text_length_stats"],
-            "recommendations": profile["recommendations"],
-            "suggested_params": profile["suggested_params"],
-            "rejected": reject_stats
-        })
-        return jsonify(g.response.get_result())
-
-    except Exception as e:
-        logging.error("バリデーションエラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/train", methods=["POST"])
-def start_training():
-    """Start model training (async background task)."""
-    global _training_state
-    global _training_data_store
-
-    with _training_state_lock:
-        if _training_state['status'] == 'running':
-            g.response.add_error_message("学習はすでに実行中です")
-            return jsonify(g.response.get_result()), 409
-
-    app = current_app._get_current_object()
-    previous_model_summary = _extract_previous_model_summary(getattr(app, "classifier", None))
-
-    try:
-        data = request.get_json() or {}
-
-        training_data = data.get('training_data', None)
-        # If no training_data provided in request, use the in-memory store
-        if not training_data:
-            if len(_training_data_store) == 0:
-                g.response.add_error_message("学習データがありません。先にアップロードするか、リクエストで「training_data」を指定してください。")
-                return jsonify(g.response.get_result()), 422
-            training_data = _training_data_store
-        if not isinstance(training_data, list) or len(training_data) == 0:
-            g.response.add_error_message("「training_data」は空でない配列である必要があります")
-            return jsonify(g.response.get_result()), 422
-
-        valid_items, reject_stats = _sanitize_training_items(training_data)
-        if len(valid_items) == 0:
-            g.response.add_error_message("有効なデータがありません。各要素の「text」と「label」は空でない必要があります。")
-            return jsonify(g.response.get_result()), 422
-
-        profile = _build_training_profile(valid_items)
-        if not profile["quality_gate_passed"]:
-            g.response.add_error_message(
-                "学習データが品質ゲートを通過していません: %s" %
-                ("; ".join(profile["issues"][:2]) if profile["issues"] else "品質不足")
-            )
-            g.response.set_data({
-                "profile": profile,
-                "rejected": reject_stats
-            })
-            return jsonify(g.response.get_result()), 422
-
-        texts = [item["text"] for item in valid_items]
-        labels = [item["label"] for item in valid_items]
-
-        # Training parameters with profile-aware defaults
-        params = data.get('params', {}) if isinstance(data.get('params', {}), dict) else {}
-        suggested = profile.get("suggested_params", {})
-        test_size = params.get('test_size', suggested.get("test_size", 0.15))
-        n_estimators = params.get('n_estimators', suggested.get("n_estimators", 300))
-        learning_rate = params.get('learning_rate', suggested.get("learning_rate", 0.05))
-        max_depth = params.get('max_depth', suggested.get("max_depth", 6))
-        algorithm_strategy = str(params.get('algorithm_strategy', suggested.get("algorithm_strategy", 'auto'))).strip().lower()
-        compare_baselines = _to_bool(
-            params.get('compare_baselines', suggested.get("compare_baselines", True)),
-            default=True
-        )
-        auto_tune = _to_bool(
-            params.get('auto_tune', suggested.get("auto_tune", True)),
-            default=True
-        )
-        rebalance_strategy = str(
-            params.get('rebalance_strategy', suggested.get("rebalance_strategy", "none"))
-        ).strip().lower()
-        try:
-            test_size = float(test_size)
-            n_estimators = int(n_estimators)
-            learning_rate = float(learning_rate)
-            max_depth = int(max_depth)
-            random_state = int(params.get('random_state', 42))
-        except (TypeError, ValueError):
-            g.response.add_error_message("学習パラメータの型が不正です。数値項目を確認してください。")
-            return jsonify(g.response.get_result()), 422
-
-        if not (0.05 <= test_size <= 0.40):
-            g.response.add_error_message("「test_size」は 0.05〜0.40 の範囲で指定してください")
-            return jsonify(g.response.get_result()), 422
-        if not (50 <= n_estimators <= 1000):
-            g.response.add_error_message("「n_estimators」は 50〜1000 の範囲で指定してください")
-            return jsonify(g.response.get_result()), 422
-        if not (0.01 <= learning_rate <= 0.30):
-            g.response.add_error_message("「learning_rate」は 0.01〜0.30 の範囲で指定してください")
-            return jsonify(g.response.get_result()), 422
-        if not (2 <= max_depth <= 10):
-            g.response.add_error_message("「max_depth」は 2〜10 の範囲で指定してください")
-            return jsonify(g.response.get_result()), 422
-        if algorithm_strategy not in ('auto', 'gbdt', 'lr'):
-            g.response.add_error_message("「algorithm_strategy」は auto / gbdt / lr のいずれかを指定してください")
-            return jsonify(g.response.get_result()), 422
-        if rebalance_strategy not in ('none', 'balanced_upsample', 'auto'):
-            g.response.add_error_message("「rebalance_strategy」は none / balanced_upsample / auto のいずれかを指定してください")
-            return jsonify(g.response.get_result()), 422
-        if random_state < 0:
-            g.response.add_error_message("「random_state」は 0 以上で指定してください")
-            return jsonify(g.response.get_result()), 422
-        if algorithm_strategy in ('gbdt', 'lr'):
-            compare_baselines = False
-
-        effective_rebalance = (
-            'balanced_upsample'
-            if rebalance_strategy == 'auto' and profile["imbalance_ratio"] >= 3
-            else ('none' if rebalance_strategy == 'auto' else rebalance_strategy)
-        )
-
-        effective_params = {
-            "test_size": test_size,
-            "n_estimators": n_estimators,
-            "learning_rate": learning_rate,
-            "max_depth": max_depth,
-            "algorithm_strategy": algorithm_strategy,
-            "compare_baselines": bool(compare_baselines),
-            "auto_tune": bool(auto_tune),
-            "rebalance_strategy": effective_rebalance,
-            "random_state": random_state
-        }
-
-        # Reset training state
-        with _training_state_lock:
-            _training_state = {
-                'status': 'running',
-                'progress': '初期化中…',
-                'results': None,
-                'error': None,
-                'started_at': dt.datetime.now().isoformat(),
-                'finished_at': None,
-                'dataset_profile': profile,
-                'params': effective_params,
-                'previous_model_summary': previous_model_summary
-            }
-
-        def run_training():
-            global _training_state
-            try:
-                from denpyo_toroku.src.denpyo_toroku.classifier import ProductionIntentClassifier
-
-                with _training_state_lock:
-                    _training_state['progress'] = '分類器を初期化中…'
-
-                def progress_callback(message: str):
-                    with _training_state_lock:
-                        _training_state['progress'] = str(message)
-
-                classifier = ProductionIntentClassifier(
-                    config_path=AppConfig.OCI_CONFIG_PATH,
-                    profile=AppConfig.OCI_CONFIG_PROFILE,
-                    service_endpoint=AppConfig.OCI_SERVICE_ENDPOINT,
-                    compartment_id=AppConfig.OCI_CONFIG_COMPARTMENT,
-                    embedding_model_id=AppConfig.EMBEDDING_MODEL_ID,
-                    log_level=AppConfig.LOG_LEVEL,
-                    enable_cache=False,  # 学習中はキャッシュしない
-                    enable_monitoring=True
-                )
-
-                with _training_state_lock:
-                    _training_state['progress'] = 'モデルを学習中（数分かかる場合があります）…'
-
-                results = classifier.train(
-                    texts=texts,
-                    labels=labels,
-                    test_size=test_size,
-                    random_state=random_state,
-                    validation_split=0.15,
-                    early_stopping_rounds=15,
-                    compare_baselines=bool(compare_baselines),
-                    preferred_algorithm=algorithm_strategy,
-                    auto_tune=bool(auto_tune),
-                    rebalance_strategy=effective_rebalance,
-                    progress_callback=progress_callback,
-                    n_estimators=n_estimators,
-                    learning_rate=learning_rate,
-                    max_depth=max_depth,
-                    min_samples_split=15,
-                    min_samples_leaf=8,
-                    subsample=0.8,
-                    n_iter_no_change=15,
-                    tol=1e-4
-                )
-
-                # 品質評価
-                quality_ok = True
-                quality_issues = []
-                if results['test_accuracy'] < 0.85:
-                    quality_issues.append('テスト精度が 85% を下回っています: %.2f%%' % (results['test_accuracy'] * 100))
-                    quality_ok = False
-                if results.get('test_macro_f1', 0.0) < 0.80:
-                    quality_issues.append('Macro-F1 が 0.80 を下回っています: %.4f' % results.get('test_macro_f1', 0.0))
-                    quality_ok = False
-                if results['overfitting_gap'] > 0.10:
-                    quality_issues.append('過学習の可能性: ギャップ %.4f > 0.10' % results['overfitting_gap'])
-                    quality_ok = False
-                if results.get('macro_f1_gap', 0.0) > 0.12:
-                    quality_issues.append('Macro-F1 ギャップが大きく過学習リスクがあります: %.4f > 0.12' % results.get('macro_f1_gap', 0.0))
-                    quality_ok = False
-                if profile["readiness"] == "low":
-                    quality_issues.append('データ準備度が低いです。本番展開前に診断結果の問題修正を検討してください。')
-
-                # モデルを保存（features/train_production.py と同様にバックアップ作成）
-                with _training_state_lock:
-                    _training_state['progress'] = 'モデルを保存中…'
-                model_path = AppConfig.MODEL_PATH
-                if os.path.exists(model_path):
-                    timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
-                    backup_path = "%s.backup_%s" % (model_path, timestamp)
-                    os.rename(model_path, backup_path)
-
-                classifier.save_model(model_path, include_metadata=True)
-
-                # 実行中アプリへモデルを反映
-                with _training_state_lock:
-                    _training_state['progress'] = 'サービスにモデルを反映中…'
-                app.classifier.load_model(model_path) if app.classifier else None
-                if app.classifier is None:
-                    app.classifier = classifier
-
-                with _training_state_lock:
-                    _training_state['status'] = 'completed'
-                    _training_state['progress'] = '学習が完了しました'
-                    comparison_with_previous = _build_model_comparison(previous_model_summary, results)
-                    _training_state['results'] = {
-                        'train_accuracy': results['train_accuracy'],
-                        'test_accuracy': results['test_accuracy'],
-                        'overfitting_gap': results['overfitting_gap'],
-                        'train_macro_f1': results.get('train_macro_f1', 0.0),
-                        'test_macro_f1': results.get('test_macro_f1', 0.0),
-                        'test_weighted_f1': results.get('test_weighted_f1', 0.0),
-                        'macro_f1_gap': results.get('macro_f1_gap', 0.0),
-                        'selection_score': results.get('selection_score', 0.0),
-                        'selected_algorithm': results.get('selected_algorithm', 'GradientBoostingClassifier'),
-                        'requested_algorithm': results.get('requested_algorithm', algorithm_strategy),
-                        'params_used': effective_params,
-                        'candidates': results.get('candidates', []),
-                        'per_class_metrics': results.get('per_class_metrics', []),
-                        'num_classes': results['num_classes'],
-                        'train_samples': results['train_samples'],
-                        'test_samples': results['test_samples'],
-                        'training_duration_seconds': results.get('training_duration_seconds', 0.0),
-                        'n_estimators_used': results['n_estimators_used'],
-                        'dataset_profile': profile,
-                        'recommendations': profile.get("recommendations", []),
-                        'previous_model_summary': previous_model_summary,
-                        'comparison_with_previous': comparison_with_previous,
-                        'quality_ok': quality_ok,
-                        'quality_issues': quality_issues,
-                        'model_path': model_path
-                    }
-                    _training_state['finished_at'] = dt.datetime.now().isoformat()
-
-            except Exception as e:
-                logging.error("学習失敗: %s", e, exc_info=True)
-                with _training_state_lock:
-                    _training_state['status'] = 'failed'
-                    _training_state['error'] = str(e)
-                    _training_state['progress'] = '学習に失敗しました'
-                    _training_state['finished_at'] = dt.datetime.now().isoformat()
-
-        thread = threading.Thread(target=run_training, daemon=True)
-        thread.start()
-
-        g.response.set_data({
-            "message": "学習を開始しました",
-            "status": "running",
-            "profile": profile,
-            "params": effective_params
-        })
-        return jsonify(g.response.get_result())
-
-    except Exception as e:
-        logging.error("学習開始エラー: %s", e, exc_info=True)
-        with _training_state_lock:
-            _training_state['status'] = 'idle'
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/train/status", methods=["GET"])
-def get_training_status():
-    """Get current training status."""
-    with _training_state_lock:
-        g.response.set_data(dict(_training_state))
-    return jsonify(g.response.get_result())
-
-
-@api_blueprint.route("/api/v1/model/reload", methods=["POST"])
-def reload_model():
-    """Reload model from disk."""
-    try:
-        model_path = AppConfig.MODEL_PATH
-        if not os.path.exists(model_path):
-            g.response.add_error_message("モデルファイルが見つかりません: %s" % model_path)
-            return jsonify(g.response.get_result()), 404
-
-        classifier = current_app.classifier
-        if classifier is None:
-            from denpyo_toroku.src.denpyo_toroku.classifier import ProductionIntentClassifier
-            classifier = ProductionIntentClassifier(
-                config_path=AppConfig.OCI_CONFIG_PATH,
-                profile=AppConfig.OCI_CONFIG_PROFILE,
-                service_endpoint=AppConfig.OCI_SERVICE_ENDPOINT,
-                compartment_id=AppConfig.OCI_CONFIG_COMPARTMENT,
-                embedding_model_id=AppConfig.EMBEDDING_MODEL_ID,
-                log_level=AppConfig.LOG_LEVEL,
-                enable_cache=AppConfig.ENABLE_CACHE,
-                cache_size=AppConfig.CACHE_SIZE,
-                enable_monitoring=True
-            )
-            current_app.classifier = classifier
-
-        classifier.load_model(model_path)
-        g.response.set_data({"message": "モデルを再読み込みしました: %s" % model_path})
-        return jsonify(g.response.get_result())
-
-    except Exception as e:
-        logging.error("モデル再読み込みエラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
-
-
-@api_blueprint.route("/api/v1/model/info", methods=["GET"])
-def get_model_info():
-    """Model information endpoint."""
-    classifier = current_app.classifier
-    if classifier is None or classifier.classifier is None:
-        g.response.set_data({
-            "classes": [],
-            "num_classes": 0,
-            "embedding_model": "-",
-            "algorithm": "GradientBoostingClassifier",
-            "n_estimators": 0,
-            "embedding_dimension": 0,
-            "model_loaded": False,
-            "message": "分類器が初期化されていません" if classifier is None else "モデルが読み込まれていません"
-        })
-        return jsonify(g.response.get_result())
-
-    try:
-        info = {
-            "classes": list(classifier.label_encoder.keys()),
-            "num_classes": len(classifier.label_encoder),
-            "embedding_model": classifier.embedding_model_id,
-            "algorithm": getattr(classifier, "algorithm_name", "GradientBoostingClassifier"),
-            "n_estimators": getattr(classifier.classifier, "n_estimators_", 0),
-            "embedding_dimension": classifier.classifier.n_features_in_ if hasattr(classifier.classifier, 'n_features_in_') else 0,
-            "model_source": getattr(classifier, "model_source", "unknown"),
-            "model_timestamp": getattr(classifier, "model_timestamp", None),
-            "training_summary": getattr(classifier, "last_training_summary", None)
-        }
-        g.response.set_data(info)
-        return jsonify(g.response.get_result())
-    except Exception as e:
-        logging.error("モデル情報取得エラー: %s", e, exc_info=True)
-        g.response.add_error_message(str(e))
-        return jsonify(g.response.get_result()), 500
 
 
 # ========================================

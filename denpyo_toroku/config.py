@@ -42,24 +42,39 @@ class AppConfig:
         "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
     )
 
+    # OCI Object Storage
+    OCI_BUCKET = os.environ.get("OCI_BUCKET", "")
+    OCI_NAMESPACE = os.environ.get("OCI_NAMESPACE", "")
+
+    # AI Model Configuration
+    VISION_MODEL_NAME = os.environ.get(
+        "VISION_MODEL_NAME",
+        config.get("ai", "vision_model_name", fallback="google.gemini-2.5-flash")
+    )
+    LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "google.gemini-2.5-flash")
+    EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
+
+    # Storage limits
+    UPLOAD_MAX_SIZE_MB = int(os.environ.get(
+        "UPLOAD_MAX_SIZE_MB",
+        config.get("storage", "upload_max_size_mb", fallback="20")
+    ))
+    ALLOWED_EXTENSIONS = os.environ.get(
+        "ALLOWED_EXTENSIONS",
+        config.get("storage", "allowed_extensions", fallback="pdf,jpeg,jpg,png")
+    ).split(",")
+
     # Base directory (denpyo_toroku/)
     _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-    # Classifier
-    MODEL_DIR = os.environ.get("MODEL_DIR", os.path.join(_BASE_DIR, "models"))
-    _default_model_rel = config.get("classifier", "default_model_path", fallback="models/intent_model_production.pkl")
-    MODEL_PATH = os.environ.get("MODEL_PATH", os.path.join(_BASE_DIR, _default_model_rel))
-    EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", config.get("classifier", "embedding_model_id", fallback="cohere.embed-v4.0"))
-    ENABLE_CACHE = os.environ.get("ENABLE_CACHE", "true").lower() == "true"
-    CACHE_SIZE = int(os.environ.get("CACHE_SIZE", config.get("classifier", "cache_size", fallback="10000")))
-    BATCH_SIZE = int(os.environ.get("BATCH_SIZE", config.get("classifier", "batch_size", fallback="96")))
-    LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
     # Database
     ORACLE_CLIENT_LIB_DIR = os.environ.get("ORACLE_CLIENT_LIB_DIR", "")
     ORACLE_26AI_CONNECTION_STRING = os.environ.get("ORACLE_26AI_CONNECTION_STRING", "")
     ADB_OCID = os.environ.get("ADB_OCID", "")
     MAX_POOL_SIZE = int(config["database"]["max_pool_size"])
+
+    # Logging
+    LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
     # Security
     HOSTNAME = os.environ.get("HOSTNAME", "")

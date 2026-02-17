@@ -1,16 +1,16 @@
 /**
- * Redux store configuration - reference architecture pattern
+ * Redux store configuration
  */
 import { configureStore } from '@reduxjs/toolkit';
 import { useDispatch, useSelector, TypedUseSelectorHook } from 'react-redux';
 import applicationReducer from './slices/applicationSlice';
-import classifierReducer from './slices/classifierSlice';
+import denpyoReducer from './slices/denpyoSlice';
 import notificationsReducer from './slices/notificationsSlice';
 
 export const store = configureStore({
   reducer: {
     application: applicationReducer,
-    classifier: classifierReducer,
+    denpyo: denpyoReducer,
     notifications: notificationsReducer
   }
 });

@@ -1,0 +1,265 @@
+"""
+OCI Object Storage サービス
+
+Oracle Cloud Infrastructure Object Storageとの連携を管理します。
+伝票ファイル（PDF/画像）のアップロード、ダウンロード、一覧取得、削除を提供します。
+
+参考: no.1-semantic-doc-search/backend/app/services/oci_service.py
+"""
+import base64
+import logging
+import os
+import random
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+# レート制限対応のリトライ設定
+OCI_API_MAX_RETRIES = int(os.environ.get("OCI_API_MAX_RETRIES", "5"))
+OCI_API_BASE_DELAY = float(os.environ.get("OCI_API_BASE_DELAY", "1.0"))
+OCI_API_MAX_DELAY = float(os.environ.get("OCI_API_MAX_DELAY", "60.0"))
+OCI_API_JITTER = float(os.environ.get("OCI_API_JITTER", "0.1"))
+
+
+class OCIStorageService:
+    """OCI Object Storage サービス
+
+    伝票ファイルのアップロード/ダウンロード/一覧取得/削除を管理します。
+    レート制限対応の指数バックオフリトライ機能を内蔵しています。
+    """
+
+    def __init__(self):
+        self._object_storage_client = None
+        self._bucket_name = os.environ.get("OCI_BUCKET", "")
+        self._namespace = os.environ.get("OCI_NAMESPACE", "")
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self._bucket_name and self._namespace)
+
+    def _get_client(self):
+        """OCI Object Storage クライアントを取得（遅延初期化）"""
+        if self._object_storage_client is not None:
+            return self._object_storage_client
+
+        try:
+            import oci
+            config_path = os.path.expanduser(
+                os.environ.get("OCI_CONFIG_PATH", "~/.oci/config")
+            )
+            profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
+
+            if os.path.exists(config_path):
+                config = oci.config.from_file(config_path, profile)
+                self._object_storage_client = oci.object_storage.ObjectStorageClient(config)
+                logger.info("OCI Object Storage クライアントを初期化しました")
+            else:
+                logger.warning("OCI 設定ファイルが見つかりません: %s", config_path)
+                return None
+        except Exception as e:
+            logger.error("OCI Object Storage クライアント初期化エラー: %s", e, exc_info=True)
+            return None
+
+        return self._object_storage_client
+
+    def _is_rate_limit_error(self, error: Exception) -> bool:
+        error_str = str(error).lower()
+        return (
+            '429' in error_str
+            or 'too many requests' in error_str
+            or 'rate limit exceeded' in error_str
+        )
+
+    def _calculate_backoff_delay(self, attempt: int, is_rate_limit: bool = False) -> float:
+        base_multiplier = 3.0 if is_rate_limit else 2.0
+        delay = OCI_API_BASE_DELAY * (base_multiplier ** attempt)
+        delay = min(delay, OCI_API_MAX_DELAY)
+        jitter = random.uniform(-OCI_API_JITTER, OCI_API_JITTER) * delay
+        return max(0.1, delay + jitter)
+
+    def _retry_api_call(self, operation_name: str, func, *args, **kwargs):
+        """リトライ付きAPI呼び出し"""
+        last_error = None
+        for attempt in range(OCI_API_MAX_RETRIES):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                last_error = e
+                is_rate_limit = self._is_rate_limit_error(e)
+                if attempt < OCI_API_MAX_RETRIES - 1:
+                    delay = self._calculate_backoff_delay(attempt, is_rate_limit)
+                    logger.warning(
+                        "%s: 試行 %d/%d 失敗 (%s)。%.1f秒後にリトライ...",
+                        operation_name, attempt + 1, OCI_API_MAX_RETRIES, str(e)[:100], delay
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error("%s: 最大リトライ回数に到達: %s", operation_name, e)
+        raise last_error
+
+    def upload_file(
+        self,
+        object_name: str,
+        file_data: bytes,
+        content_type: str = "application/octet-stream",
+        original_filename: str = "",
+    ) -> Dict[str, Any]:
+        """ファイルをObject Storageにアップロード"""
+        client = self._get_client()
+        if not client:
+            return {"success": False, "message": "OCI クライアントが初期化されていません"}
+
+        if not self.is_configured:
+            return {"success": False, "message": "OCI_BUCKET / OCI_NAMESPACE が未設定です"}
+
+        # メタデータ（日本語ファイル名対応はbase64エンコード）
+        opc_meta = {
+            "uploaded-at": datetime.now().isoformat(),
+            "file-size": str(len(file_data)),
+            "upload-source": "denpyo-toroku",
+        }
+        if original_filename:
+            opc_meta["original-filename-b64"] = base64.b64encode(
+                original_filename.encode("utf-8")
+            ).decode("ascii")
+
+        try:
+            self._retry_api_call(
+                "upload_file",
+                client.put_object,
+                namespace_name=self._namespace,
+                bucket_name=self._bucket_name,
+                object_name=object_name,
+                put_object_body=file_data,
+                content_type=content_type,
+                opc_meta=opc_meta,
+            )
+            logger.info("ファイルをアップロードしました: %s", object_name)
+            return {
+                "success": True,
+                "message": "アップロード完了",
+                "object_name": object_name,
+                "size": len(file_data),
+            }
+        except Exception as e:
+            logger.error("ファイルアップロードエラー: %s", e, exc_info=True)
+            return {"success": False, "message": f"アップロード失敗: {str(e)}"}
+
+    def download_file(self, object_name: str) -> Optional[bytes]:
+        """ファイルをObject Storageからダウンロード"""
+        client = self._get_client()
+        if not client or not self.is_configured:
+            return None
+
+        try:
+            response = self._retry_api_call(
+                "download_file",
+                client.get_object,
+                namespace_name=self._namespace,
+                bucket_name=self._bucket_name,
+                object_name=object_name,
+            )
+            return response.data.content
+        except Exception as e:
+            logger.error("ファイルダウンロードエラー: %s", e, exc_info=True)
+            return None
+
+    def list_files(self, prefix: str = "") -> List[Dict[str, Any]]:
+        """Object Storage内のファイル一覧を取得"""
+        client = self._get_client()
+        if not client or not self.is_configured:
+            return []
+
+        try:
+            kwargs = {
+                "namespace_name": self._namespace,
+                "bucket_name": self._bucket_name,
+                "fields": "name,size,timeCreated,md5",
+            }
+            if prefix:
+                kwargs["prefix"] = prefix
+
+            response = self._retry_api_call(
+                "list_files",
+                client.list_objects,
+                **kwargs,
+            )
+
+            files = []
+            for obj in response.data.objects:
+                files.append({
+                    "name": obj.name,
+                    "size": getattr(obj, "size", 0),
+                    "time_created": str(getattr(obj, "time_created", "")),
+                    "md5": getattr(obj, "md5", ""),
+                })
+            return files
+        except Exception as e:
+            logger.error("ファイル一覧取得エラー: %s", e, exc_info=True)
+            return []
+
+    def delete_file(self, object_name: str) -> Dict[str, Any]:
+        """Object Storageからファイルを削除"""
+        client = self._get_client()
+        if not client or not self.is_configured:
+            return {"success": False, "message": "OCI クライアントが利用できません"}
+
+        try:
+            self._retry_api_call(
+                "delete_file",
+                client.delete_object,
+                namespace_name=self._namespace,
+                bucket_name=self._bucket_name,
+                object_name=object_name,
+            )
+            logger.info("ファイルを削除しました: %s", object_name)
+            return {"success": True, "message": "削除完了", "object_name": object_name}
+        except Exception as e:
+            logger.error("ファイル削除エラー: %s", e, exc_info=True)
+            return {"success": False, "message": f"削除失敗: {str(e)}"}
+
+    def get_file_metadata(self, object_name: str) -> Optional[Dict[str, Any]]:
+        """ファイルのメタデータを取得"""
+        client = self._get_client()
+        if not client or not self.is_configured:
+            return None
+
+        try:
+            response = self._retry_api_call(
+                "get_file_metadata",
+                client.head_object,
+                namespace_name=self._namespace,
+                bucket_name=self._bucket_name,
+                object_name=object_name,
+            )
+            headers = response.headers
+            opc_meta = {
+                k.replace("opc-meta-", ""): v
+                for k, v in headers.items()
+                if k.startswith("opc-meta-")
+            }
+
+            # base64エンコードされた元ファイル名をデコード
+            original_filename = ""
+            if "original-filename-b64" in opc_meta:
+                try:
+                    original_filename = base64.b64decode(
+                        opc_meta["original-filename-b64"]
+                    ).decode("utf-8")
+                except Exception:
+                    pass
+
+            return {
+                "object_name": object_name,
+                "content_type": headers.get("content-type", ""),
+                "content_length": int(headers.get("content-length", 0)),
+                "etag": headers.get("etag", ""),
+                "last_modified": headers.get("last-modified", ""),
+                "original_filename": original_filename,
+                "metadata": opc_meta,
+            }
+        except Exception as e:
+            logger.error("メタデータ取得エラー: %s", e, exc_info=True)
+            return None
