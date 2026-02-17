@@ -3,7 +3,6 @@
  * グループ: 伝票登録 / 設定
  * 参照 MHTML に合わせて Lucide React のアイコンを使用。
  */
-import { h } from 'preact';
 import { useAppSelector, useAppDispatch } from '../../../redux/store';
 import { setCurrentView, toggleSidebar } from '../../../redux/slices/applicationSlice';
 import { t } from '../../../i18n';
@@ -15,7 +14,8 @@ import {
   Send,
   GraduationCap,
   BarChart3,
-  Cpu
+  Cpu,
+  Database
 } from 'lucide-react';
 
 type TKey = Parameters<typeof t>[0];
@@ -45,7 +45,8 @@ const navGroups: NavGroup[] = [
   {
     labelKey: 'nav.section.settings',
     items: [
-      { id: 'applicationSettings', nameKey: 'nav.applicationSettings', Icon: SlidersHorizontal }
+      { id: 'applicationSettings', nameKey: 'nav.applicationSettings', Icon: SlidersHorizontal },
+      { id: 'databaseSettings', nameKey: 'nav.databaseSettings', Icon: Database }
     ]
   }
 ];

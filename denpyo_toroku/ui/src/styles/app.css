@@ -1569,10 +1569,164 @@ html[dir="rtl"] .oracle-icon {
     gap: 8px;
 }
 
+.applicationSettingsView__inlineBadge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid #d5dce6;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
 .applicationSettingsView__grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px 16px;
+}
+
+.applicationSettingsView__grid--2col {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 16px;
+}
+
+.applicationSettingsView__description {
+    margin: 0 0 16px 0;
+    font-size: 0.85rem;
+    color: var(--aai-neutral-solid-1);
+}
+
+.applicationSettingsView__adbInfo {
+    margin-top: 16px;
+    padding: 16px;
+    background-color: var(--aai-neutral-light-2);
+    border-radius: 8px;
+    border: 1px solid var(--aai-neutral-lines-1);
+}
+
+.applicationSettingsView__fieldValue {
+    font-size: 0.88rem;
+    color: var(--aai-neutral-dark-1);
+    padding: 8px 12px;
+    background-color: var(--aai-neutral-light-1);
+    border: 1px solid var(--aai-neutral-lines-1);
+    border-radius: 6px;
+}
+
+.applicationSettingsView__fieldValue--monospace {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.78rem;
+    word-break: break-all;
+}
+
+.applicationSettingsView__operationResults {
+    margin-top: 20px;
+    border: 1px solid var(--aai-neutral-lines-1);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.applicationSettingsView__operationResultsHeader {
+    padding: 10px 14px;
+    background-color: var(--aai-neutral-light-2);
+    border-bottom: 1px solid var(--aai-neutral-lines-1);
+    font-weight: 600;
+}
+
+.applicationSettingsView__operationResultsList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.applicationSettingsView__operationResultItem {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--aai-neutral-lines-1);
+    font-size: 0.85rem;
+}
+
+.applicationSettingsView__operationResultItem:last-child {
+    border-bottom: none;
+}
+
+.applicationSettingsView__operationResultTimestamp {
+    flex-shrink: 0;
+    font-size: 0.78rem;
+    color: var(--aai-neutral-solid-1);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.applicationSettingsView__operationResultStatus {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.applicationSettingsView__operationResultStatus--accepted {
+    background-color: var(--aai-accent2-interactive-1);
+    color: var(--aai-accent2-dark-1);
+}
+
+.applicationSettingsView__operationResultStatus--success {
+    background-color: var(--aai-accent2-interactive-1);
+    color: var(--aai-accent2-dark-1);
+}
+
+.applicationSettingsView__operationResultStatus--error {
+    background-color: var(--aai-accent1-interactive-1);
+    color: var(--aai-accent1-dark-1);
+}
+
+.applicationSettingsView__operationResultStatus--already_available,
+.applicationSettingsView__operationResultStatus--already_stopped {
+    background-color: var(--aai-neutral-interactive-1);
+    color: var(--aai-neutral-dark-1);
+}
+
+.applicationSettingsView__operationResultStatus--cannot_start,
+.applicationSettingsView__operationResultStatus--cannot_stop {
+    background-color: var(--aai-accent3-interactive-2);
+    color: var(--aai-accent4-dark-1);
+}
+
+.applicationSettingsView__operationResultMessage {
+    flex: 1;
+    color: var(--aai-neutral-dark-1);
+}
+
+/* Status classes for ADB lifecycle states */
+.ics-status-healthy {
+    background-color: var(--aai-accent2-interactive-2) !important;
+    color: var(--aai-accent2-dark-1) !important;
+}
+
+.ics-status-warning {
+    background-color: var(--aai-accent3-interactive-2) !important;
+    color: var(--aai-accent4-dark-1) !important;
+}
+
+.ics-status-inactive {
+    background-color: var(--aai-neutral-interactive-1) !important;
+    color: var(--aai-neutral-dark-1) !important;
+}
+
+.ics-status-error {
+    background-color: var(--aai-accent1-interactive-1) !important;
+    color: var(--aai-accent1-dark-1) !important;
+}
+
+.ics-status-unknown {
+    background-color: var(--aai-neutral-interactive-1) !important;
+    color: var(--aai-neutral-solid-1) !important;
 }
 
 .applicationSettingsView__field {
@@ -1596,6 +1750,41 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+.applicationSettingsView__walletSection {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.applicationSettingsView__walletFileName,
+.applicationSettingsView__walletLocation {
+    font-size: 0.8rem;
+    color: var(--aai-neutral-solid-1);
+    word-break: break-all;
+}
+
+.applicationSettingsView__walletStatusWrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+}
+
+.applicationSettingsView__walletStatusLabel {
+    color: var(--aai-neutral-solid-1);
+}
+
+.applicationSettingsView__walletStatusOk {
+    color: var(--aai-accent2-dark-1);
+    font-weight: 700;
+}
+
+.applicationSettingsView__walletStatusNg {
+    color: var(--aai-accent1-dark-1);
+    font-weight: 700;
 }
 
 .applicationSettingsView__dropZone {

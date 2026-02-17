@@ -2,7 +2,6 @@
  * App.tsx - Root application component
  * Reference AgentStudio Grid Layout: Header(span3) + SideNav + Content(span2) + Footer(span3)
  */
-import { h } from 'preact';
 import { useMemo, useEffect } from 'preact/hooks';
 import { Provider } from 'react-redux';
 import { store, useAppSelector, useAppDispatch } from '../redux/store';
@@ -19,6 +18,7 @@ import { Train } from '../views/train/Train';
 import { Stats } from '../views/stats/Stats';
 import { ModelInfo } from '../views/modelInfo/ModelInfo';
 import { ApplicationSettings } from '../views/applicationSettings/ApplicationSettings';
+import { DatabaseSettings } from '../views/databaseSettings/DatabaseSettings';
 import { NotificationContainer } from './NotificationContainer';
 import { LoginView } from '../views/login/LoginView';
 import { setAuthenticated, setUserName } from '../redux/slices/applicationSlice';
@@ -44,6 +44,8 @@ function ViewSwitcher() {
       return <ModelInfo />;
     case 'applicationSettings':
       return <ApplicationSettings />;
+    case 'databaseSettings':
+      return <DatabaseSettings />;
     default:
       return <WelcomeView />;
   }

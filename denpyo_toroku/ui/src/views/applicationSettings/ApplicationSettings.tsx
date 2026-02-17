@@ -2,7 +2,6 @@
  * ApplicationSettings - OCI 設定管理。
  * 読み込み/保存/接続テストのフローを提供。
  */
-import { h } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
 import { Upload, KeyRound, CheckCircle, XCircle } from 'lucide-react';

@@ -4,10 +4,14 @@ import time
 import json
 import threading
 import os
+import shutil
+import tempfile
+import zipfile
 import datetime as dt
 import hashlib
 import re
 import statistics
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 from flask import Blueprint, request, jsonify, g, current_app, make_response, session, redirect
@@ -62,6 +66,13 @@ _training_state_lock = threading.Lock()
 _default_auth_username = os.environ.get("DENPYO_TOROKU_LOGIN_USERNAME", "admin")
 _default_auth_password = os.environ.get("DENPYO_TOROKU_LOGIN_PASSWORD", "admin")
 _OCI_MASKED_KEY = "[CONFIGURED]"
+_DB_MASKED_SECRET = "[CONFIGURED]"
+_DB_CONN_ENV_KEY = "ORACLE_26AI_CONNECTION_STRING"
+_DB_ADB_OCID_ENV_KEY = "ADB_OCID"
+_DB_REQUIRED_WALLET_FILES = ("cwallet.sso", "ewallet.pem", "sqlnet.ora", "tnsnames.ora")
+_DB_UNNECESSARY_WALLET_FILES = ("README", "keystore.jks", "truststore.jks", "ojdbc.properties", "ewallet.p12")
+_DB_TEST_TIMEOUT_SECONDS = 15  # DB接続テストの最大待機時間（秒）
+_DB_TEST_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="db_test_")
 _OCI_KEY_PATTERN = re.compile(
     r"-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----"
 )
@@ -431,6 +442,312 @@ def _build_oci_test_config(request_settings: Dict[str, Any]) -> Dict[str, str]:
         "key_content": key_content,
         "region": region,
     }
+
+
+def _parse_db_connection_string(connection_string: str) -> Dict[str, str]:
+    value = _normalize_text(connection_string)
+    if not value or "/" not in value or "@" not in value:
+        return {"username": "", "password": "", "dsn": ""}
+    user_pass, dsn = value.rsplit("@", 1)
+    if "/" not in user_pass:
+        return {"username": "", "password": "", "dsn": ""}
+    username, password = user_pass.split("/", 1)
+    return {
+        "username": _normalize_text(username),
+        "password": _normalize_text(password),
+        "dsn": _normalize_text(dsn),
+    }
+
+
+def _build_db_connection_string(username: str, password: str, dsn: str) -> str:
+    return f"{username}/{password}@{dsn}"
+
+
+def _db_wallet_location(create_if_missing: bool = False) -> Optional[str]:
+    tns_admin = _normalize_text(os.environ.get("TNS_ADMIN"))
+    if tns_admin:
+        path = _expand_path(tns_admin, tns_admin)
+        if create_if_missing:
+            os.makedirs(path, exist_ok=True)
+            return path
+        return path if os.path.exists(path) else None
+
+    oracle_client_lib_dir = _normalize_text(os.environ.get("ORACLE_CLIENT_LIB_DIR"))
+    if oracle_client_lib_dir:
+        wallet_path = os.path.join(_expand_path(oracle_client_lib_dir, oracle_client_lib_dir), "network", "admin")
+        # reference behavior: TNS_ADMIN is derived from ORACLE_CLIENT_LIB_DIR/network/admin
+        os.environ["TNS_ADMIN"] = wallet_path
+    else:
+        wallet_path = os.path.join(str(_project_root_path()), "denpyo_toroku", "data", "wallet")
+
+    if create_if_missing:
+        os.makedirs(wallet_path, exist_ok=True)
+        return wallet_path
+    return wallet_path if os.path.exists(wallet_path) else None
+
+
+def _extract_services_from_tnsnames(wallet_location: Optional[str]) -> List[str]:
+    if not wallet_location:
+        return []
+    tnsnames_path = os.path.join(wallet_location, "tnsnames.ora")
+    if not os.path.exists(tnsnames_path):
+        return []
+    try:
+        with open(tnsnames_path, "r", encoding="utf-8") as reader:
+            content = reader.read()
+        matches = re.findall(r"^([A-Za-z0-9_-]+)\s*=", content, re.MULTILINE)
+        return sorted(set(_normalize_text(item) for item in matches if _normalize_text(item)))
+    except Exception:
+        return []
+
+
+def _wallet_is_ready(wallet_location: Optional[str]) -> bool:
+    if not wallet_location:
+        return False
+    return all(os.path.exists(os.path.join(wallet_location, file_name)) for file_name in _DB_REQUIRED_WALLET_FILES)
+
+
+def _load_database_settings_snapshot() -> Dict[str, Any]:
+    conn_info = _parse_db_connection_string(os.environ.get(_DB_CONN_ENV_KEY, ""))
+    adb_ocid = _normalize_text(os.environ.get(_DB_ADB_OCID_ENV_KEY, ""))
+    wallet_location = _db_wallet_location(create_if_missing=False)
+    wallet_uploaded = _wallet_is_ready(wallet_location)
+    available_services = _extract_services_from_tnsnames(wallet_location)
+
+    has_core_settings = bool(conn_info["username"] and conn_info["password"] and conn_info["dsn"])
+    is_configured = has_core_settings and wallet_uploaded
+
+    return {
+        "settings": {
+            "username": conn_info["username"],
+            "password": _DB_MASKED_SECRET if conn_info["password"] else "",
+            "dsn": conn_info["dsn"],
+            "adb_ocid": adb_ocid,
+            "wallet_uploaded": wallet_uploaded,
+            "available_services": available_services,
+        },
+        "wallet_location": wallet_location if wallet_uploaded else None,
+        "is_connected": False,
+        "is_configured": is_configured,
+        "status": "configured" if is_configured else "not_configured",
+    }
+
+
+def _save_database_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
+    current_snapshot = _load_database_settings_snapshot()
+    current_settings = current_snapshot["settings"]
+    current_conn_info = _parse_db_connection_string(os.environ.get(_DB_CONN_ENV_KEY, ""))
+
+    username = _normalize_text(settings_payload.get("username"), current_conn_info["username"] or current_settings.get("username", ""))
+    dsn = _normalize_text(settings_payload.get("dsn"), current_conn_info["dsn"] or current_settings.get("dsn", ""))
+
+    incoming_password = settings_payload.get("password")
+    incoming_password_text = _normalize_text(incoming_password)
+    if incoming_password_text == _DB_MASKED_SECRET:
+        password = current_conn_info["password"]
+    elif incoming_password_text:
+        password = incoming_password_text
+    else:
+        password = current_conn_info["password"]
+
+    if not username or not password or not dsn:
+        raise ValueError("ユーザー名・パスワード・DSN は必須です。")
+    adb_ocid = _normalize_text(settings_payload.get("adb_ocid"), os.environ.get(_DB_ADB_OCID_ENV_KEY, ""))
+
+    conn_string = _build_db_connection_string(username, password, dsn)
+    _upsert_env_values(
+        _env_file_path(),
+        {
+            _DB_CONN_ENV_KEY: conn_string,
+            _DB_ADB_OCID_ENV_KEY: adb_ocid,
+        },
+    )
+    load_dotenv(_env_file_path(), override=True)
+
+    os.environ[_DB_CONN_ENV_KEY] = conn_string
+    os.environ[_DB_ADB_OCID_ENV_KEY] = adb_ocid
+    AppConfig.ADB_OCID = adb_ocid
+
+    snapshot = _load_database_settings_snapshot()
+    snapshot["status"] = "saved"
+    return snapshot
+
+
+def _database_env_connection_info(include_password: bool = False) -> Dict[str, Any]:
+    conn_info = _parse_db_connection_string(os.environ.get(_DB_CONN_ENV_KEY, ""))
+    adb_ocid = _normalize_text(os.environ.get(_DB_ADB_OCID_ENV_KEY, ""))
+    region = _normalize_text(os.environ.get("OCI_REGION"), _normalize_text(getattr(AppConfig, "OCI_REGION", ""), "ap-osaka-1"))
+    wallet_location = _db_wallet_location(create_if_missing=False)
+    wallet_exists = _wallet_is_ready(wallet_location)
+    available_services = _extract_services_from_tnsnames(wallet_location)
+
+    if not conn_info["username"] or not conn_info["dsn"]:
+        return {
+            "success": False,
+            "message": f"{_DB_CONN_ENV_KEY} 環境変数が未設定、または形式が不正です。",
+            "username": None,
+            "password": None,
+            "dsn": None,
+            "adb_ocid": adb_ocid or None,
+            "region": region or None,
+            "wallet_exists": wallet_exists,
+            "wallet_location": wallet_location if wallet_exists else None,
+            "available_services": available_services,
+        }
+
+    return {
+        "success": True,
+        "message": "環境変数から接続情報を取得しました。",
+        "username": conn_info["username"],
+        "password": conn_info["password"] if include_password else (_DB_MASKED_SECRET if conn_info["password"] else ""),
+        "dsn": conn_info["dsn"],
+        "adb_ocid": adb_ocid or None,
+        "region": region or None,
+        "wallet_exists": wallet_exists,
+        "wallet_location": wallet_location if wallet_exists else None,
+        "available_services": available_services,
+    }
+
+
+def _map_db_connection_error(error_text: str) -> str:
+    if "DPY-6005" in error_text or "DPY-6000" in error_text:
+        return "接続エラー: データベースが停止している可能性があります。"
+    if "ORA-01017" in error_text:
+        return "接続エラー: ユーザー名またはパスワードが正しくありません。"
+    if "ORA-12154" in error_text:
+        return "接続エラー: DSN が見つかりません。Wallet と tnsnames.ora を確認してください。"
+    if "ORA-12541" in error_text:
+        return "接続エラー: データベースサーバーに接続できません。"
+    if "DPY-4011" in error_text:
+        return "接続エラー: Wallet または TNS 設定に問題があります。"
+    return f"接続エラー: {error_text}"
+
+
+def _test_database_connection(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = settings_payload if isinstance(settings_payload, dict) else {}
+    snapshot = _load_database_settings_snapshot()["settings"]
+    env_info = _database_env_connection_info(include_password=True)
+
+    username = _normalize_text(payload.get("username"), snapshot.get("username", ""))
+    dsn = _normalize_text(payload.get("dsn"), snapshot.get("dsn", ""))
+    incoming_password = _normalize_text(payload.get("password"))
+    if incoming_password == _DB_MASKED_SECRET or not incoming_password:
+        password = _normalize_text(env_info.get("password") if env_info.get("success") else "")
+    else:
+        password = incoming_password
+
+    if not username or not password or not dsn:
+        return {
+            "success": False,
+            "message": "接続情報が不完全です。ユーザー名・パスワード・DSN を入力してください。",
+            "details": None,
+        }
+
+    wallet_location = _db_wallet_location(create_if_missing=False)
+    if not _wallet_is_ready(wallet_location):
+        return {
+            "success": False,
+            "message": f"Wallet ディレクトリが未設定、または必要ファイルが不足しています: {wallet_location}",
+            "details": None,
+        }
+
+    try:
+        import oracledb  # type: ignore
+    except Exception:
+        return {
+            "success": False,
+            "message": "oracledb モジュールが未インストールです。`pip install oracledb` を実行してください。",
+            "details": None,
+        }
+
+    connection = None
+    started_at = time.time()
+    try:
+        connection = oracledb.connect(
+            user=username,
+            password=password,
+            dsn=dsn,
+            config_dir=wallet_location,
+            wallet_location=wallet_location,
+            wallet_password=password,
+            tcp_connect_timeout=10,
+        )
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM DUAL")
+            cursor.fetchone()
+        elapsed = round(time.time() - started_at, 2)
+        return {
+            "success": True,
+            "message": "データベース接続に成功しました。",
+            "details": {
+                "username": username,
+                "dsn": dsn,
+                "wallet_location": wallet_location,
+                "elapsed_sec": str(elapsed),
+            },
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": _map_db_connection_error(str(e)),
+            "details": None,
+        }
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
+def _upload_database_wallet(uploaded_file: Any) -> Dict[str, Any]:
+    filename = _normalize_text(getattr(uploaded_file, "filename", ""))
+    if not filename.lower().endswith(".zip"):
+        raise ValueError("ZIPファイルのみ対応しています。")
+
+    wallet_location = _db_wallet_location(create_if_missing=True)
+    if not wallet_location:
+        raise ValueError("Wallet の保存先を決定できませんでした。")
+
+    with tempfile.NamedTemporaryFile(prefix="wallet_", suffix=".zip", delete=False) as temp_writer:
+        temp_path = temp_writer.name
+    try:
+        uploaded_file.save(temp_path)
+
+        if os.path.exists(wallet_location):
+            backup_dir = f"{wallet_location}_backup_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.move(wallet_location, backup_dir)
+        os.makedirs(wallet_location, exist_ok=True)
+
+        with zipfile.ZipFile(temp_path, "r") as zip_ref:
+            zip_ref.extractall(wallet_location)
+
+        for file_name in _DB_UNNECESSARY_WALLET_FILES:
+            file_path = os.path.join(wallet_location, file_name)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
+
+        missing = [f for f in _DB_REQUIRED_WALLET_FILES if not os.path.exists(os.path.join(wallet_location, f))]
+        if missing:
+            raise ValueError(
+                "必要な Wallet ファイルが不足しています: %s" % ", ".join(missing)
+            )
+
+        services = _extract_services_from_tnsnames(wallet_location)
+        return {
+            "success": True,
+            "message": "Walletをアップロードしました。",
+            "wallet_location": wallet_location,
+            "available_services": services,
+        }
+    finally:
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
 
 
 def _sanitize_training_items(training_data: Any) -> Tuple[List[Dict[str, str]], Dict[str, int]]:
@@ -1009,6 +1326,125 @@ def test_oci_connection():
         return jsonify(g.response.get_result())
 
 
+@api_blueprint.route("/api/v1/database/settings", methods=["GET"])
+def get_database_settings():
+    """Get current database settings without performing a connection test."""
+    try:
+        snapshot = _load_database_settings_snapshot()
+        g.response.set_data(snapshot)
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("DB 設定の読み込みエラー: %s", e, exc_info=True)
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/database/settings/env", methods=["GET"])
+def get_database_env_settings():
+    """Read DB connection info from environment variables."""
+    try:
+        include_password = _to_bool(request.args.get("include_password"), default=False)
+        env_info = _database_env_connection_info(include_password=include_password)
+        g.response.set_data(env_info)
+        if env_info.get("success", False):
+            return jsonify(g.response.get_result())
+        return jsonify(g.response.get_result()), 200
+    except Exception as e:
+        logging.error("DB 環境変数読み込みエラー: %s", e, exc_info=True)
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/database/settings", methods=["POST"])
+def save_database_settings():
+    """Save DB settings to .env."""
+    try:
+        body = request.get_json(silent=True) or {}
+        settings_payload = body.get("settings") if isinstance(body.get("settings"), dict) else body
+        if not isinstance(settings_payload, dict):
+            g.response.add_error_message("リクエストボディが不正です。")
+            return jsonify(g.response.get_result()), 422
+
+        snapshot = _save_database_settings(settings_payload)
+        g.response.set_data(snapshot)
+        return jsonify(g.response.get_result())
+    except ValueError as e:
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 422
+    except Exception as e:
+        logging.error("DB 設定の保存エラー: %s", e, exc_info=True)
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/database/settings/test", methods=["POST"])
+def test_database_connection():
+    """Test DB connection with current or provided settings.
+    
+    タイムアウト制御付きでDB接続テストを実行し、メインスレッドをブロックしないようにします。
+    参考: no.1-semantic-doc-search プロジェクトの実装
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        settings_payload = body.get("settings") if isinstance(body.get("settings"), dict) else body
+        
+        # タイムアウト付きでDB接続テストを実行（非ブロッキング）
+        started_at = time.time()
+        try:
+            future = _DB_TEST_EXECUTOR.submit(_test_database_connection, settings_payload)
+            result = future.result(timeout=_DB_TEST_TIMEOUT_SECONDS)
+        except FuturesTimeoutError:
+            elapsed = round(time.time() - started_at, 2)
+            logging.warning("DB 接続テストがタイムアウトしました (%s秒)", elapsed)
+            result = {
+                "success": False,
+                "message": f"接続テストがタイムアウトしました（{elapsed}秒）。データベースが起動しているか確認してください。",
+                "details": {"timeout_seconds": str(_DB_TEST_TIMEOUT_SECONDS), "elapsed_sec": str(elapsed)},
+            }
+        except Exception as e:
+            logging.error("DB 接続テスト実行エラー: %s", e, exc_info=True)
+            result = {
+                "success": False,
+                "message": f"接続テスト実行エラー: {str(e)}",
+                "details": None,
+            }
+        
+        g.response.set_data(result)
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("DB 接続テストエラー: %s", e, exc_info=True)
+        g.response.set_data({
+            "success": False,
+            "message": f"接続テストエラー: {str(e)}",
+            "details": None,
+        })
+        return jsonify(g.response.get_result())
+
+
+@api_blueprint.route("/api/v1/database/settings/wallet", methods=["POST"])
+def upload_database_wallet():
+    """Upload wallet zip and expand it to wallet directory."""
+    try:
+        if "file" not in request.files:
+            g.response.add_error_message("アップロードファイルが見つかりません。")
+            return jsonify(g.response.get_result()), 422
+        uploaded_file = request.files.get("file")
+        if uploaded_file is None or not uploaded_file.filename:
+            g.response.add_error_message("ファイル名が不正です。")
+            return jsonify(g.response.get_result()), 422
+
+        result = _upload_database_wallet(uploaded_file)
+        g.response.set_data(result)
+        return jsonify(g.response.get_result())
+    except ValueError as e:
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 422
+    except Exception as e:
+        logging.error("Wallet アップロードエラー: %s", e, exc_info=True)
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 500
+
+
 @api_blueprint.route("/api/v1/version", methods=["GET"])
 def get_version():
     """Version endpoint."""
@@ -1024,6 +1460,11 @@ def get_version():
             "oci_settings_get": "/api/v1/oci/settings",
             "oci_settings_save": "/api/v1/oci/settings",
             "oci_test": "/api/v1/oci/test",
+            "db_settings_get": "/api/v1/database/settings",
+            "db_settings_save": "/api/v1/database/settings",
+            "db_settings_env": "/api/v1/database/settings/env",
+            "db_settings_test": "/api/v1/database/settings/test",
+            "db_wallet_upload": "/api/v1/database/settings/wallet",
             "model_info": "/api/v1/model/info",
             "model_reload": "/api/v1/model/reload",
             "cache_clear": "/api/v1/cache/clear",
@@ -1970,4 +2411,231 @@ def get_model_info():
     except Exception as e:
         logging.error("モデル情報取得エラー: %s", e, exc_info=True)
         g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 500
+
+
+# ========================================
+# ADB (Autonomous Database) Management API
+# ========================================
+
+def _get_oci_config_for_adb() -> Optional[Dict[str, Any]]:
+    """OCI設定を取得してADB操作用のconfigを返す
+
+    ページの「リージョン」フィールドに表示される値（.envのOCI_REGION）と
+    OCIクライアントが使用するregionを統一するため、~/.oci/configのregionを
+    .envのOCI_REGIONで上書きする。
+    """
+    try:
+        config_path = os.path.expanduser(AppConfig.OCI_CONFIG_PATH)
+        profile = AppConfig.OCI_CONFIG_PROFILE
+
+        if not os.path.exists(config_path):
+            logging.warning("OCI設定ファイルが見つかりません: %s", config_path)
+            return None
+
+        import oci
+        config = oci.config.from_file(config_path, profile)
+
+        # ページのリージョンフィールドと統一するため、.envのOCI_REGIONで上書き
+        # これにより「再取得」時に使用されるregionはページに表示される値と同じになる
+        env_region = os.environ.get("OCI_REGION", AppConfig.OCI_REGION)
+        if env_region:
+            config["region"] = env_region
+
+        return config
+    except Exception as e:
+        logging.error("OCI設定読み込みエラー: %s", e, exc_info=True)
+        return None
+
+
+def _get_adb_client():
+    """ADBクライアントを取得"""
+    try:
+        import oci
+        config = _get_oci_config_for_adb()
+        if not config:
+            return None
+        return oci.database.DatabaseClient(config)
+    except Exception as e:
+        logging.error("ADBクライアント作成エラー: %s", e, exc_info=True)
+        return None
+
+
+@api_blueprint.route("/api/v1/database/adb/info", methods=["GET"])
+def get_adb_info():
+    """Autonomous Database情報を取得"""
+    adb_ocid = os.environ.get(_DB_ADB_OCID_ENV_KEY, "").strip()
+
+    # .envからregionを取得（デフォルトはAppConfig.OCI_REGION = ap-osaka-1）
+    region = os.environ.get("OCI_REGION", AppConfig.OCI_REGION)
+
+    if not adb_ocid:
+        g.response.set_data({
+            "status": "not_configured",
+            "message": "ADB OCID が設定されていません。",
+            "id": None,
+            "display_name": None,
+            "lifecycle_state": None,
+            "region": region
+        })
+        return jsonify(g.response.get_result())
+
+    try:
+        db_client = _get_adb_client()
+        if not db_client:
+            g.response.set_data({
+                "status": "error",
+                "message": "OCI接続を確認できません。OCI設定を確認してください。",
+                "id": adb_ocid,
+                "display_name": None,
+                "lifecycle_state": None,
+                "region": region,
+            })
+            return jsonify(g.response.get_result())
+
+        adb = db_client.get_autonomous_database(adb_ocid).data
+
+        g.response.set_data({
+            "status": "success",
+            "message": "データベース情報を取得しました。",
+            "id": adb.id,
+            "display_name": adb.display_name,
+            "lifecycle_state": adb.lifecycle_state,
+            "db_name": getattr(adb, "db_name", None),
+            "cpu_core_count": getattr(adb, "cpu_core_count", None),
+            "data_storage_size_in_tbs": getattr(adb, "data_storage_size_in_tbs", None),
+            "region": region
+        })
+        return jsonify(g.response.get_result())
+
+    except Exception as e:
+        logging.error("ADB情報取得エラー: %s", e, exc_info=True)
+        g.response.set_data({
+            "status": "error",
+            "message": f"データベース情報の取得に失敗しました: {str(e)}",
+            "id": adb_ocid,
+            "display_name": None,
+            "lifecycle_state": None,
+            "region": region,
+        })
+        return jsonify(g.response.get_result())
+
+
+@api_blueprint.route("/api/v1/database/adb/start", methods=["POST"])
+def start_adb():
+    """Autonomous Databaseを起動"""
+    adb_ocid = os.environ.get(_DB_ADB_OCID_ENV_KEY, "").strip()
+    region = os.environ.get("OCI_REGION", AppConfig.OCI_REGION)
+
+    if not adb_ocid:
+        g.response.add_error_message("ADB OCID が設定されていません。")
+        return jsonify(g.response.get_result()), 400
+
+    try:
+        db_client = _get_adb_client()
+        if not db_client:
+            g.response.add_error_message("OCI接続を確認できません。OCI設定を確認してください。")
+            return jsonify(g.response.get_result()), 500
+
+        # 現在の状態を確認
+        adb = db_client.get_autonomous_database(adb_ocid).data
+
+        if adb.lifecycle_state == "AVAILABLE":
+            g.response.set_data({
+                "status": "already_available",
+                "message": "データベースは既に起動しています。",
+                "id": adb.id,
+                "display_name": adb.display_name,
+                "lifecycle_state": adb.lifecycle_state,
+                "region": region,
+            })
+            return jsonify(g.response.get_result())
+
+        if adb.lifecycle_state not in ["STOPPED", "UNAVAILABLE"]:
+            g.response.set_data({
+                "status": "cannot_start",
+                "message": f"データベースの現在の状態 ({adb.lifecycle_state}) では起動できません。",
+                "id": adb.id,
+                "display_name": adb.display_name,
+                "lifecycle_state": adb.lifecycle_state,
+                "region": region,
+            })
+            return jsonify(g.response.get_result())
+
+        # 起動リクエスト送信
+        db_client.start_autonomous_database(adb_ocid)
+
+        g.response.set_data({
+            "status": "accepted",
+            "message": f"データベース '{adb.display_name}' の起動を開始しました。",
+            "id": adb.id,
+            "display_name": adb.display_name,
+            "lifecycle_state": "STARTING",
+            "region": region,
+        })
+        return jsonify(g.response.get_result())
+
+    except Exception as e:
+        logging.error("ADB起動エラー: %s", e, exc_info=True)
+        g.response.add_error_message(f"データベースの起動に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/database/adb/stop", methods=["POST"])
+def stop_adb():
+    """Autonomous Databaseを停止"""
+    adb_ocid = os.environ.get(_DB_ADB_OCID_ENV_KEY, "").strip()
+    region = os.environ.get("OCI_REGION", AppConfig.OCI_REGION)
+
+    if not adb_ocid:
+        g.response.add_error_message("ADB OCID が設定されていません。")
+        return jsonify(g.response.get_result()), 400
+
+    try:
+        db_client = _get_adb_client()
+        if not db_client:
+            g.response.add_error_message("OCI接続を確認できません。OCI設定を確認してください。")
+            return jsonify(g.response.get_result()), 500
+
+        # 現在の状態を確認
+        adb = db_client.get_autonomous_database(adb_ocid).data
+
+        if adb.lifecycle_state == "STOPPED":
+            g.response.set_data({
+                "status": "already_stopped",
+                "message": "データベースは既に停止しています。",
+                "id": adb.id,
+                "display_name": adb.display_name,
+                "lifecycle_state": adb.lifecycle_state,
+                "region": region,
+            })
+            return jsonify(g.response.get_result())
+
+        if adb.lifecycle_state not in ["AVAILABLE"]:
+            g.response.set_data({
+                "status": "cannot_stop",
+                "message": f"データベースの現在の状態 ({adb.lifecycle_state}) では停止できません。",
+                "id": adb.id,
+                "display_name": adb.display_name,
+                "lifecycle_state": adb.lifecycle_state,
+                "region": region,
+            })
+            return jsonify(g.response.get_result())
+
+        # 停止リクエスト送信
+        db_client.stop_autonomous_database(adb_ocid)
+
+        g.response.set_data({
+            "status": "accepted",
+            "message": f"データベース '{adb.display_name}' の停止を開始しました。",
+            "id": adb.id,
+            "display_name": adb.display_name,
+            "lifecycle_state": "STOPPING",
+            "region": region,
+        })
+        return jsonify(g.response.get_result())
+
+    except Exception as e:
+        logging.error("ADB停止エラー: %s", e, exc_info=True)
+        g.response.add_error_message(f"データベースの停止に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500

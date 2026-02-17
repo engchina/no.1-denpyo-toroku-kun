@@ -36,6 +36,7 @@ class AppConfig:
     OCI_CONFIG_PATH = os.environ.get("OCI_CONFIG_PATH", "~/.oci/config")
     OCI_CONFIG_PROFILE = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
     OCI_CONFIG_COMPARTMENT = os.environ.get("OCI_CONFIG_COMPARTMENT", "")
+    OCI_REGION = os.environ.get("OCI_REGION", "ap-osaka-1")
     OCI_SERVICE_ENDPOINT = os.environ.get(
         "OCI_SERVICE_ENDPOINT",
         "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
@@ -55,10 +56,9 @@ class AppConfig:
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
     # Database
-    DB_HOST = os.environ.get("DB_HOST", "")
-    DB_PORT = os.environ.get("DB_PORT", "")
-    DB_SERVICE = os.environ.get("DB_SERVICE", "")
-    DB_USER = os.environ.get("DB_USER", "")
+    ORACLE_CLIENT_LIB_DIR = os.environ.get("ORACLE_CLIENT_LIB_DIR", "")
+    ORACLE_26AI_CONNECTION_STRING = os.environ.get("ORACLE_26AI_CONNECTION_STRING", "")
+    ADB_OCID = os.environ.get("ADB_OCID", "")
     MAX_POOL_SIZE = int(config["database"]["max_pool_size"])
 
     # Security
