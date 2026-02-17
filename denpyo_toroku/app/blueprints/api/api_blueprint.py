@@ -158,6 +158,10 @@ def _runtime_oci_defaults() -> Dict[str, str]:
             _normalize_text(getattr(AppConfig, "OCI_CONFIG_COMPARTMENT", "")),
         ),
         "service_endpoint": service_endpoint,
+        "llm_model_id": _normalize_text(
+            os.environ.get("LLM_MODEL_ID"),
+            _normalize_text(getattr(AppConfig, "LLM_MODEL_ID", ""), "google.gemini-2.5-pro"),
+        ),
         "embedding_model_id": _normalize_text(
             os.environ.get("EMBEDDING_MODEL_ID"),
             _normalize_text(getattr(AppConfig, "EMBEDDING_MODEL_ID", ""), "cohere.embed-v4.0"),
@@ -232,6 +236,7 @@ def _load_oci_settings_snapshot() -> Dict[str, Any]:
             "key_file": key_file,
             "compartment_id": defaults["compartment_id"],
             "service_endpoint": defaults["service_endpoint"],
+            "llm_model_id": defaults["llm_model_id"],
             "embedding_model_id": defaults["embedding_model_id"],
         },
         "has_credentials": has_credentials,
@@ -284,12 +289,14 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     os.environ["OCI_CONFIG_PROFILE"] = settings["profile"]
     os.environ["OCI_CONFIG_COMPARTMENT"] = settings["compartment_id"]
     os.environ["OCI_SERVICE_ENDPOINT"] = settings["service_endpoint"]
+    os.environ["LLM_MODEL_ID"] = settings["llm_model_id"]
     os.environ["EMBEDDING_MODEL_ID"] = settings["embedding_model_id"]
 
     AppConfig.OCI_CONFIG_PATH = settings["config_path"]
     AppConfig.OCI_CONFIG_PROFILE = settings["profile"]
     AppConfig.OCI_CONFIG_COMPARTMENT = settings["compartment_id"]
     AppConfig.OCI_SERVICE_ENDPOINT = settings["service_endpoint"]
+    AppConfig.LLM_MODEL_ID = settings["llm_model_id"]
     AppConfig.EMBEDDING_MODEL_ID = settings["embedding_model_id"]
 
 
@@ -383,6 +390,11 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             current_settings.get("compartment_id", ""),
         ),
         "service_endpoint": service_endpoint,
+        "llm_model_id": _normalize_text(
+            settings_payload.get("llm_model_id"),
+            current_settings.get("llm_model_id", "google.gemini-2.5-pro"),
+        )
+        or "google.gemini-2.5-pro",
         "embedding_model_id": _normalize_text(
             settings_payload.get("embedding_model_id"),
             current_settings.get("embedding_model_id", "cohere.embed-v4.0"),
@@ -397,6 +409,7 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             "OCI_CONFIG_PROFILE": settings_for_env["profile"],
             "OCI_CONFIG_COMPARTMENT": settings_for_env["compartment_id"],
             "OCI_SERVICE_ENDPOINT": settings_for_env["service_endpoint"],
+            "LLM_MODEL_ID": settings_for_env["llm_model_id"],
             "EMBEDDING_MODEL_ID": settings_for_env["embedding_model_id"],
         },
     )

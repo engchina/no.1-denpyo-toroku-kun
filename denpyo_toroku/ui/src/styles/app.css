@@ -1585,6 +1585,13 @@ html[dir="rtl"] .oracle-icon {
     gap: 12px 16px;
 }
 
+.applicationSettingsView__row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 16px;
+    grid-column: span 2;
+}
+
 .applicationSettingsView__grid--2col {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

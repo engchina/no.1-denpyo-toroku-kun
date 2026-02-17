@@ -125,6 +125,7 @@ export const ja = {
   'settings.field.userOcid': 'ユーザー OCID',
   'settings.field.tenancyOcid': 'テナンシ OCID',
   'settings.field.fingerprint': 'フィンガープリント',
+  'settings.field.llmModelId': '大規模言語モデル ID',
   'settings.field.embeddingModelId': '埋め込みモデル ID',
   'settings.field.serviceEndpoint': 'サービス・エンドポイント',
   'settings.field.configPath': 'OCI 設定ファイルのパス',
