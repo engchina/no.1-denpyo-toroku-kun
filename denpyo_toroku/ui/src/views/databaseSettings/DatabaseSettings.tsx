@@ -480,11 +480,7 @@ export function DatabaseSettings() {
                 </div>
                 <div class="applicationSettingsView__field">
                   <span class="applicationSettingsView__fieldLabel">{t('settings.adb.field.status')}</span>
-                  <div class="applicationSettingsView__fieldValue">
-                    <span class={`applicationSettingsView__heroBadge ${getAdbStatusClassName(adbInfo.lifecycle_state)}`}>
-                      {getAdbLifecycleLabel(adbInfo.lifecycle_state)}
-                    </span>
-                  </div>
+                  <div class="applicationSettingsView__fieldValue">{getAdbLifecycleLabel(adbInfo.lifecycle_state)}</div>
                 </div>
               </div>
             </div>
