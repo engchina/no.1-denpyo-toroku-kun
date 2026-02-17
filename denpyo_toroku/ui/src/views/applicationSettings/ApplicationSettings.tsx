@@ -12,9 +12,6 @@ import { t } from '../../i18n';
 
 const MASKED_KEY = '[CONFIGURED]';
 const DEFAULT_REGION = 'us-chicago-1';
-const DEFAULT_ENDPOINT = 'https://inference.generativeai.us-chicago-1.oci.oraclecloud.com';
-const DEFAULT_LLM_MODEL = 'google.gemini-2.5-pro';
-const DEFAULT_EMBEDDING_MODEL = 'cohere.embed-v4.0';
 const PEM_PATTERN = /-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----/;
 
 interface OciSettingsForm {
@@ -26,10 +23,6 @@ interface OciSettingsForm {
   config_path: string;
   profile: string;
   key_file?: string;
-  compartment_id: string;
-  service_endpoint: string;
-  llm_model_id: string;
-  embedding_model_id: string;
 }
 
 interface OciSettingsSnapshot {
@@ -52,11 +45,7 @@ const EMPTY_SETTINGS: OciSettingsForm = {
   region: DEFAULT_REGION,
   key_content: '',
   config_path: '~/.oci/config',
-  profile: 'DEFAULT',
-  compartment_id: '',
-  service_endpoint: DEFAULT_ENDPOINT,
-  llm_model_id: DEFAULT_LLM_MODEL,
-  embedding_model_id: DEFAULT_EMBEDDING_MODEL
+  profile: 'DEFAULT'
 };
 
 function isConfiguredStatus(status: string): boolean {
@@ -333,46 +322,6 @@ export function ApplicationSettings() {
                 placeholder="us-chicago-1"
               />
             </label>
-            <div class="applicationSettingsView__row">
-              <label class="applicationSettingsView__field">
-                <span class="applicationSettingsView__fieldLabel">{t('settings.oci.compartmentOcid')}</span>
-                <input
-                  class="ics-input"
-                  value={settings.compartment_id}
-                  onInput={updateField('compartment_id')}
-                  placeholder="ocid1.compartment.oc1..aaaa..."
-                />
-              </label>
-              <label class="applicationSettingsView__field">
-                <span class="applicationSettingsView__fieldLabel">{t('settings.field.serviceEndpoint')}</span>
-                <input
-                  class="ics-input"
-                  value={settings.service_endpoint}
-                  onInput={updateField('service_endpoint')}
-                  placeholder={DEFAULT_ENDPOINT}
-                />
-              </label>
-            </div>
-            <div class="applicationSettingsView__row">
-              <label class="applicationSettingsView__field">
-                <span class="applicationSettingsView__fieldLabel">{t('settings.field.llmModelId')}</span>
-                <input
-                  class="ics-input"
-                  value={settings.llm_model_id}
-                  onInput={updateField('llm_model_id')}
-                  placeholder={DEFAULT_LLM_MODEL}
-                />
-              </label>
-              <label class="applicationSettingsView__field">
-                <span class="applicationSettingsView__fieldLabel">{t('settings.field.embeddingModelId')}</span>
-                <input
-                  class="ics-input"
-                  value={settings.embedding_model_id}
-                  onInput={updateField('embedding_model_id')}
-                  placeholder={DEFAULT_EMBEDDING_MODEL}
-                />
-              </label>
-            </div>
             <label class="applicationSettingsView__field">
               <span class="applicationSettingsView__fieldLabel">{t('settings.field.configPath')}</span>
               <input

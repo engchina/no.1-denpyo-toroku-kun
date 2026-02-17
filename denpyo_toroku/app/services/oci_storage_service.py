@@ -53,6 +53,10 @@ class OCIStorageService:
 
             if os.path.exists(config_path):
                 config = oci.config.from_file(config_path, profile)
+                env_region = os.environ.get("OCI_REGION", "").strip()
+                if env_region:
+                    # Object Storage は .env の OCI_REGION を優先する
+                    config["region"] = env_region
                 self._object_storage_client = oci.object_storage.ObjectStorageClient(config)
                 logger.info("OCI Object Storage クライアントを初期化しました")
             else:

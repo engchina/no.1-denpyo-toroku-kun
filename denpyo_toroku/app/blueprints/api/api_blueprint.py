@@ -146,7 +146,47 @@ def _runtime_oci_defaults() -> Dict[str, str]:
             os.environ.get("EMBEDDING_MODEL_ID"),
             _normalize_text(getattr(AppConfig, "EMBEDDING_MODEL_ID", ""), "cohere.embed-v4.0"),
         ),
+        "namespace": _normalize_text(
+            os.environ.get("OCI_NAMESPACE"),
+            _normalize_text(getattr(AppConfig, "OCI_NAMESPACE", "")),
+        ),
+        "bucket": _normalize_text(
+            os.environ.get("OCI_BUCKET"),
+            _normalize_text(getattr(AppConfig, "OCI_BUCKET", "")),
+        ),
     }
+
+
+def _runtime_oci_region_default() -> str:
+    """Object Storage/ADB 画面で表示・利用する OCI region の既定値。"""
+    return _normalize_text(
+        os.environ.get("OCI_REGION"),
+        _normalize_text(getattr(AppConfig, "OCI_REGION", ""), "ap-osaka-1"),
+    )
+
+
+def _fetch_object_storage_namespace_via_sdk(region: str = "") -> str:
+    defaults = _runtime_oci_defaults()
+    config_path = _expand_path(defaults.get("config_path", "~/.oci/config"), "~/.oci/config")
+    profile = _normalize_text(defaults.get("profile", "DEFAULT"), "DEFAULT") or "DEFAULT"
+
+    if not os.path.exists(config_path):
+        return ""
+
+    try:
+        import oci  # local import to avoid import-time dependency in non-OCI flows
+
+        config = oci.config.from_file(config_path, profile)
+        if _normalize_text(region):
+            config["region"] = _normalize_text(region)
+
+        object_storage_client = oci.object_storage.ObjectStorageClient(config)
+        response = object_storage_client.get_namespace()
+        namespace = _normalize_text(getattr(response, "data", ""))
+        return namespace
+    except Exception as e:
+        logging.warning("Object Storage namespace の SDK 取得に失敗: %s", e, exc_info=True)
+        return ""
 
 
 def _get_config_value(parser: configparser.ConfigParser, profile: str, key: str) -> str:
@@ -218,6 +258,8 @@ def _load_oci_settings_snapshot() -> Dict[str, Any]:
             "service_endpoint": defaults["service_endpoint"],
             "llm_model_id": defaults["llm_model_id"],
             "embedding_model_id": defaults["embedding_model_id"],
+            "namespace": defaults["namespace"],
+            "bucket": defaults["bucket"],
         },
         "has_credentials": has_credentials,
         "is_configured": has_credentials,
@@ -271,6 +313,8 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     os.environ["OCI_SERVICE_ENDPOINT"] = settings["service_endpoint"]
     os.environ["LLM_MODEL_ID"] = settings["llm_model_id"]
     os.environ["EMBEDDING_MODEL_ID"] = settings["embedding_model_id"]
+    os.environ["OCI_NAMESPACE"] = settings["namespace"]
+    os.environ["OCI_BUCKET"] = settings["bucket"]
 
     AppConfig.OCI_CONFIG_PATH = settings["config_path"]
     AppConfig.OCI_CONFIG_PROFILE = settings["profile"]
@@ -278,6 +322,8 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     AppConfig.OCI_SERVICE_ENDPOINT = settings["service_endpoint"]
     AppConfig.LLM_MODEL_ID = settings["llm_model_id"]
     AppConfig.EMBEDDING_MODEL_ID = settings["embedding_model_id"]
+    AppConfig.OCI_NAMESPACE = settings["namespace"]
+    AppConfig.OCI_BUCKET = settings["bucket"]
 
 
 def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -380,6 +426,14 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             current_settings.get("embedding_model_id", "cohere.embed-v4.0"),
         )
         or "cohere.embed-v4.0",
+        "namespace": _normalize_text(
+            settings_payload.get("namespace"),
+            current_settings.get("namespace", ""),
+        ),
+        "bucket": _normalize_text(
+            settings_payload.get("bucket"),
+            current_settings.get("bucket", ""),
+        ),
     }
 
     _upsert_env_values(
@@ -391,6 +445,8 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             "OCI_SERVICE_ENDPOINT": settings_for_env["service_endpoint"],
             "LLM_MODEL_ID": settings_for_env["llm_model_id"],
             "EMBEDDING_MODEL_ID": settings_for_env["embedding_model_id"],
+            "OCI_NAMESPACE": settings_for_env["namespace"],
+            "OCI_BUCKET": settings_for_env["bucket"],
         },
     )
     load_dotenv(_env_file_path(), override=True)
@@ -893,6 +949,39 @@ def get_oci_settings():
         return jsonify(g.response.get_result()), 500
 
 
+@api_blueprint.route("/api/v1/oci/object-storage/settings", methods=["GET"])
+def get_oci_object_storage_settings():
+    """Get Object Storage settings. If OCI_NAMESPACE is missing, resolve via OCI SDK once."""
+    try:
+        snapshot = _load_oci_settings_snapshot()
+        settings = snapshot.get("settings", {})
+        region = _runtime_oci_region_default()
+
+        namespace = _normalize_text(settings.get("namespace"))
+        if not namespace:
+            resolved_namespace = _fetch_object_storage_namespace_via_sdk(region)
+            if resolved_namespace:
+                _upsert_env_values(_env_file_path(), {"OCI_NAMESPACE": resolved_namespace})
+                load_dotenv(_env_file_path(), override=True)
+                os.environ["OCI_NAMESPACE"] = resolved_namespace
+                AppConfig.OCI_NAMESPACE = resolved_namespace
+                snapshot = _load_oci_settings_snapshot()
+                settings = snapshot.get("settings", {})
+
+        g.response.set_data({
+            "settings": {
+                "region": region,
+                "namespace": _normalize_text(settings.get("namespace")),
+                "bucket": _normalize_text(settings.get("bucket")),
+            }
+        })
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("Object Storage 設定の読み込みエラー: %s", e, exc_info=True)
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 500
+
+
 @api_blueprint.route("/api/v1/oci/settings", methods=["POST"])
 def save_oci_settings():
     """Save OCI application settings."""
@@ -902,6 +991,10 @@ def save_oci_settings():
         if not isinstance(settings_payload, dict):
             g.response.add_error_message("リクエストボディが不正です。")
             return jsonify(g.response.get_result()), 422
+
+        # 分割された設定ページからの部分更新を許可するため、現在値とマージして検証する
+        current_settings = _load_oci_settings_snapshot().get("settings", {})
+        merged_settings = {**current_settings, **settings_payload}
 
         # 必須項目は semantic-doc-search の OCI キー認証の挙動に合わせる
         required_fields = {
@@ -913,7 +1006,7 @@ def save_oci_settings():
         missing_fields = [
             label
             for field, label in required_fields.items()
-            if not _normalize_text(settings_payload.get(field))
+            if not _normalize_text(merged_settings.get(field))
         ]
         if missing_fields:
             g.response.add_error_message("必須項目が未入力です: %s" % "、".join(missing_fields))
@@ -1102,6 +1195,7 @@ def get_version():
         "endpoints": {
             "health": "/api/v1/health",
             "oci_settings_get": "/api/v1/oci/settings",
+            "oci_object_storage_settings_get": "/api/v1/oci/object-storage/settings",
             "oci_settings_save": "/api/v1/oci/settings",
             "oci_test": "/api/v1/oci/test",
             "db_settings_get": "/api/v1/database/settings",

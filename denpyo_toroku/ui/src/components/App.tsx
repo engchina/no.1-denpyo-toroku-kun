@@ -14,6 +14,8 @@ import { Footer } from './layoutAndNavigation/footer/Footer';
 import { WelcomeView } from '../views/welcome/WelcomeView';
 import { Dashboard } from '../views/dashboard/Dashboard';
 import { ApplicationSettings } from '../views/applicationSettings/ApplicationSettings';
+import { OciGenAiModelSettings } from '../views/ociGenAiModelSettings/OciGenAiModelSettings';
+import { OciObjectStorageSettings } from '../views/ociObjectStorageSettings/OciObjectStorageSettings';
 import { DatabaseSettings } from '../views/databaseSettings/DatabaseSettings';
 import { UploadView } from '../views/upload/UploadView';
 import { ListView } from '../views/fileList/ListView';
@@ -50,6 +52,10 @@ function ViewSwitcher() {
       return <SearchView />;
     case 'applicationSettings':
       return <ApplicationSettings />;
+    case 'ociGenAiModelSettings':
+      return <OciGenAiModelSettings />;
+    case 'ociObjectStorageSettings':
+      return <OciObjectStorageSettings />;
     case 'databaseSettings':
       return <DatabaseSettings />;
     default:

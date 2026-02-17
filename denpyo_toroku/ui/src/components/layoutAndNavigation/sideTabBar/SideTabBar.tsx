@@ -8,6 +8,8 @@ import { setCurrentView, toggleSidebar } from '../../../redux/slices/application
 import { t } from '../../../i18n';
 import {
   SlidersHorizontal,
+  Cpu,
+  HardDrive,
   PanelLeftClose,
   PanelLeftOpen,
   LayoutDashboard,
@@ -46,6 +48,8 @@ const navGroups: NavGroup[] = [
     labelKey: 'nav.section.settings',
     items: [
       { id: 'applicationSettings', nameKey: 'nav.applicationSettings', Icon: SlidersHorizontal },
+      { id: 'ociGenAiModelSettings', nameKey: 'nav.ociGenAiModelSettings', Icon: Cpu },
+      { id: 'ociObjectStorageSettings', nameKey: 'nav.ociObjectStorageSettings', Icon: HardDrive },
       { id: 'databaseSettings', nameKey: 'nav.databaseSettings', Icon: Database }
     ]
   }
