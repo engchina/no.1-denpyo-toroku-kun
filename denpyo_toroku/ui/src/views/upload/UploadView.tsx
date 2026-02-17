@@ -163,7 +163,7 @@ export function UploadView() {
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
           <div
-            class={`ics-upload-dropzone${isDragOver ? ' ics-upload-dropzone--active' : ''}${isUploading ? ' ics-upload-dropzone--disabled' : ''}`}
+            class={`predictView__dropZone applicationSettingsView__dropZone${isDragOver ? ' predictView__dropZone--active' : ''}${isUploading ? ' ics-upload-dropzone--disabled' : ''}`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -175,11 +175,11 @@ export function UploadView() {
               multiple
               accept={ALLOWED_EXTENSIONS.join(',')}
               onChange={handleFileSelect}
-              class="ics-upload-dropzone__input"
+              class="send-off-screen"
             />
-            <Upload size={40} class="ics-upload-dropzone__icon" />
-            <p class="ics-upload-dropzone__text">{t('upload.dropzone.text')}</p>
-            <p class="ics-upload-dropzone__hint">{t('upload.dropzone.hint')}</p>
+            <Upload size={22} />
+            <p class="oj-typography-body-md">{t('upload.dropzone.text')}</p>
+            <p class="oj-typography-body-sm">{t('upload.dropzone.hint')}</p>
           </div>
         </div>
       </section>

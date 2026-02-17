@@ -4518,49 +4518,9 @@ html[dir="rtl"] .oracle-icon {
 
 /* ==================== Upload View (SCR-001) ==================== */
 
-.ics-upload-dropzone {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    min-height: 200px;
-    border: 2px dashed #d1d5db;
-    border-radius: 12px;
-    background: #fafbfc;
-    cursor: pointer;
-    transition: border-color 0.2s, background-color 0.2s;
-    padding: 32px;
-}
-.ics-upload-dropzone:hover {
-    border-color: var(--aai-accent, #3b82f6);
-    background: #f0f6ff;
-}
-.ics-upload-dropzone--active {
-    border-color: var(--aai-accent, #3b82f6);
-    background: #e8f0fe;
-    border-style: solid;
-}
 .ics-upload-dropzone--disabled {
     opacity: 0.6;
     pointer-events: none;
-}
-.ics-upload-dropzone__input {
-    display: none;
-}
-.ics-upload-dropzone__icon {
-    color: #9ca3af;
-}
-.ics-upload-dropzone__text {
-    font-size: 1rem;
-    font-weight: 600;
-    color: #374151;
-    margin: 0;
-}
-.ics-upload-dropzone__hint {
-    font-size: 0.82rem;
-    color: #9ca3af;
-    margin: 0;
 }
 
 /* File list in upload view */
@@ -5276,4 +5236,3 @@ html[dir="rtl"] .oracle-icon {
 .ics-browser-results {
     /* standard layout */
 }
-
