@@ -510,6 +510,8 @@ def _wallet_is_ready(wallet_location: Optional[str]) -> bool:
 def _load_database_settings_snapshot() -> Dict[str, Any]:
     conn_info = _parse_db_connection_string(os.environ.get(_DB_CONN_ENV_KEY, ""))
     adb_ocid = _normalize_text(os.environ.get(_DB_ADB_OCID_ENV_KEY, ""))
+    # リージョンはOCIDと同時に取得する（.envのOCI_REGIONを優先）
+    region = _normalize_text(os.environ.get("OCI_REGION"), _normalize_text(getattr(AppConfig, "OCI_REGION", ""), "ap-osaka-1"))
     wallet_location = _db_wallet_location(create_if_missing=False)
     wallet_uploaded = _wallet_is_ready(wallet_location)
     available_services = _extract_services_from_tnsnames(wallet_location)
@@ -523,6 +525,7 @@ def _load_database_settings_snapshot() -> Dict[str, Any]:
             "password": _DB_MASKED_SECRET if conn_info["password"] else "",
             "dsn": conn_info["dsn"],
             "adb_ocid": adb_ocid,
+            "region": region,
             "wallet_uploaded": wallet_uploaded,
             "available_services": available_services,
         },

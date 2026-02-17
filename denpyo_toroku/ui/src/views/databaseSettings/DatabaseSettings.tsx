@@ -13,6 +13,7 @@ interface DatabaseSettingsForm {
   password: string;
   dsn: string;
   adb_ocid?: string;
+  region?: string;
   wallet_uploaded: boolean;
   available_services: string[];
 }
@@ -32,6 +33,7 @@ interface DatabaseEnvInfo {
   password: string | null;
   dsn: string | null;
   adb_ocid?: string | null;
+  region?: string | null;
   wallet_exists: boolean;
   wallet_location?: string | null;
   available_services: string[];
@@ -67,6 +69,7 @@ const EMPTY_DB_SETTINGS: DatabaseSettingsForm = {
   password: '',
   dsn: '',
   adb_ocid: '',
+  region: '',
   wallet_uploaded: false,
   available_services: []
 };
@@ -182,6 +185,7 @@ export function DatabaseSettings() {
         password: envInfo.password || (prev.password || ''),
         dsn: envInfo.dsn || prev.dsn,
         adb_ocid: envInfo.adb_ocid || prev.adb_ocid || '',
+        region: envInfo.region || prev.region || '',
         wallet_uploaded: envInfo.wallet_exists,
         available_services: Array.isArray(envInfo.available_services) ? envInfo.available_services : prev.available_services
       }));
@@ -441,17 +445,17 @@ export function DatabaseSettings() {
         <div class="ics-card-body">
           <p class="applicationSettingsView__description">{t('settings.adb.description')}</p>
           
-          <div class="applicationSettingsView__field">
-            <span class="applicationSettingsView__fieldLabel">{t('settings.adb.field.region')}</span>
-            <div class="applicationSettingsView__fieldValue">
-              {adbInfo?.region || t('settings.adb.statusUnknown')}
-            </div>
+          <div class="applicationSettingsView__grid">
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.adb.field.region')}</span>
+              <input class="ics-input" value={dbSettings.region || ''} readonly />
+            </label>
+            
+            <label class="applicationSettingsView__field applicationSettingsView__field--wide">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.adb.field.ocid')}*</span>
+              <input class="ics-input" value={dbSettings.adb_ocid || ''} readonly placeholder="ocid1.autonomousdatabase.oc1.." />
+            </label>
           </div>
-          
-          <label class="applicationSettingsView__field applicationSettingsView__field--wide">
-            <span class="applicationSettingsView__fieldLabel">{t('settings.adb.field.ocid')}*</span>
-            <input class="ics-input" value={dbSettings.adb_ocid || ''} onInput={updateDbField('adb_ocid')} placeholder="ocid1.autonomousdatabase.oc1.." />
-          </label>
           
           <div class="applicationSettingsView__actions" style="margin-bottom: 20px;">
             <Button
