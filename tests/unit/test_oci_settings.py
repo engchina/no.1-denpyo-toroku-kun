@@ -24,6 +24,7 @@ def test_save_oci_settings_persists_config_env_and_snapshot(tmp_path: Path, monk
     monkeypatch.setenv("OCI_CONFIG_PROFILE", "DEFAULT")
     monkeypatch.setenv("OCI_CONFIG_COMPARTMENT", "")
     monkeypatch.setenv("OCI_SERVICE_ENDPOINT", "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com")
+    monkeypatch.setenv("LLM_MODEL_ID", "google.gemini-2.5-pro")
     monkeypatch.setenv("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
 
     result = api_bp._save_oci_settings({
@@ -36,6 +37,7 @@ def test_save_oci_settings_persists_config_env_and_snapshot(tmp_path: Path, monk
         "profile": "DEFAULT",
         "compartment_id": "ocid1.compartment.oc1..test",
         "service_endpoint": "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+        "llm_model_id": "google.gemini-2.5-pro",
         "embedding_model_id": "cohere.embed-v4.0",
     })
 
