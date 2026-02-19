@@ -7,13 +7,16 @@ import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useAppSelector, useAppDispatch } from '../../redux/store';
 import {
   fetchSearchableTables,
+  fetchTableBrowserTables,
   nlSearch,
-  fetchTableData,
+  fetchTableDataByName,
   clearSearchResults,
   clearSearchError
 } from '../../redux/slices/denpyoSlice';
+import Pagination from '../../components/Pagination';
 import { t } from '../../i18n';
-import { Search, Database, Copy, Check, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import type { NLSearchResponse, SearchableTable, TableBrowseResult, TableBrowserTable } from '../../types/denpyoTypes';
+import { Search, Database, Copy, Check, Loader2, RefreshCw } from 'lucide-react';
 
 type TabType = 'nlSearch' | 'tableBrowser';
 
@@ -22,6 +25,8 @@ export function SearchView() {
   const {
     searchableTables,
     isSearchableTablesLoading,
+    tableBrowserTables,
+    isTableBrowserTablesLoading,
     nlSearchResult,
     isNLSearching,
     tableBrowseResult,
@@ -34,6 +39,7 @@ export function SearchView() {
   // Load searchable tables on mount
   useEffect(() => {
     dispatch(fetchSearchableTables());
+    dispatch(fetchTableBrowserTables());
     return () => {
       dispatch(clearSearchResults());
     };
@@ -90,8 +96,10 @@ export function SearchView() {
         ) : (
           <TableBrowserTab
             searchableTables={searchableTables}
+            tableBrowserTables={tableBrowserTables}
             isLoading={isTableBrowsing}
             isTablesLoading={isSearchableTablesLoading}
+            isTableListLoading={isTableBrowserTablesLoading}
             result={tableBrowseResult}
           />
         )}
@@ -105,10 +113,10 @@ export function SearchView() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface NLSearchTabProps {
-  searchableTables: any[];
+  searchableTables: SearchableTable[];
   isLoading: boolean;
   isTablesLoading: boolean;
-  result: any;
+  result: NLSearchResponse | null;
 }
 
 function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: NLSearchTabProps) {
@@ -252,143 +260,210 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface TableBrowserTabProps {
-  searchableTables: any[];
+  searchableTables: SearchableTable[];
+  tableBrowserTables: TableBrowserTable[];
   isLoading: boolean;
   isTablesLoading: boolean;
-  result: any;
+  isTableListLoading: boolean;
+  result: TableBrowseResult | null;
 }
 
-function TableBrowserTab({ searchableTables, isLoading, isTablesLoading, result }: TableBrowserTabProps) {
+function TableBrowserTab({
+  searchableTables,
+  tableBrowserTables,
+  isLoading,
+  isTablesLoading,
+  isTableListLoading,
+  result
+}: TableBrowserTabProps) {
   const dispatch = useAppDispatch();
-  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
-  const [tableType, setTableType] = useState<'header' | 'line'>('header');
+  const [selectedTable, setSelectedTable] = useState<TableBrowserTable | null>(null);
   const [page, setPage] = useState(1);
+  const [goToPageInput, setGoToPageInput] = useState('');
   const pageSize = 50;
 
-  // Load data when category or table type changes
   useEffect(() => {
-    if (selectedCategoryId !== null) {
-      dispatch(fetchTableData({ categoryId: selectedCategoryId, page, pageSize, tableType }));
+    if (!selectedTable && tableBrowserTables.length > 0) {
+      setSelectedTable(tableBrowserTables[0]);
+      return;
     }
-  }, [dispatch, selectedCategoryId, tableType, page]);
+    if (selectedTable) {
+      const stillExists = tableBrowserTables.some(table =>
+        table.table_name === selectedTable.table_name &&
+        table.table_type === selectedTable.table_type &&
+        table.category_id === selectedTable.category_id
+      );
+      if (!stillExists) {
+        setSelectedTable(tableBrowserTables[0] || null);
+        setPage(1);
+      }
+    }
+  }, [tableBrowserTables, selectedTable]);
 
-  const handleCategoryChange = (e: Event) => {
-    const value = (e.target as HTMLSelectElement).value;
-    setSelectedCategoryId(value ? Number(value) : null);
-    setPage(1);
-  };
-
-  const handleTableTypeChange = (type: 'header' | 'line') => {
-    setTableType(type);
-    setPage(1);
-  };
+  // Load data when selected table or page changes
+  useEffect(() => {
+    if (selectedTable?.table_name) {
+      dispatch(fetchTableDataByName({
+        tableName: selectedTable.table_name,
+        tableType: selectedTable.table_type,
+        page,
+        pageSize
+      }));
+    }
+  }, [dispatch, selectedTable, page]);
 
   const noTables = !isTablesLoading && searchableTables.length === 0;
   const totalPages = result?.total_pages || 1;
+  const tableListStatusLabel = isTableListLoading
+    ? t('search.browser.tableListStatus.loading')
+    : tableBrowserTables.length > 0
+      ? t('search.browser.tableListStatus.loaded')
+      : t('search.browser.tableListStatus.empty');
+  const tableListStatusClass = isTableListLoading
+    ? 'ics-browser-status-badge ics-browser-status-badge--loading'
+    : tableBrowserTables.length > 0
+      ? 'ics-browser-status-badge ics-browser-status-badge--success'
+      : 'ics-browser-status-badge';
 
-  // Check if selected category has line table
-  const selectedCategory = searchableTables.find(t => t.category_id === selectedCategoryId);
-  const hasLineTable = selectedCategory?.line_table_name;
+  const handleRefreshTables = useCallback(() => {
+    dispatch(fetchTableBrowserTables());
+  }, [dispatch]);
+
+  const handleTableSelect = useCallback((table: TableBrowserTable) => {
+    setSelectedTable(table);
+    setPage(1);
+    setGoToPageInput('');
+  }, []);
+
+  const handlePageChange = useCallback((nextPage: number) => {
+    if (nextPage >= 1 && nextPage <= totalPages) {
+      setPage(nextPage);
+    }
+  }, [totalPages]);
+
+  const handleGoToPage = useCallback(() => {
+    const target = parseInt(goToPageInput, 10);
+    if (!Number.isNaN(target) && target >= 1 && target <= totalPages) {
+      setPage(target);
+      setGoToPageInput('');
+    }
+  }, [goToPageInput, totalPages]);
 
   return (
     <div class="ics-table-browser">
-      {/* Category selector */}
-      <div class="ics-form-group">
-        <label class="ics-form-label">{t('search.browser.selectCategory')}</label>
-        <select
-          class="ics-form-input"
-          value={selectedCategoryId ?? ''}
-          onChange={handleCategoryChange}
-          disabled={noTables}
-        >
-          <option value="">{t('search.browser.selectCategory')}</option>
-          {searchableTables.map(table => (
-            <option key={table.category_id} value={table.category_id}>
-              {table.category_name}
-            </option>
-          ))}
-        </select>
+      <div class="ics-browser-panel">
+        <div class="ics-browser-panel__header">
+          <span class="ics-browser-panel__title">{t('search.browser.tableListTitle')}</span>
+          <div class="ics-browser-panel__actions">
+            <button
+              type="button"
+              class="ics-copy-btn"
+              onClick={handleRefreshTables}
+              disabled={isTableListLoading}
+            >
+              {isTableListLoading ? <Loader2 size={14} class="ics-spinner" /> : <RefreshCw size={14} />}
+              <span>{t('search.browser.refresh')}</span>
+            </button>
+            <span class={tableListStatusClass}>{tableListStatusLabel}</span>
+          </div>
+        </div>
+
+        {tableBrowserTables.length > 0 ? (
+          <div class="ics-table-list-wrapper">
+            <table class="ics-table">
+              <thead>
+                <tr>
+                  <th>{t('search.browser.col.tableName')}</th>
+                  <th>{t('search.browser.col.category')}</th>
+                  <th>{t('search.browser.col.type')}</th>
+                  <th>{t('search.browser.col.rows')}</th>
+                  <th>{t('search.browser.col.columns')}</th>
+                  <th>{t('search.browser.col.createdAt')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tableBrowserTables.map(table => (
+                  <tr
+                    key={`${table.category_id}-${table.table_type}-${table.table_name}`}
+                    class={
+                      selectedTable &&
+                      selectedTable.table_name === table.table_name &&
+                      selectedTable.table_type === table.table_type &&
+                      selectedTable.category_id === table.category_id
+                        ? 'ics-table-row--selected'
+                        : ''
+                    }
+                    onClick={() => handleTableSelect(table)}
+                  >
+                    <td>{table.table_name}</td>
+                    <td>{table.category_name}</td>
+                    <td>{table.table_type === 'header' ? t('search.browser.header') : t('search.browser.line')}</td>
+                    <td>{table.row_count.toLocaleString()}</td>
+                    <td>{table.column_count}</td>
+                    <td>{formatDateTime(table.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noTableList')}</p>
+        )}
       </div>
 
-      {/* Table type toggle */}
-      {selectedCategoryId !== null && (
-        <div class="ics-form-group">
-          <label class="ics-form-label">{t('search.browser.tableType')}</label>
-          <div class="ics-table-type-toggle">
-            <button
-              type="button"
-              class={`ics-toggle-btn ${tableType === 'header' ? 'ics-toggle-btn--active' : ''}`}
-              onClick={() => handleTableTypeChange('header')}
-            >
-              {t('search.browser.header')}
-            </button>
-            <button
-              type="button"
-              class={`ics-toggle-btn ${tableType === 'line' ? 'ics-toggle-btn--active' : ''}`}
-              onClick={() => handleTableTypeChange('line')}
-              disabled={!hasLineTable}
-            >
-              {t('search.browser.line')}
-            </button>
+      {selectedTable && (
+        <div class="ics-browser-panel oj-sm-margin-4x-top">
+          <div class="ics-browser-panel__header">
+            <span class="ics-browser-panel__title">
+              {t('search.browser.previewTitle')} - {selectedTable.table_name}
+            </span>
+            <div class="ics-results-header">
+              <span class="oj-typography-body-sm">
+                {t('search.browser.totalRows').replace('{count}', String(result?.total || 0))}
+              </span>
+              <span class="oj-typography-body-sm">
+                {t('search.browser.lastAnalyzed').replace('{value}', formatDateTime(selectedTable.last_analyzed))}
+              </span>
+            </div>
           </div>
+
+          {isLoading && (
+            <div class="ics-loading oj-sm-margin-4x-top">
+              <Loader2 size={24} class="ics-spinner" />
+              <span>{t('common.loading')}</span>
+            </div>
+          )}
+
+          {!isLoading && result && (
+            <div class="ics-browser-results oj-sm-margin-4x-top">
+              {result.rows && result.rows.length > 0 ? (
+                <>
+                  <ResultsTable columns={result.columns} rows={result.rows} />
+
+                  <Pagination
+                    currentPage={page}
+                    totalPages={totalPages}
+                    totalItems={result.total || 0}
+                    goToPageInput={goToPageInput}
+                    onPageChange={handlePageChange}
+                    onGoToPageInputChange={setGoToPageInput}
+                    onGoToPage={handleGoToPage}
+                    isFirstPage={page <= 1 || isLoading}
+                    isLastPage={page >= totalPages || isLoading}
+                    position="bottom"
+                    show={totalPages > 1}
+                  />
+                </>
+              ) : (
+                <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noData')}</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {noTables && (
         <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.error.noTables')}</p>
-      )}
-
-      {/* Loading indicator */}
-      {isLoading && (
-        <div class="ics-loading oj-sm-margin-4x-top">
-          <Loader2 size={24} class="ics-spinner" />
-          <span>{t('common.loading')}</span>
-        </div>
-      )}
-
-      {/* Results */}
-      {!isLoading && result && selectedCategoryId !== null && (
-        <div class="ics-browser-results oj-sm-margin-4x-top">
-          <div class="ics-results-header">
-            <span class="oj-typography-body-sm">
-              {t('search.browser.totalRows').replace('{count}', String(result.total || 0))}
-              {result.table_name && ` - ${result.table_name}`}
-            </span>
-          </div>
-
-          {result.rows && result.rows.length > 0 ? (
-            <>
-              <ResultsTable columns={result.columns} rows={result.rows} />
-
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <div class="ics-pagination oj-sm-margin-4x-top">
-                  <button
-                    type="button"
-                    class="ics-pagination-btn"
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                    disabled={page <= 1}
-                  >
-                    <ChevronLeft size={16} />
-                  </button>
-                  <span class="ics-pagination-info">
-                    {page} / {totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    class="ics-pagination-btn"
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    disabled={page >= totalPages}
-                  >
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-              )}
-            </>
-          ) : (
-            <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noData')}</p>
-          )}
-        </div>
       )}
     </div>
   );
@@ -437,4 +512,11 @@ function formatCellValue(value: any): string {
     return JSON.stringify(value);
   }
   return String(value);
+}
+
+function formatDateTime(value?: string): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('ja-JP');
 }

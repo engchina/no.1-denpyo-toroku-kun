@@ -4,7 +4,7 @@ This directory contains operational and development scripts.
 
 ## Runtime
 
-- `start-backend.sh`: Run Flask/Gunicorn backend in foreground mode.
+- `start-backend.sh`: Run Flask/Gunicorn backend in foreground mode (auto-reload enabled by default, disable with `BACKEND_AUTO_RELOAD=false`).
 - `start-frontend.sh`: Run Oracle JET frontend dev server.
 - `manage.sh`: Manage Gunicorn in daemon mode (`start|stop|restart|status|logs`).
 - `restart.sh`: Shortcut for `manage.sh restart`.
@@ -18,4 +18,3 @@ This directory contains operational and development scripts.
 ## Shared Library
 
 - `lib/common.sh`: Shared helpers for path resolution, logging, env loading, and dependency checks.
-

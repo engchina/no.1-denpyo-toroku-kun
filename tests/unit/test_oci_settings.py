@@ -58,3 +58,36 @@ def test_save_oci_settings_persists_config_env_and_snapshot(tmp_path: Path, monk
     assert AppConfig.OCI_CONFIG_PATH == str(config_path)
     assert AppConfig.OCI_CONFIG_PROFILE == "DEFAULT"
     assert AppConfig.OCI_CONFIG_COMPARTMENT == "ocid1.compartment.oc1..test"
+
+
+def test_build_oci_model_test_settings_prefers_request_payload(monkeypatch):
+    monkeypatch.setenv("OCI_SERVICE_ENDPOINT", "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com")
+    monkeypatch.setenv("OCI_CONFIG_COMPARTMENT", "ocid1.compartment.oc1..env")
+    monkeypatch.setenv("LLM_MODEL_ID", "google.gemini-2.5-pro")
+    monkeypatch.setenv("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
+
+    result = api_bp._build_oci_model_test_settings({
+        "service_endpoint": "https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
+        "compartment_id": "ocid1.compartment.oc1..request",
+        "llm_model_id": "meta.llama-3.3-70b-instruct",
+        "embedding_model_id": "cohere.embed-english-v3.0",
+    })
+
+    assert result["service_endpoint"] == "https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com"
+    assert result["compartment_id"] == "ocid1.compartment.oc1..request"
+    assert result["llm_model_id"] == "meta.llama-3.3-70b-instruct"
+    assert result["embedding_model_id"] == "cohere.embed-english-v3.0"
+
+
+def test_build_oci_model_test_settings_uses_runtime_defaults(monkeypatch):
+    monkeypatch.setenv("OCI_SERVICE_ENDPOINT", "https://inference.generativeai.uk-london-1.oci.oraclecloud.com")
+    monkeypatch.setenv("OCI_CONFIG_COMPARTMENT", "ocid1.compartment.oc1..fallback")
+    monkeypatch.setenv("LLM_MODEL_ID", "google.gemini-2.5-flash")
+    monkeypatch.setenv("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
+
+    result = api_bp._build_oci_model_test_settings({})
+
+    assert result["service_endpoint"] == "https://inference.generativeai.uk-london-1.oci.oraclecloud.com"
+    assert result["compartment_id"] == "ocid1.compartment.oc1..fallback"
+    assert result["llm_model_id"] == "google.gemini-2.5-flash"
+    assert result["embedding_model_id"] == "cohere.embed-v4.0"

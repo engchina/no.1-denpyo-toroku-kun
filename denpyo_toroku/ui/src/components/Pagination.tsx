@@ -92,8 +92,8 @@ export function Pagination({
           <input
             type="number"
             class="ics-input ics-pagination__input"
-            min={1}
-            max={totalPages}
+            min="1"
+            max={String(totalPages)}
             value={goToPageInput || currentPage.toString()}
             aria-label={`ページ移動（現在: ${currentPage}）`}
             onInput={(e: any) => onGoToPageInputChange(e.target.value)}

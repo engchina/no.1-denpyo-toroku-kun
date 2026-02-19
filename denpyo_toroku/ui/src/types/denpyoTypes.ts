@@ -224,6 +224,18 @@ export interface SearchableTable {
   line_table_name: string;
 }
 
+export interface TableBrowserTable {
+  table_name: string;
+  table_type: 'header' | 'line';
+  category_id: number;
+  category_name: string;
+  row_count: number;
+  estimated_rows: number;
+  column_count: number;
+  created_at: string;
+  last_analyzed: string;
+}
+
 export interface NLSearchRequest {
   query: string;
   category_id?: number;
@@ -296,6 +308,8 @@ export interface DenpyoSliceState {
   // データ検索 (SCR-006)
   searchableTables: SearchableTable[];
   isSearchableTablesLoading: boolean;
+  tableBrowserTables: TableBrowserTable[];
+  isTableBrowserTablesLoading: boolean;
   nlSearchResult: NLSearchResponse | null;
   isNLSearching: boolean;
   tableBrowseResult: TableBrowseResult | null;

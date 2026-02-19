@@ -12,6 +12,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 from flask import Blueprint, request, jsonify, g, current_app, make_response, session, redirect
 from dotenv import load_dotenv
 try:
@@ -25,6 +26,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from denpyo_toroku.app.util.response import Response
 from denpyo_toroku.config import AppConfig
+from denpyo_toroku.app.services.database_service import DatabaseService
 
 api_blueprint = Blueprint("api_blueprint", __name__)
 
@@ -56,7 +58,7 @@ _DB_TEST_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="db_tes
 _OCI_KEY_PATTERN = re.compile(
     r"-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----"
 )
-_DEFAULT_OCI_REGION = "us-chicago-1"
+_DEFAULT_OCI_REGION = "ap-osaka-1"
 
 
 def _to_bool(value, default: bool = True) -> bool:
@@ -127,7 +129,7 @@ def _runtime_oci_defaults() -> Dict[str, str]:
         os.environ.get("OCI_SERVICE_ENDPOINT"),
         _normalize_text(
             getattr(AppConfig, "OCI_SERVICE_ENDPOINT", ""),
-            "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+            f"https://inference.generativeai.{_runtime_oci_region_default()}.oci.oraclecloud.com",
         ),
     )
     return {
@@ -140,7 +142,7 @@ def _runtime_oci_defaults() -> Dict[str, str]:
         "service_endpoint": service_endpoint,
         "llm_model_id": _normalize_text(
             os.environ.get("LLM_MODEL_ID"),
-            _normalize_text(getattr(AppConfig, "LLM_MODEL_ID", ""), "google.gemini-2.5-pro"),
+            _normalize_text(getattr(AppConfig, "LLM_MODEL_ID", ""), "google.gemini-2.5-flash"),
         ),
         "embedding_model_id": _normalize_text(
             os.environ.get("EMBEDDING_MODEL_ID"),
@@ -490,6 +492,35 @@ def _build_oci_test_config(request_settings: Dict[str, Any]) -> Dict[str, str]:
         "fingerprint": _normalize_text(request_settings.get("fingerprint"), snapshot.get("fingerprint", "")),
         "key_content": key_content,
         "region": region,
+    }
+
+
+def _build_oci_model_test_settings(request_settings: Dict[str, Any]) -> Dict[str, str]:
+    snapshot_settings = _load_oci_settings_snapshot()["settings"]
+    defaults = _runtime_oci_defaults()
+
+    service_endpoint = _normalize_text(
+        request_settings.get("service_endpoint"),
+        snapshot_settings.get("service_endpoint", defaults.get("service_endpoint", "")),
+    )
+    compartment_id = _normalize_text(
+        request_settings.get("compartment_id"),
+        snapshot_settings.get("compartment_id", defaults.get("compartment_id", "")),
+    )
+    llm_model_id = _normalize_text(
+        request_settings.get("llm_model_id"),
+        snapshot_settings.get("llm_model_id", defaults.get("llm_model_id", "google.gemini-2.5-pro")),
+    ) or "google.gemini-2.5-pro"
+    embedding_model_id = _normalize_text(
+        request_settings.get("embedding_model_id"),
+        snapshot_settings.get("embedding_model_id", defaults.get("embedding_model_id", "cohere.embed-v4.0")),
+    ) or "cohere.embed-v4.0"
+
+    return {
+        "service_endpoint": service_endpoint,
+        "compartment_id": compartment_id,
+        "llm_model_id": llm_model_id,
+        "embedding_model_id": embedding_model_id,
     }
 
 
@@ -1066,6 +1097,138 @@ def test_oci_connection():
         return jsonify(g.response.get_result())
 
 
+@api_blueprint.route("/api/v1/oci/model/test", methods=["POST"])
+def test_oci_model_connection():
+    """Test OCI GenAI model IDs (LLM / Embedding) individually."""
+    try:
+        body = request.get_json(silent=True) or {}
+        settings_payload = body.get("settings") if isinstance(body.get("settings"), dict) else body
+        if not isinstance(settings_payload, dict):
+            g.response.add_error_message("リクエストボディが不正です。")
+            return jsonify(g.response.get_result()), 422
+
+        test_type = _normalize_text(body.get("test_type"), "llm").lower()
+        if test_type not in ("llm", "embedding"):
+            g.response.add_error_message("test_type は llm または embedding を指定してください。")
+            return jsonify(g.response.get_result()), 422
+
+        oci_auth_config = _build_oci_test_config(settings_payload)
+        if not all([
+            oci_auth_config["user"],
+            oci_auth_config["tenancy"],
+            oci_auth_config["fingerprint"],
+            oci_auth_config["key_content"],
+            oci_auth_config["region"],
+        ]):
+            g.response.add_error_message(
+                "OCI 認証情報が不足しています。ユーザー OCID / テナンシ OCID / フィンガープリント / リージョン / 秘密鍵が必須です。"
+            )
+            return jsonify(g.response.get_result()), 422
+
+        model_settings = _build_oci_model_test_settings(settings_payload)
+        if not model_settings["service_endpoint"] or not model_settings["compartment_id"]:
+            g.response.add_error_message("service_endpoint と compartment_id は必須です。")
+            return jsonify(g.response.get_result()), 422
+
+        import oci  # local import to avoid import-time dependency in non-OCI flows
+
+        genai_client = oci.generative_ai_inference.GenerativeAiInferenceClient(
+            oci_auth_config,
+            service_endpoint=model_settings["service_endpoint"],
+        )
+
+        test_input_text = "こんにちわ"
+
+        if test_type == "llm":
+            model_id = model_settings["llm_model_id"]
+            if not model_id:
+                g.response.add_error_message("llm_model_id は必須です。")
+                return jsonify(g.response.get_result()), 422
+
+            chat_request = oci.generative_ai_inference.models.GenericChatRequest(
+                api_format="GENERIC",
+                messages=[
+                    oci.generative_ai_inference.models.UserMessage(
+                        content=[{"type": "TEXT", "text": test_input_text}]
+                    )
+                ],
+                max_tokens=256,
+                temperature=0,
+                is_stream=False,
+            )
+            chat_detail = oci.generative_ai_inference.models.ChatDetails(
+                compartment_id=model_settings["compartment_id"],
+                serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(model_id=model_id),
+                chat_request=chat_request,
+            )
+            response = genai_client.chat(chat_detail)
+            result_text = ""
+            chat_response = getattr(getattr(response, "data", None), "chat_response", None)
+            if hasattr(chat_response, "choices") and chat_response.choices:
+                message = chat_response.choices[0].message
+                if hasattr(message, "content"):
+                    for part in message.content:
+                        if hasattr(part, "text") and part.text:
+                            result_text += part.text
+            g.response.set_data({
+                "success": True,
+                "message": "LLM モデル ID テストに成功しました。",
+                "details": {
+                    "test_type": "llm",
+                    "input_text": test_input_text,
+                    "result_text": result_text.strip(),
+                    "model_id": model_id,
+                    "compartment_id": model_settings["compartment_id"],
+                    "region": oci_auth_config["region"],
+                    "request_id": getattr(response, "request_id", ""),
+                },
+            })
+            return jsonify(g.response.get_result())
+
+        model_id = model_settings["embedding_model_id"]
+        if not model_id:
+            g.response.add_error_message("embedding_model_id は必須です。")
+            return jsonify(g.response.get_result()), 422
+
+        embed_details = oci.generative_ai_inference.models.EmbedTextDetails(
+            inputs=[test_input_text],
+            serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(model_id=model_id),
+            compartment_id=model_settings["compartment_id"],
+            input_type="CLASSIFICATION",
+            truncate="END",
+        )
+        response = genai_client.embed_text(embed_details)
+        embeddings = getattr(getattr(response, "data", None), "embeddings", []) or []
+        embedding_count = len(embeddings)
+        first_embedding = embeddings[0] if embedding_count > 0 else []
+        embedding_dimension = len(first_embedding) if isinstance(first_embedding, list) else 0
+        embedding_preview = first_embedding[:8] if isinstance(first_embedding, list) else []
+        g.response.set_data({
+            "success": True,
+            "message": "埋め込みモデル ID テストに成功しました。",
+            "details": {
+                "test_type": "embedding",
+                "input_text": test_input_text,
+                "embedding_dimension": embedding_dimension,
+                "embedding_preview": embedding_preview,
+                "model_id": model_id,
+                "compartment_id": model_settings["compartment_id"],
+                "region": oci_auth_config["region"],
+                "embedding_count": embedding_count,
+                "request_id": getattr(response, "request_id", ""),
+            },
+        })
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("OCI モデル ID テストエラー: %s", e, exc_info=True)
+        g.response.set_data({
+            "success": False,
+            "message": "OCI モデル ID テストに失敗しました: %s" % str(e),
+            "details": None,
+        })
+        return jsonify(g.response.get_result())
+
+
 @api_blueprint.route("/api/v1/database/settings", methods=["GET"])
 def get_database_settings():
     """Get current database settings without performing a connection test."""
@@ -1198,6 +1361,7 @@ def get_version():
             "oci_object_storage_settings_get": "/api/v1/oci/object-storage/settings",
             "oci_settings_save": "/api/v1/oci/settings",
             "oci_test": "/api/v1/oci/test",
+            "oci_model_test": "/api/v1/oci/model/test",
             "db_settings_get": "/api/v1/database/settings",
             "db_settings_save": "/api/v1/database/settings",
             "db_settings_env": "/api/v1/database/settings/env",
@@ -1266,8 +1430,18 @@ def upload_files():
 
     uploaded_files = []
     errors = []
+    batch_started_at = time.time()
 
     files = request.files.getlist("files")
+    upload_kind = _normalize_text(request.form.get("upload_kind"), "raw").lower()
+    if upload_kind not in ("raw", "category"):
+        g.response.set_data({
+            "success": False,
+            "uploaded_files": [],
+            "errors": ["upload_kind は 'raw' または 'category' を指定してください"],
+        })
+        return jsonify(g.response.get_result()), 400
+
     if not files or (len(files) == 1 and files[0].filename == ""):
         g.response.set_data({"success": False, "uploaded_files": [], "errors": ["ファイルが選択されていません"]})
         return jsonify(g.response.get_result()), 400
@@ -1281,33 +1455,89 @@ def upload_files():
         return jsonify(g.response.get_result()), 400
 
     user = session.get("user", "")
+    bucket_name = _normalize_text(getattr(storage_service, "_bucket_name", ""))
+    namespace = _normalize_text(getattr(storage_service, "_namespace", ""))
+    logging.info(
+        "files/upload 開始: files=%d user=%s kind=%s ns=%s bucket=%s",
+        len(files), user, upload_kind, namespace, bucket_name
+    )
 
     for f in files:
         filename = f.filename or ""
+        file_started_at = time.time()
         try:
+            read_started_at = time.time()
             file_data = f.read()
+            read_elapsed = time.time() - read_started_at
 
             # バリデーション
+            validate_started_at = time.time()
             validation = doc_processor.validate_file(filename, file_data)
+            validate_elapsed = time.time() - validate_started_at
             if not validation.get("valid"):
                 errors.append(f"{filename}: {validation.get('message', '無効なファイル')}")
+                logging.warning(
+                    "files/upload バリデーションNG: name=%s size=%d read=%.2fs validate=%.2fs",
+                    filename, len(file_data), read_elapsed, validate_elapsed
+                )
                 continue
 
             content_type = doc_processor.detect_content_type(filename, file_data)
-            object_name = doc_processor.generate_object_name(filename)
+            if upload_kind == "category":
+                object_prefix = _normalize_text(
+                    os.environ.get("OCI_SLIPS_CATEGORY_PREFIX"),
+                    _normalize_text(getattr(AppConfig, "OCI_SLIPS_CATEGORY_PREFIX", ""), "denpyo-category"),
+                ).strip("/")
+            else:
+                object_prefix = _normalize_text(
+                    os.environ.get("OCI_SLIPS_RAW_PREFIX"),
+                    _normalize_text(getattr(AppConfig, "OCI_SLIPS_RAW_PREFIX", ""), "denpyo-raw"),
+                ).strip("/")
+            object_name = doc_processor.generate_object_name(
+                filename,
+                prefix=object_prefix or ("denpyo-category" if upload_kind == "category" else "denpyo-raw"),
+            )
 
             # Object Storage アップロード
+            upload_started_at = time.time()
             upload_result = storage_service.upload_file(
                 object_name=object_name,
                 file_data=file_data,
                 content_type=content_type,
                 original_filename=filename,
             )
+            upload_elapsed = time.time() - upload_started_at
             if not upload_result.get("success"):
                 errors.append(f"{filename}: {upload_result.get('message', 'アップロード失敗')}")
+                logging.error(
+                    "files/upload ObjectStorage NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs err=%s",
+                    filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed,
+                    upload_result.get("message", "")
+                )
+                continue
+
+            slip_db_started_at = time.time()
+            slip_id = db_service.insert_slip_record(
+                slip_kind=upload_kind,
+                object_name=object_name,
+                bucket_name=bucket_name,
+                namespace=namespace,
+                file_name=filename,
+                file_size_bytes=len(file_data),
+                content_type=content_type,
+            )
+            slip_db_elapsed = time.time() - slip_db_started_at
+
+            if slip_id is None:
+                errors.append(f"{filename}: SLIPS テーブル登録失敗")
+                logging.error(
+                    "files/upload SLIPS登録NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs slips_db=%.2fs",
+                    filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed, slip_db_elapsed
+                )
                 continue
 
             # DB レコード作成
+            db_started_at = time.time()
             file_id = db_service.insert_file_record(
                 file_name=object_name,
                 original_file_name=filename,
@@ -1316,9 +1546,14 @@ def upload_files():
                 file_size=len(file_data),
                 uploaded_by=user,
             )
+            db_elapsed = time.time() - db_started_at
 
             if file_id is None:
                 errors.append(f"{filename}: データベース登録失敗")
+                logging.error(
+                    "files/upload DB登録NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs db=%.2fs",
+                    filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed, db_elapsed
+                )
                 continue
 
             # アクティビティログ
@@ -1338,6 +1573,11 @@ def upload_files():
                 "uploaded_at": dt.datetime.now().isoformat(),
                 "status": "UPLOADED",
             })
+            logging.info(
+                "files/upload 完了: name=%s object=%s file_id=%s slip_id=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs slips_db=%.2fs db=%.2fs total=%.2fs",
+                filename, object_name, file_id, slip_id, len(file_data),
+                read_elapsed, validate_elapsed, upload_elapsed, slip_db_elapsed, db_elapsed, time.time() - file_started_at
+            )
         except Exception as e:
             logging.error("ファイルアップロードエラー (%s): %s", filename, e, exc_info=True)
             errors.append(f"{filename}: {str(e)}")
@@ -1348,6 +1588,10 @@ def upload_files():
         "uploaded_files": uploaded_files,
         "errors": errors,
     })
+    logging.info(
+        "files/upload 終了: uploaded=%d errors=%d elapsed=%.2fs",
+        len(uploaded_files), len(errors), time.time() - batch_started_at
+    )
     return jsonify(g.response.get_result())
 
 
@@ -1359,6 +1603,9 @@ def list_files():
     page = max(1, request.args.get("page", 1, type=int))
     page_size = min(100, max(1, request.args.get("page_size", 20, type=int)))
     status = request.args.get("status", None, type=str)
+    upload_kind = _normalize_text(request.args.get("upload_kind"), "").lower()
+    if upload_kind and upload_kind not in ("raw", "category"):
+        upload_kind = ""
     if status == "":
         status = None
 
@@ -1366,8 +1613,8 @@ def list_files():
 
     try:
         db_service = DatabaseService()
-        files = db_service.get_files(status=status, limit=page_size, offset=offset)
-        total = db_service.get_files_count(status=status)
+        files = db_service.get_files(status=status, limit=page_size, offset=offset, upload_kind=upload_kind or None)
+        total = db_service.get_files_count(status=status, upload_kind=upload_kind or None)
         total_pages = max(1, (total + page_size - 1) // page_size)
 
         g.response.set_data({
@@ -1388,6 +1635,71 @@ def list_files():
         })
 
     return jsonify(g.response.get_result())
+
+
+@api_blueprint.route("/api/v1/files/<int:file_id>", methods=["GET"])
+def get_file_detail(file_id: int):
+    """伝票ファイル詳細を取得"""
+    from denpyo_toroku.app.services.database_service import DatabaseService
+
+    try:
+        db_service = DatabaseService()
+        file_record = db_service.get_file_by_id(file_id)
+        if not file_record:
+            g.response.add_error_message("ファイルが見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        g.response.set_data({
+            "file_id": str(file_record.get("id")),
+            "file_name": file_record.get("file_name", ""),
+            "original_file_name": file_record.get("original_file_name", ""),
+            "storage_path": file_record.get("object_storage_path", ""),
+            "file_type": file_record.get("content_type", ""),
+            "file_size": file_record.get("file_size", 0),
+            "status": file_record.get("status", ""),
+            "uploaded_by": file_record.get("uploaded_by", ""),
+            "uploaded_at": file_record.get("uploaded_at", ""),
+        })
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("ファイル詳細取得エラー (id=%s): %s", file_id, e, exc_info=True)
+        g.response.add_error_message(f"ファイル詳細の取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/files/<int:file_id>/preview", methods=["GET"])
+def preview_file(file_id: int):
+    """伝票ファイルのプレビューを返す（Object Storage から取得）"""
+    from denpyo_toroku.app.services.database_service import DatabaseService
+    from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
+
+    try:
+        db_service = DatabaseService()
+        file_record = db_service.get_file_by_id(file_id)
+        if not file_record:
+            g.response.add_error_message("ファイルが見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        storage_path = file_record.get("object_storage_path", "")
+        if not storage_path:
+            g.response.add_error_message("ファイルの保存先情報がありません")
+            return jsonify(g.response.get_result()), 400
+
+        storage_service = OCIStorageService()
+        content = storage_service.download_file(storage_path)
+        if content is None:
+            g.response.add_error_message("ファイルプレビューの取得に失敗しました")
+            return jsonify(g.response.get_result()), 500
+
+        response = make_response(content)
+        response.headers["Content-Type"] = file_record.get("content_type", "application/octet-stream")
+        preview_name = file_record.get("original_file_name") or f"file_{file_id}"
+        response.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(preview_name)}"
+        return response
+    except Exception as e:
+        logging.error("ファイルプレビュー取得エラー (id=%s): %s", file_id, e, exc_info=True)
+        g.response.add_error_message(f"ファイルプレビューの取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
 
 
 @api_blueprint.route("/api/v1/files/<int:file_id>", methods=["DELETE"])
@@ -1431,6 +1743,64 @@ def delete_file(file_id: int):
         logging.error("ファイル削除エラー (id=%s): %s", file_id, e, exc_info=True)
         g.response.set_data({"success": False, "message": str(e)})
         return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/files/bulk-delete", methods=["POST"])
+def bulk_delete_files():
+    """伝票ファイルを一括削除"""
+    from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
+    from denpyo_toroku.app.services.database_service import DatabaseService
+
+    payload = request.get_json(silent=True) or {}
+    raw_ids = payload.get("file_ids", [])
+    if not isinstance(raw_ids, list) or not raw_ids:
+        g.response.add_error_message("file_ids を配列で指定してください")
+        return jsonify(g.response.get_result()), 400
+
+    db_service = DatabaseService()
+    storage_service = OCIStorageService()
+    user = session.get("user", "")
+    deleted_ids = []
+    errors = []
+
+    for raw_id in raw_ids:
+        try:
+            file_id = int(raw_id)
+        except (TypeError, ValueError):
+            errors.append(f"{raw_id}: 不正な file_id です")
+            continue
+
+        try:
+            file_record = db_service.get_file_by_id(file_id)
+            if not file_record:
+                errors.append(f"{file_id}: ファイルが見つかりません")
+                continue
+
+            storage_path = file_record.get("object_storage_path", "")
+            if storage_path and storage_service.is_configured:
+                storage_service.delete_file(storage_path)
+
+            delete_result = db_service.delete_file_record(file_id)
+            if not delete_result.get("success"):
+                errors.append(f"{file_id}: {delete_result.get('message', '削除失敗')}")
+                continue
+
+            db_service.log_activity(
+                activity_type="DELETE",
+                description=f"ファイル '{file_record.get('original_file_name', '')}' を削除しました",
+                user_name=user,
+            )
+            deleted_ids.append(str(file_id))
+        except Exception as e:
+            logging.error("一括削除エラー (id=%s): %s", raw_id, e, exc_info=True)
+            errors.append(f"{raw_id}: {str(e)}")
+
+    g.response.set_data({
+        "success": len(deleted_ids) > 0 and len(errors) == 0,
+        "deleted_file_ids": deleted_ids,
+        "errors": errors,
+    })
+    return jsonify(g.response.get_result())
 
 
 @api_blueprint.route("/api/v1/files/<int:file_id>/analyze", methods=["POST"])
@@ -1852,7 +2222,7 @@ def toggle_category_active(category_id: int):
         g.response.set_data({
             "id": category_id,
             "is_active": new_state,
-            "message": "有効" if new_state else "無効" + "に変更しました"
+            "message": ("有効" if new_state else "無効") + "に変更しました"
         })
         return jsonify(g.response.get_result())
     except Exception as e:
@@ -1899,6 +2269,23 @@ def get_searchable_tables():
         return jsonify(g.response.get_result())
     except Exception as e:
         logging.error("検索可能テーブル一覧取得エラー: %s", e, exc_info=True)
+        g.response.add_error_message(f"テーブル一覧の取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/search/table-browser/tables", methods=["GET"])
+def get_table_browser_tables():
+    """テーブルブラウザ用のテーブル一覧を取得"""
+    try:
+        db_service = DatabaseService()
+        tables = db_service.get_table_browser_tables()
+        g.response.set_data({
+            "tables": tables,
+            "fetched_at": dt.datetime.now().isoformat()
+        })
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("テーブルブラウザ一覧取得エラー: %s", e, exc_info=True)
         g.response.add_error_message(f"テーブル一覧の取得に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
 
@@ -2046,6 +2433,49 @@ def get_table_data(category_id: int):
 
     except Exception as e:
         logging.error("テーブルデータ取得エラー (category_id=%s): %s", category_id, e, exc_info=True)
+        g.response.add_error_message(f"データ取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/search/table-browser/data", methods=["GET"])
+def get_table_data_by_name():
+    """テーブル名指定でデータを取得（ページング付き）"""
+    try:
+        table_name = (request.args.get("table_name") or "").strip()
+        table_type = request.args.get("table_type", "header")
+        page = max(1, request.args.get("page", 1, type=int))
+        page_size = min(100, max(1, request.args.get("page_size", 50, type=int)))
+
+        if not table_name:
+            g.response.add_error_message("table_name を指定してください")
+            return jsonify(g.response.get_result()), 400
+
+        if table_type not in ("header", "line"):
+            table_type = "header"
+
+        db_service = DatabaseService()
+        offset = (page - 1) * page_size
+        result = db_service.get_table_data(table_name, limit=page_size, offset=offset)
+
+        if not result.get("success"):
+            g.response.add_error_message(result.get("message", "データ取得に失敗しました"))
+            return jsonify(g.response.get_result()), 400
+
+        total = result.get("total", 0)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        g.response.set_data({
+            "table_name": result.get("table_name", "").upper(),
+            "table_type": table_type,
+            "columns": result.get("columns", []),
+            "rows": result.get("rows", []),
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages
+        })
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("テーブルデータ取得エラー (table_name=%s): %s", request.args.get("table_name"), e, exc_info=True)
         g.response.add_error_message(f"データ取得に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
 

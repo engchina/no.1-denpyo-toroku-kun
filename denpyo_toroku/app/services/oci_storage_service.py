@@ -21,6 +21,8 @@ OCI_API_MAX_RETRIES = int(os.environ.get("OCI_API_MAX_RETRIES", "5"))
 OCI_API_BASE_DELAY = float(os.environ.get("OCI_API_BASE_DELAY", "1.0"))
 OCI_API_MAX_DELAY = float(os.environ.get("OCI_API_MAX_DELAY", "60.0"))
 OCI_API_JITTER = float(os.environ.get("OCI_API_JITTER", "0.1"))
+OCI_API_CONNECT_TIMEOUT = float(os.environ.get("OCI_API_CONNECT_TIMEOUT", "10"))
+OCI_API_READ_TIMEOUT = float(os.environ.get("OCI_API_READ_TIMEOUT", "30"))
 
 
 class OCIStorageService:
@@ -34,6 +36,8 @@ class OCIStorageService:
         self._object_storage_client = None
         self._bucket_name = os.environ.get("OCI_BUCKET", "")
         self._namespace = os.environ.get("OCI_NAMESPACE", "")
+        self._connect_timeout = OCI_API_CONNECT_TIMEOUT
+        self._read_timeout = OCI_API_READ_TIMEOUT
 
     @property
     def is_configured(self) -> bool:
@@ -57,8 +61,18 @@ class OCIStorageService:
                 if env_region:
                     # Object Storage は .env の OCI_REGION を優先する
                     config["region"] = env_region
-                self._object_storage_client = oci.object_storage.ObjectStorageClient(config)
-                logger.info("OCI Object Storage クライアントを初期化しました")
+                self._object_storage_client = oci.object_storage.ObjectStorageClient(
+                    config,
+                    timeout=(self._connect_timeout, self._read_timeout),
+                )
+                logger.info(
+                    "OCI Object Storage クライアントを初期化: region=%s ns=%s bucket=%s timeout=(%.1fs, %.1fs)",
+                    config.get("region", ""),
+                    self._namespace,
+                    self._bucket_name,
+                    self._connect_timeout,
+                    self._read_timeout,
+                )
             else:
                 logger.warning("OCI 設定ファイルが見つかりません: %s", config_path)
                 return None
@@ -87,20 +101,30 @@ class OCIStorageService:
         """リトライ付きAPI呼び出し"""
         last_error = None
         for attempt in range(OCI_API_MAX_RETRIES):
+            attempt_no = attempt + 1
+            started_at = time.time()
             try:
-                return func(*args, **kwargs)
+                logger.info("%s: 試行 %d/%d 開始", operation_name, attempt_no, OCI_API_MAX_RETRIES)
+                result = func(*args, **kwargs)
+                elapsed = time.time() - started_at
+                logger.info("%s: 試行 %d/%d 成功 (%.2fs)", operation_name, attempt_no, OCI_API_MAX_RETRIES, elapsed)
+                return result
             except Exception as e:
                 last_error = e
                 is_rate_limit = self._is_rate_limit_error(e)
+                elapsed = time.time() - started_at
                 if attempt < OCI_API_MAX_RETRIES - 1:
                     delay = self._calculate_backoff_delay(attempt, is_rate_limit)
                     logger.warning(
-                        "%s: 試行 %d/%d 失敗 (%s)。%.1f秒後にリトライ...",
-                        operation_name, attempt + 1, OCI_API_MAX_RETRIES, str(e)[:100], delay
+                        "%s: 試行 %d/%d 失敗 (%.2fs, %s: %s)。%.1f秒後にリトライ...",
+                        operation_name, attempt_no, OCI_API_MAX_RETRIES, elapsed, type(e).__name__, str(e)[:180], delay
                     )
                     time.sleep(delay)
                 else:
-                    logger.error("%s: 最大リトライ回数に到達: %s", operation_name, e)
+                    logger.error(
+                        "%s: 試行 %d/%d 失敗 (%.2fs, %s: %s)。最大リトライ回数に到達",
+                        operation_name, attempt_no, OCI_API_MAX_RETRIES, elapsed, type(e).__name__, str(e)[:180]
+                    )
         raise last_error
 
     def upload_file(
@@ -129,6 +153,12 @@ class OCIStorageService:
                 original_filename.encode("utf-8")
             ).decode("ascii")
 
+        request_id = f"denpyo-upload-{int(time.time() * 1000)}"
+        started_at = time.time()
+        logger.info(
+            "upload_file 開始: request_id=%s object=%s size=%d content_type=%s ns=%s bucket=%s",
+            request_id, object_name, len(file_data), content_type, self._namespace, self._bucket_name
+        )
         try:
             self._retry_api_call(
                 "upload_file",
@@ -139,8 +169,10 @@ class OCIStorageService:
                 put_object_body=file_data,
                 content_type=content_type,
                 opc_meta=opc_meta,
+                opc_client_request_id=request_id,
             )
-            logger.info("ファイルをアップロードしました: %s", object_name)
+            elapsed = time.time() - started_at
+            logger.info("upload_file 完了: request_id=%s object=%s elapsed=%.2fs", request_id, object_name, elapsed)
             return {
                 "success": True,
                 "message": "アップロード完了",
@@ -148,7 +180,11 @@ class OCIStorageService:
                 "size": len(file_data),
             }
         except Exception as e:
-            logger.error("ファイルアップロードエラー: %s", e, exc_info=True)
+            elapsed = time.time() - started_at
+            logger.error(
+                "upload_file 失敗: request_id=%s object=%s elapsed=%.2fs err=%s",
+                request_id, object_name, elapsed, e, exc_info=True
+            )
             return {"success": False, "message": f"アップロード失敗: {str(e)}"}
 
     def download_file(self, object_name: str) -> Optional[bytes]:

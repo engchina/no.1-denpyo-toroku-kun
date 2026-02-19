@@ -3,27 +3,28 @@
  * テーブル + ステータスフィルタ + ページング + 削除
  */
 import { h } from 'preact';
-import { useCallback, useEffect } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import {
   fetchFileList,
   deleteFile,
+  bulkDeleteFiles,
   analyzeFile,
   setFileListPage,
   setFileListStatusFilter
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import { setCurrentView } from '../../redux/slices/applicationSlice';
+import Pagination from '../../components/Pagination';
 import { t } from '../../i18n';
 import { FileStatus } from '../../types/denpyoTypes';
 import {
   RefreshCw,
   Trash2,
-  ChevronLeft,
-  ChevronRight,
   Filter,
   Sparkles,
-  Loader2
+  Loader2,
+  Eye
 } from 'lucide-react';
 
 function formatDateTime(value: string | null | undefined): string {
@@ -81,14 +82,21 @@ export function ListView() {
   const isDeleting = useAppSelector(state => state.denpyo.isDeleting);
   const isAnalyzing = useAppSelector(state => state.denpyo.isAnalyzing);
   const analyzingFileId = useAppSelector(state => state.denpyo.analyzingFileId);
+  const [goToPageInput, setGoToPageInput] = useState('');
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
 
   const loadFiles = useCallback(() => {
-    dispatch(fetchFileList({ page, pageSize, status: statusFilter }));
+    dispatch(fetchFileList({ page, pageSize, status: statusFilter, uploadKind: 'raw' }));
   }, [dispatch, page, pageSize, statusFilter]);
 
   useEffect(() => {
     loadFiles();
   }, [loadFiles]);
+
+  useEffect(() => {
+    const currentIds = new Set(files.map(f => String(f.file_id)));
+    setSelectedFileIds(prev => prev.filter(id => currentIds.has(id)));
+  }, [files]);
 
   const handleDelete = useCallback(async (fileId: string, fileName: string) => {
     if (!confirm(t('fileList.confirmDelete', { name: fileName }))) return;
@@ -135,6 +143,70 @@ export function ListView() {
     dispatch(setFileListPage(newPage));
   }, [dispatch]);
 
+  const handleGoToPage = useCallback(() => {
+    const target = parseInt(goToPageInput, 10);
+    if (!Number.isNaN(target) && target >= 1 && target <= totalPages) {
+      dispatch(setFileListPage(target));
+      setGoToPageInput('');
+    }
+  }, [dispatch, goToPageInput, totalPages]);
+
+  const handlePreview = useCallback((fileId: string) => {
+    window.open(`/studio/api/v1/files/${fileId}/preview`, '_blank', 'noopener,noreferrer');
+  }, []);
+
+  const toggleFileSelection = useCallback((fileId: string) => {
+    setSelectedFileIds(prev => (
+      prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
+    ));
+  }, []);
+
+  const handleSelectAllOnPage = useCallback(() => {
+    const selectableIds = files
+      .filter(f => f.status !== 'REGISTERED')
+      .map(f => String(f.file_id));
+    const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedFileIds.includes(id));
+    setSelectedFileIds(allSelected ? [] : selectableIds);
+  }, [files, selectedFileIds]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedFileIds.length === 0) return;
+    if (!confirm(t('fileList.confirmBulkDelete', { count: selectedFileIds.length }))) return;
+
+    try {
+      const result = await dispatch(bulkDeleteFiles(selectedFileIds)).unwrap();
+      setSelectedFileIds([]);
+      if (result.errors.length > 0) {
+        dispatch(addNotification({
+          type: 'warning',
+          message: t('fileList.notify.bulkDeletedWithErrors', {
+            deleted: result.deleted_file_ids.length,
+            errors: result.errors.length
+          }),
+          autoClose: true
+        }));
+      } else {
+        dispatch(addNotification({
+          type: 'success',
+          message: t('fileList.notify.bulkDeleted', { count: result.deleted_file_ids.length }),
+          autoClose: true
+        }));
+      }
+      loadFiles();
+    } catch {
+      dispatch(addNotification({
+        type: 'error',
+        message: t('fileList.notify.bulkDeleteFailed'),
+        autoClose: true
+      }));
+    }
+  }, [dispatch, selectedFileIds, loadFiles]);
+
+  const selectableIds = files
+    .filter(f => f.status !== 'REGISTERED')
+    .map(f => String(f.file_id));
+  const isAllSelectedOnPage = selectableIds.length > 0 && selectableIds.every(id => selectedFileIds.includes(id));
+
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
       {/* ヘッダー */}
@@ -157,6 +229,9 @@ export function ListView() {
         </div>
         <div class="ics-ops-hero__meta">
           <span>{t('fileList.totalFiles', { count: total })}</span>
+          {selectedFileIds.length > 0 && (
+            <span class="oj-sm-margin-4x-start">{t('fileList.selectedCount', { count: selectedFileIds.length })}</span>
+          )}
         </div>
       </section>
 
@@ -166,6 +241,16 @@ export function ListView() {
           <div class="ics-card-header oj-flex oj-sm-align-items-center oj-sm-justify-content-space-between">
             <span class="oj-typography-heading-xs">{t('fileList.tableTitle')}</span>
             <div class="oj-flex oj-sm-align-items-center oj-sm-gap-2">
+              <button
+                type="button"
+                class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                onClick={handleBulkDelete}
+                disabled={isDeleting || selectedFileIds.length === 0}
+                title={t('fileList.bulkDelete')}
+              >
+                <Trash2 size={14} />
+                <span>{t('fileList.bulkDelete')}</span>
+              </button>
               <Filter size={14} />
               <select
                 class="ics-select"
@@ -183,6 +268,14 @@ export function ListView() {
               <table class="ics-table">
                 <thead>
                   <tr>
+                    <th>
+                      <input
+                        type="checkbox"
+                        checked={isAllSelectedOnPage}
+                        onChange={handleSelectAllOnPage}
+                        aria-label={t('fileList.selectAll')}
+                      />
+                    </th>
                     <th>{t('fileList.col.name')}</th>
                     <th>{t('fileList.col.type')}</th>
                     <th>{t('fileList.col.size')}</th>
@@ -194,12 +287,29 @@ export function ListView() {
                 <tbody>
                   {files.map(file => (
                     <tr key={file.file_id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedFileIds.includes(String(file.file_id))}
+                          onChange={() => toggleFileSelection(String(file.file_id))}
+                          disabled={file.status === 'REGISTERED' || isDeleting}
+                          aria-label={t('fileList.selectFile')}
+                        />
+                      </td>
                       <td class="ics-table__cell--name">{file.file_name}</td>
-                      <td>{file.file_type}</td>
+                      <td>{t('upload.kind.raw')}</td>
                       <td>{formatFileSize(file.file_size)}</td>
                       <td><StatusBadge status={file.status} /></td>
                       <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
                       <td>
+                        <button
+                          type="button"
+                          class="ics-ops-btn ics-ops-btn--ghost"
+                          onClick={() => handlePreview(String(file.file_id))}
+                          title={t('fileList.previewFile')}
+                        >
+                          <Eye size={14} />
+                        </button>
                         {(file.status === 'UPLOADED' || file.status === 'ERROR') && (
                           <button
                             type="button"
@@ -235,30 +345,21 @@ export function ListView() {
             )}
           </div>
 
-          {/* ページネーション */}
-          {totalPages > 1 && (
-            <div class="ics-card-footer ics-pagination">
-              <button
-                type="button"
-                class="ics-ops-btn ics-ops-btn--ghost"
-                onClick={() => handlePageChange(page - 1)}
-                disabled={page <= 1 || isLoading}
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <span class="ics-pagination__info">
-                {t('fileList.pagination', { current: page, total: totalPages })}
-              </span>
-              <button
-                type="button"
-                class="ics-ops-btn ics-ops-btn--ghost"
-                onClick={() => handlePageChange(page + 1)}
-                disabled={page >= totalPages || isLoading}
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
-          )}
+          <div class="ics-card-footer">
+            <Pagination
+              currentPage={page}
+              totalPages={totalPages}
+              totalItems={total}
+              goToPageInput={goToPageInput}
+              onPageChange={handlePageChange}
+              onGoToPageInputChange={setGoToPageInput}
+              onGoToPage={handleGoToPage}
+              isFirstPage={page <= 1 || isLoading}
+              isLastPage={page >= totalPages || isLoading}
+              position="bottom"
+              show={totalPages > 1}
+            />
+          </div>
         </div>
       </section>
     </div>

@@ -61,7 +61,7 @@ interface AdbOperationResult {
   status: string;
   message: string;
   timestamp: string;
-  lifecycle_state?: string;
+  lifecycle_state?: string | null;
 }
 
 const EMPTY_DB_SETTINGS: DatabaseSettingsForm = {
@@ -85,6 +85,26 @@ function statusLabel(status: string): string {
 function getStatusClassName(status: string): string {
   return isConfiguredStatus(status) ? 'ics-status-healthy' : 'ics-status-unknown';
 }
+
+const ADB_LIFECYCLE_LABEL_KEYS: Record<string, Parameters<typeof t>[0]> = {
+  AVAILABLE: 'settings.adb.lifecycle.AVAILABLE',
+  STARTING: 'settings.adb.lifecycle.STARTING',
+  STOPPING: 'settings.adb.lifecycle.STOPPING',
+  STOPPED: 'settings.adb.lifecycle.STOPPED',
+  UNAVAILABLE: 'settings.adb.lifecycle.UNAVAILABLE',
+  PROVISIONING: 'settings.adb.lifecycle.PROVISIONING',
+  TERMINATING: 'settings.adb.lifecycle.TERMINATING',
+  TERMINATED: 'settings.adb.lifecycle.TERMINATED',
+  FAILED: 'settings.adb.lifecycle.FAILED',
+  UPDATING: 'settings.adb.lifecycle.UPDATING',
+  RESTORING: 'settings.adb.lifecycle.RESTORING',
+  BACKUP_IN_PROGRESS: 'settings.adb.lifecycle.BACKUP_IN_PROGRESS',
+  MAINTENANCE_IN_PROGRESS: 'settings.adb.lifecycle.MAINTENANCE_IN_PROGRESS',
+  ROLE_CHANGE_IN_PROGRESS: 'settings.adb.lifecycle.ROLE_CHANGE_IN_PROGRESS',
+  UPGRADING: 'settings.adb.lifecycle.UPGRADING',
+  INACCESSIBLE: 'settings.adb.lifecycle.INACCESSIBLE',
+  STANDBY: 'settings.adb.lifecycle.STANDBY'
+};
 
 export function DatabaseSettings() {
   const dispatch = useAppDispatch();
@@ -381,9 +401,8 @@ export function DatabaseSettings() {
 
   const getAdbLifecycleLabel = useCallback((state: string | null | undefined): string => {
     if (!state) return t('settings.adb.statusUnknown');
-    const key = `settings.adb.lifecycle.${state}`;
-    const translated = t(key);
-    return translated === key ? state : translated;
+    const key = ADB_LIFECYCLE_LABEL_KEYS[state];
+    return key ? t(key) : state;
   }, []);
 
   const getAdbStatusClassName = useCallback((state: string | null | undefined): string => {

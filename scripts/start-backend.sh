@@ -25,6 +25,18 @@ echo ""
 
 cd "$SERVICE_DIR"
 
+# Enable auto-reload in local development by default.
+# Can be disabled with BACKEND_AUTO_RELOAD=false ./scripts/start-backend.sh
+BACKEND_AUTO_RELOAD="${BACKEND_AUTO_RELOAD:-true}"
+
+if [ "$BACKEND_AUTO_RELOAD" = "true" ]; then
+    log_info "Auto-reload is enabled"
+    # Gunicorn reload mode is incompatible with preloaded apps.
+    export GUNICORN_PRELOAD_APP=false
+    exec gunicorn --reload -c "$GUNICORN_CONFIG" wsgi:app
+fi
+
+log_info "Auto-reload is disabled"
 # Run Gunicorn in foreground mode (no daemon)
 # GUNICORN_DAEMON is not set, so gunicorn runs in foreground
 exec gunicorn -c "$GUNICORN_CONFIG" wsgi:app

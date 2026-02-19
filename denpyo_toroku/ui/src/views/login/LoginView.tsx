@@ -84,6 +84,8 @@ export function LoginView() {
               placeholder={t('login.emailPlaceholder')}
               value={username}
               onInput={(e: any) => setUsername(e.currentTarget.value)}
+              onInvalid={(e: any) => e.currentTarget.setCustomValidity(t('login.validation.required'))}
+              onChange={(e: any) => e.currentTarget.setCustomValidity('')}
               required
             />
           </section>
@@ -99,6 +101,8 @@ export function LoginView() {
                 placeholder={t('login.passwordPlaceholder')}
                 value={password}
                 onInput={(e: any) => setPassword(e.currentTarget.value)}
+                onInvalid={(e: any) => e.currentTarget.setCustomValidity(t('login.validation.required'))}
+                onChange={(e: any) => e.currentTarget.setCustomValidity('')}
                 required
               />
               <button
@@ -123,7 +127,6 @@ export function LoginView() {
               />
               <span>{t('login.rememberMe')}</span>
             </label>
-            <a href="#" class="aiAuth__forgotLink">{t('login.forgotPassword')}</a>
           </div>
           <button type="submit" class="aiAuth__signInButton" disabled={loading}>
             {loading ? t('login.signingIn') : t('login.signIn')}

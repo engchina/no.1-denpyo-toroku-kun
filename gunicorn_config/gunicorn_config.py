@@ -53,7 +53,8 @@ graceful_timeout = 30
 worker_connections = 100
 
 # Preload application (shares model across workers)
-preload_app = True
+# Keep enabled by default; disable via GUNICORN_PRELOAD_APP=false
+preload_app = os.environ.get("GUNICORN_PRELOAD_APP", "true").lower() == "true"
 
 # Log level
 loglevel = "info"

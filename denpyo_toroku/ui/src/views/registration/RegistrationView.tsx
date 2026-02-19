@@ -8,7 +8,7 @@ import { useAppDispatch, useAppSelector } from '../../redux/store';
 import { registerFile, clearRegistrationResult, clearAnalysisResult } from '../../redux/slices/denpyoSlice';
 import { setCurrentView } from '../../redux/slices/applicationSlice';
 import { t } from '../../i18n';
-import type { RegistrationRequest } from '../../types/denpyoTypes';
+import type { ExtractedField, RegistrationRequest } from '../../types/denpyoTypes';
 import {
   ArrowLeft,
   Database,
@@ -32,16 +32,37 @@ export function RegistrationView() {
   const [lineTableName, setLineTableName] = useState('');
   const [headerDDL, setHeaderDDL] = useState('');
   const [lineDDL, setLineDDL] = useState('');
+  const [tableMode, setTableMode] = useState<'header_only' | 'header_line'>('header_line');
+  const [headerFields, setHeaderFields] = useState<ExtractedField[]>([]);
+  const [previewLine, setPreviewLine] = useState<Record<string, string>>({});
+  const [isConfirmed, setIsConfirmed] = useState(false);
   const [validationError, setValidationError] = useState('');
 
   // 分析結果から初期値を設定
   useEffect(() => {
-    if (analysisResult?.ddl_suggestion) {
+    if (analysisResult) {
       const ddl = analysisResult.ddl_suggestion;
       setHeaderTableName(ddl.header_table_name || '');
       setLineTableName(ddl.line_table_name || '');
       setHeaderDDL(ddl.header_ddl || '');
       setLineDDL(ddl.line_ddl || '');
+      setHeaderFields(analysisResult.extraction.header_fields || []);
+      const firstLine = (analysisResult.extraction.raw_lines || [])[0] || {};
+      const normalizedLine: Record<string, string> = {};
+      Object.entries(firstLine).forEach(([key, value]) => {
+        normalizedLine[key] = String(value ?? '');
+      });
+      setPreviewLine(normalizedLine);
+
+      const hasLineSuggestion = Boolean(
+        (analysisResult.extraction.line_fields || []).length > 0 ||
+        (analysisResult.extraction.raw_lines || []).length > 0 ||
+        ddl.line_table_name ||
+        ddl.line_ddl
+      );
+      setTableMode(hasLineSuggestion ? 'header_line' : 'header_only');
+      setIsConfirmed(false);
+      setValidationError('');
     }
   }, [analysisResult]);
 
@@ -60,6 +81,10 @@ export function RegistrationView() {
     if (!analysisResult) return;
 
     // バリデーション
+    if (!isConfirmed) {
+      setValidationError(t('registration.error.notConfirmed'));
+      return;
+    }
     if (!headerTableName.trim()) {
       setValidationError(t('registration.error.noHeaderTable'));
       return;
@@ -68,24 +93,37 @@ export function RegistrationView() {
       setValidationError(t('registration.error.noHeaderDDL'));
       return;
     }
+    if (tableMode === 'header_line' && !lineTableName.trim()) {
+      setValidationError(t('registration.error.noLineTable'));
+      return;
+    }
+    if (tableMode === 'header_line' && !lineDDL.trim()) {
+      setValidationError(t('registration.error.noLineDDL'));
+      return;
+    }
     setValidationError('');
+
+    const useLine = tableMode === 'header_line';
+    const rawLines = useLine && Object.keys(previewLine).length > 0
+      ? [previewLine as Record<string, unknown>]
+      : [];
 
     const data: RegistrationRequest = {
       category_name: analysisResult.classification.category,
       category_name_en: analysisResult.ddl_suggestion.table_prefix || '',
       header_table_name: headerTableName.trim(),
-      line_table_name: lineTableName.trim(),
+      line_table_name: useLine ? lineTableName.trim() : '',
       header_ddl: headerDDL.trim(),
-      line_ddl: lineDDL.trim(),
+      line_ddl: useLine ? lineDDL.trim() : '',
       ai_confidence: analysisResult.classification.confidence,
-      line_count: analysisResult.extraction.line_count,
+      line_count: rawLines.length,
       // データINSERT用
-      header_fields: analysisResult.extraction.header_fields,
-      raw_lines: analysisResult.extraction.raw_lines,
+      header_fields: headerFields,
+      raw_lines: rawLines,
     };
 
     dispatch(registerFile({ fileId: analysisResult.file_id, data }));
-  }, [dispatch, analysisResult, headerTableName, lineTableName, headerDDL, lineDDL]);
+  }, [dispatch, analysisResult, headerTableName, lineTableName, headerDDL, lineDDL, tableMode, headerFields, previewLine, isConfirmed]);
 
   // 分析結果なし
   if (!analysisResult) {
@@ -116,6 +154,7 @@ export function RegistrationView() {
   }
 
   const { classification, extraction } = analysisResult;
+  const linePreviewColumns = Object.keys(previewLine);
 
   // 登録完了
   if (registrationResult?.success) {
@@ -207,9 +246,42 @@ export function RegistrationView() {
             {extraction.header_fields.length}H / {extraction.line_fields.length}L
           </div>
           <div class="ics-ops-kpiCard__meta">
-            {t('registration.lineCount', { count: extraction.line_count })}
+            {tableMode === 'header_line'
+              ? t('registration.lineCount', { count: extraction.line_count })
+              : t('registration.headerOnlyMode')}
           </div>
         </article>
+      </section>
+
+      {/* テーブル作成方式 */}
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-card ics-ops-panel">
+          <div class="ics-card-header">
+            <span class="oj-typography-heading-xs">{t('registration.tableMode.title')}</span>
+          </div>
+          <div class="ics-card-body">
+            <div class="ics-table-mode-group">
+              <label class="ics-table-mode-option">
+                <input
+                  type="radio"
+                  name="tableMode"
+                  checked={tableMode === 'header_only'}
+                  onChange={() => setTableMode('header_only')}
+                />
+                <span>{t('registration.tableMode.headerOnly')}</span>
+              </label>
+              <label class="ics-table-mode-option">
+                <input
+                  type="radio"
+                  name="tableMode"
+                  checked={tableMode === 'header_line'}
+                  onChange={() => setTableMode('header_line')}
+                />
+                <span>{t('registration.tableMode.headerAndLine')}</span>
+              </label>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* テーブル名入力 */}
@@ -239,9 +311,92 @@ export function RegistrationView() {
                   value={lineTableName}
                   onInput={(e) => setLineTableName((e.target as HTMLInputElement).value)}
                   placeholder="e.g. INV_LINES"
+                  disabled={tableMode === 'header_only'}
                 />
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 生成テーブルプレビュー（編集可） */}
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-card ics-ops-panel">
+          <div class="ics-card-header">
+            <span class="oj-typography-heading-xs">{t('registration.preview.title')}</span>
+          </div>
+          <div class="ics-card-body">
+            <div class="ics-table-preview-block">
+              <div class="ics-table-preview-title">{t('registration.preview.header')}</div>
+              {headerFields.length > 0 ? (
+                <table class="ics-table">
+                  <thead>
+                    <tr>
+                      <th>{t('analysis.table.fieldNameEn')}</th>
+                      <th>{t('analysis.table.sampleValue')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {headerFields.map((field, i) => (
+                      <tr key={i}>
+                        <td>{field.field_name_en || field.field_name}</td>
+                        <td>
+                          <input
+                            type="text"
+                            class="ics-table-edit-input"
+                            value={String(field.value ?? '')}
+                            onInput={(e) => {
+                              const value = (e.target as HTMLInputElement).value;
+                              setHeaderFields(prev => prev.map((f, idx) => (idx === i ? { ...f, value } : f)));
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div class="ics-empty-text">{t('analysis.noResult')}</div>
+              )}
+            </div>
+
+            {tableMode === 'header_line' && (
+              <div class="ics-table-preview-block">
+                <div class="ics-table-preview-title">{t('registration.preview.lineOneRow')}</div>
+                {linePreviewColumns.length > 0 ? (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table class="ics-table">
+                      <thead>
+                        <tr>
+                          {linePreviewColumns.map((col) => (
+                            <th key={col}>{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          {linePreviewColumns.map((col) => (
+                            <td key={col}>
+                              <input
+                                type="text"
+                                class="ics-table-edit-input"
+                                value={String(previewLine[col] ?? '')}
+                                onInput={(e) => {
+                                  const value = (e.target as HTMLInputElement).value;
+                                  setPreviewLine(prev => ({ ...prev, [col]: value }));
+                                }}
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div class="ics-empty-text">{t('registration.preview.noLineData')}</div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -271,8 +426,22 @@ export function RegistrationView() {
               rows={16}
               value={lineDDL}
               onInput={(e) => setLineDDL((e.target as HTMLTextAreaElement).value)}
+              disabled={tableMode === 'header_only'}
             />
           </div>
+        </div>
+      </section>
+
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-registration-confirm">
+          <label class="ics-table-mode-option">
+            <input
+              type="checkbox"
+              checked={isConfirmed}
+              onChange={(e) => setIsConfirmed((e.target as HTMLInputElement).checked)}
+            />
+            <span>{t('registration.confirm')}</span>
+          </label>
         </div>
       </section>
 

@@ -45,6 +45,9 @@ class AppConfig:
     # OCI Object Storage
     OCI_BUCKET = os.environ.get("OCI_BUCKET", "")
     OCI_NAMESPACE = os.environ.get("OCI_NAMESPACE", "")
+    OCI_OBJECT_PREFIX = os.environ.get("OCI_OBJECT_PREFIX", "denpyo-raw")
+    OCI_SLIPS_RAW_PREFIX = os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw")
+    OCI_SLIPS_CATEGORY_PREFIX = os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category")
 
     # AI Model Configuration
     VISION_MODEL_NAME = os.environ.get(

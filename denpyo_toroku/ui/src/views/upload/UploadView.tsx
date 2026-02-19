@@ -59,6 +59,7 @@ export function UploadView() {
   const isUploading = useAppSelector(state => state.denpyo.isUploading);
   const uploadResult = useAppSelector(state => state.denpyo.uploadResult);
 
+  const [uploadKind, setUploadKind] = useState<'raw' | 'category'>('raw');
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -121,7 +122,7 @@ export function UploadView() {
     if (validFiles.length === 0) return;
 
     try {
-      const result = await dispatch(uploadFiles(validFiles)).unwrap();
+      const result = await dispatch(uploadFiles({ files: validFiles, uploadKind })).unwrap();
       setSelectedFiles([]);
       dispatch(addNotification({
         type: result.errors.length > 0 ? 'warning' : 'success',
@@ -138,7 +139,7 @@ export function UploadView() {
         autoClose: true
       }));
     }
-  }, [selectedFiles, dispatch]);
+  }, [selectedFiles, uploadKind, dispatch]);
 
   const handleClearResult = useCallback(() => {
     dispatch(clearUploadResult());
@@ -160,6 +161,38 @@ export function UploadView() {
       </section>
 
       {/* ドロップゾーン */}
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-card ics-ops-panel">
+          <div class="ics-card-body">
+            <div class="ics-upload-kindSelector" role="radiogroup" aria-label={t('upload.kind.label')}>
+              <span class="ics-upload-kindSelector__label">{t('upload.kind.label')}</span>
+              <label class="ics-upload-kindOption">
+                <input
+                  type="radio"
+                  name="upload-kind"
+                  value="raw"
+                  checked={uploadKind === 'raw'}
+                  onChange={() => setUploadKind('raw')}
+                  disabled={isUploading}
+                />
+                <span>{t('upload.kind.raw')}</span>
+              </label>
+              <label class="ics-upload-kindOption">
+                <input
+                  type="radio"
+                  name="upload-kind"
+                  value="category"
+                  checked={uploadKind === 'category'}
+                  onChange={() => setUploadKind('category')}
+                  disabled={isUploading}
+                />
+                <span>{t('upload.kind.category')}</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
           <div

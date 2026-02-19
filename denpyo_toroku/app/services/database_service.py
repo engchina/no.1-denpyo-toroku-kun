@@ -11,6 +11,7 @@ Oracle ADB (Autonomous Database) との連携を管理します。
 """
 import logging
 import os
+import re
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
@@ -87,6 +88,51 @@ _MANAGEMENT_TABLES_DDL = [
     """,
 ]
 
+def _sql_literal(value: str) -> str:
+    return (value or "").replace("'", "''")
+
+
+_SLIPS_RAW_DEFAULT_PREFIX = os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw"
+_SLIPS_CATEGORY_DEFAULT_PREFIX = os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category"
+
+SLIPS_RAW_TABLE_DDL = f"""
+CREATE TABLE SLIPS_RAW (
+    ID NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    PREFIX VARCHAR2(50) DEFAULT '{_sql_literal(_SLIPS_RAW_DEFAULT_PREFIX)}' NOT NULL,
+    OBJECT_NAME VARCHAR2(1024) NOT NULL,
+    BUCKET_NAME VARCHAR2(256) NOT NULL,
+    NAMESPACE VARCHAR2(256) NOT NULL,
+    FILE_NAME VARCHAR2(512) NOT NULL,
+    FILE_SIZE_BYTES NUMBER,
+    CONTENT_TYPE VARCHAR2(100),
+    CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT UQ_SLIPS_RAW_OBJECT UNIQUE (NAMESPACE, BUCKET_NAME, OBJECT_NAME)
+)
+"""
+
+SLIPS_RAW_INDEX_DDL = """
+CREATE INDEX IDX_SLIPS_RAW_BUCKET ON SLIPS_RAW(BUCKET_NAME, NAMESPACE)
+"""
+
+SLIPS_CATEGORY_TABLE_DDL = f"""
+CREATE TABLE SLIPS_CATEGORY (
+    ID NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    PREFIX VARCHAR2(50) DEFAULT '{_sql_literal(_SLIPS_CATEGORY_DEFAULT_PREFIX)}' NOT NULL,
+    OBJECT_NAME VARCHAR2(1024) NOT NULL,
+    BUCKET_NAME VARCHAR2(256) NOT NULL,
+    NAMESPACE VARCHAR2(256) NOT NULL,
+    FILE_NAME VARCHAR2(512) NOT NULL,
+    FILE_SIZE_BYTES NUMBER,
+    CONTENT_TYPE VARCHAR2(100),
+    CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT UQ_SLIPS_CATEGORY_OBJECT UNIQUE (NAMESPACE, BUCKET_NAME, OBJECT_NAME)
+)
+"""
+
+SLIPS_CATEGORY_INDEX_DDL = """
+CREATE INDEX IDX_SLIPS_CATEGORY_BUCKET ON SLIPS_CATEGORY(BUCKET_NAME, NAMESPACE)
+"""
+
 
 class DatabaseService:
     """データベースサービス
@@ -103,6 +149,8 @@ class DatabaseService:
 
     def __init__(self):
         self._pool = None
+        self._management_tables_initialized = False
+        self._slips_tables_initialized = False
 
     def _parse_connection_string(self) -> Dict[str, str]:
         """環境変数から接続文字列をパース"""
@@ -204,12 +252,52 @@ class DatabaseService:
                             else:
                                 results.append({"table": table_name, "status": "error", "message": str(e)})
                                 logger.error("テーブル作成エラー (%s): %s", table_name, e)
+
+                    for table_name, ddl in (
+                        ("SLIPS_RAW", SLIPS_RAW_TABLE_DDL),
+                        ("IDX_SLIPS_RAW_BUCKET", SLIPS_RAW_INDEX_DDL),
+                        ("SLIPS_CATEGORY", SLIPS_CATEGORY_TABLE_DDL),
+                        ("IDX_SLIPS_CATEGORY_BUCKET", SLIPS_CATEGORY_INDEX_DDL),
+                    ):
+                        try:
+                            cursor.execute(ddl)
+                            results.append({"table": table_name, "status": "created"})
+                            logger.info("テーブルを作成しました: %s", table_name)
+                        except Exception as e:
+                            error_str = str(e)
+                            if "ORA-00955" in error_str:
+                                results.append({"table": table_name, "status": "already_exists"})
+                            else:
+                                results.append({"table": table_name, "status": "error", "message": str(e)})
+                                logger.error("テーブル作成エラー (%s): %s", table_name, e)
                     conn.commit()
 
             return {"success": True, "tables": results}
         except Exception as e:
             logger.error("テーブル初期化エラー: %s", e, exc_info=True)
             return {"success": False, "message": str(e), "tables": results}
+
+    def _ensure_management_tables(self) -> bool:
+        """DENPYO_* 管理テーブルの存在を保証"""
+        if self._management_tables_initialized:
+            return True
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    for ddl in _MANAGEMENT_TABLES_DDL:
+                        try:
+                            cursor.execute(ddl)
+                        except Exception as e:
+                            if "ORA-00955" not in str(e):
+                                logger.error("管理テーブル DDL 実行エラー: %s", e, exc_info=True)
+                                return False
+                conn.commit()
+            self._management_tables_initialized = True
+            return True
+        except Exception as e:
+            logger.error("管理テーブル初期化エラー: %s", e, exc_info=True)
+            return False
 
     def execute_ddl(self, ddl_statement: str) -> Dict[str, Any]:
         """動的DDLを実行（AI提案のテーブル作成用）"""
@@ -225,6 +313,84 @@ class DatabaseService:
                 return {"success": True, "message": "テーブルは既に存在します"}
             logger.error("DDL実行エラー: %s", e, exc_info=True)
             return {"success": False, "message": str(e)}
+
+    def _ensure_slips_tables(self) -> bool:
+        """SLIPS_RAW / SLIPS_CATEGORY テーブルとインデックスの存在を保証"""
+        if self._slips_tables_initialized:
+            return True
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    for ddl in (
+                        SLIPS_RAW_TABLE_DDL,
+                        SLIPS_RAW_INDEX_DDL,
+                        SLIPS_CATEGORY_TABLE_DDL,
+                        SLIPS_CATEGORY_INDEX_DDL,
+                    ):
+                        try:
+                            cursor.execute(ddl)
+                        except Exception as e:
+                            if "ORA-00955" not in str(e):
+                                logger.error("SLIPS テーブル DDL 実行エラー: %s", e, exc_info=True)
+                                return False
+                conn.commit()
+            self._slips_tables_initialized = True
+            return True
+        except Exception as e:
+            logger.error("SLIPS テーブル初期化エラー: %s", e, exc_info=True)
+            return False
+
+    def insert_slip_record(
+        self,
+        slip_kind: str,
+        object_name: str,
+        bucket_name: str,
+        namespace: str,
+        file_name: str,
+        file_size_bytes: int,
+        content_type: str,
+    ) -> Optional[int]:
+        """アップロード済みファイル情報を SLIPS_RAW / SLIPS_CATEGORY に登録"""
+        if not self._ensure_slips_tables():
+            return None
+
+        kind = (slip_kind or "raw").strip().lower()
+        if kind == "category":
+            table_name = "SLIPS_CATEGORY"
+            prefix_value = os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category"
+        elif kind == "raw":
+            table_name = "SLIPS_RAW"
+            prefix_value = os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw"
+        else:
+            logger.error("不正な SLIP 種別です: %s", slip_kind)
+            return None
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    slip_id_var = cursor.var(int)
+                    cursor.execute(
+                        f"""INSERT INTO {table_name}
+                        (PREFIX, OBJECT_NAME, BUCKET_NAME, NAMESPACE, FILE_NAME, FILE_SIZE_BYTES, CONTENT_TYPE)
+                        VALUES (:1, :2, :3, :4, :5, :6, :7)
+                        RETURNING ID INTO :8""",
+                        [
+                            prefix_value,
+                            object_name,
+                            bucket_name,
+                            namespace,
+                            file_name,
+                            file_size_bytes,
+                            content_type,
+                            slip_id_var,
+                        ]
+                    )
+                conn.commit()
+                return slip_id_var.getvalue()[0]
+        except Exception as e:
+            logger.error("SLIPS 登録エラー (kind=%s): %s", slip_kind, e, exc_info=True)
+            return None
 
     def insert_extracted_data(
         self,
@@ -321,6 +487,9 @@ class DatabaseService:
                            object_storage_path: str, content_type: str,
                            file_size: int, uploaded_by: str = "") -> Optional[int]:
         """ファイルレコードを登録"""
+        if not self._ensure_management_tables():
+            return None
+
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -554,6 +723,8 @@ class DatabaseService:
 
     # ── データ検索 ─────────────────────────────────
 
+    _TABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
     def get_allowed_table_names(self) -> List[Dict[str, Any]]:
         """DENPYO_CATEGORIES から有効なユーザーテーブル名を取得"""
         try:
@@ -576,6 +747,110 @@ class DatabaseService:
         except Exception as e:
             logger.error("許可テーブル一覧取得エラー: %s", e, exc_info=True)
             return []
+
+    def _is_safe_table_name(self, table_name: str) -> bool:
+        return bool(table_name and self._TABLE_NAME_PATTERN.match(table_name))
+
+    def get_table_browser_tables(self) -> List[Dict[str, Any]]:
+        """テーブルブラウザ用の一覧情報を取得（行数・作成日時など）"""
+        entries: List[Dict[str, Any]] = []
+        for category in self.get_allowed_table_names():
+            if category.get("header_table_name"):
+                entries.append({
+                    "table_name": category["header_table_name"].upper(),
+                    "table_type": "header",
+                    "category_id": category["category_id"],
+                    "category_name": category["category_name"],
+                })
+            if category.get("line_table_name"):
+                entries.append({
+                    "table_name": category["line_table_name"].upper(),
+                    "table_type": "line",
+                    "category_id": category["category_id"],
+                    "category_name": category["category_name"],
+                })
+
+        if not entries:
+            return []
+
+        safe_table_names = sorted({e["table_name"] for e in entries if self._is_safe_table_name(e["table_name"])})
+        if not safe_table_names:
+            return []
+
+        meta_map: Dict[str, Dict[str, Any]] = {
+            table_name: {
+                "row_count": 0,
+                "estimated_rows": 0,
+                "column_count": 0,
+                "created_at": "",
+                "last_analyzed": "",
+            }
+            for table_name in safe_table_names
+        }
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    bind_map = {f"tn{i}": name for i, name in enumerate(safe_table_names)}
+                    in_clause = ", ".join([f":tn{i}" for i in range(len(safe_table_names))])
+
+                    cursor.execute(
+                        f"""SELECT t.TABLE_NAME, NVL(t.NUM_ROWS, 0), t.LAST_ANALYZED, o.CREATED
+                        FROM USER_TABLES t
+                        LEFT JOIN USER_OBJECTS o
+                          ON o.OBJECT_NAME = t.TABLE_NAME
+                         AND o.OBJECT_TYPE = 'TABLE'
+                        WHERE t.TABLE_NAME IN ({in_clause})""",
+                        bind_map
+                    )
+                    for row in cursor.fetchall():
+                        table_name = row[0]
+                        meta_map[table_name]["estimated_rows"] = int(row[1] or 0)
+                        meta_map[table_name]["last_analyzed"] = str(row[2]) if row[2] else ""
+                        meta_map[table_name]["created_at"] = str(row[3]) if row[3] else ""
+
+                    cursor.execute(
+                        f"""SELECT TABLE_NAME, COUNT(*)
+                        FROM USER_TAB_COLUMNS
+                        WHERE TABLE_NAME IN ({in_clause})
+                        GROUP BY TABLE_NAME""",
+                        bind_map
+                    )
+                    for row in cursor.fetchall():
+                        table_name = row[0]
+                        meta_map[table_name]["column_count"] = int(row[1] or 0)
+
+                    for table_name in safe_table_names:
+                        try:
+                            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                            count_row = cursor.fetchone()
+                            actual_count = int(count_row[0]) if count_row and count_row[0] is not None else 0
+                            meta_map[table_name]["row_count"] = actual_count
+                        except Exception as count_error:
+                            logger.warning("テーブル行数取得スキップ (%s): %s", table_name, count_error)
+                            meta_map[table_name]["row_count"] = meta_map[table_name]["estimated_rows"]
+        except Exception as e:
+            logger.error("テーブルブラウザ一覧取得エラー: %s", e, exc_info=True)
+            return []
+
+        result: List[Dict[str, Any]] = []
+        for entry in entries:
+            table_name = entry["table_name"]
+            meta = meta_map.get(table_name, {})
+            result.append({
+                "table_name": table_name,
+                "table_type": entry["table_type"],
+                "category_id": entry["category_id"],
+                "category_name": entry["category_name"],
+                "row_count": meta.get("row_count", 0),
+                "estimated_rows": meta.get("estimated_rows", 0),
+                "column_count": meta.get("column_count", 0),
+                "created_at": meta.get("created_at", ""),
+                "last_analyzed": meta.get("last_analyzed", ""),
+            })
+
+        result.sort(key=lambda x: (x["category_name"], x["table_type"], x["table_name"]))
+        return result
 
     def _get_allowed_table_set(self) -> set:
         """許可されたテーブル名のセットを取得（大文字）"""
@@ -807,12 +1082,38 @@ class DatabaseService:
 
         return stats
 
-    def get_files(self, status: str = None, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    def get_files(
+        self,
+        status: str = None,
+        limit: int = 50,
+        offset: int = 0,
+        upload_kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """ファイル一覧を取得"""
+        kind = (upload_kind or "").strip().lower()
+        raw_prefix = (os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw").strip("/")
+        category_prefix = (os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category").strip("/")
+        path_prefix = None
+        if kind == "raw":
+            path_prefix = raw_prefix
+        elif kind == "category":
+            path_prefix = category_prefix
+
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    if status:
+                    if status and path_prefix:
+                        cursor.execute(
+                            """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE,
+                                      STATUS, UPLOADED_BY, UPLOADED_AT
+                            FROM DENPYO_FILES
+                            WHERE STATUS = :1
+                              AND OBJECT_STORAGE_PATH LIKE :2
+                            ORDER BY UPLOADED_AT DESC
+                            OFFSET :3 ROWS FETCH NEXT :4 ROWS ONLY""",
+                            [status, f"{path_prefix}/%", offset, limit]
+                        )
+                    elif status:
                         cursor.execute(
                             """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE,
                                       STATUS, UPLOADED_BY, UPLOADED_AT
@@ -820,6 +1121,16 @@ class DatabaseService:
                             ORDER BY UPLOADED_AT DESC
                             OFFSET :2 ROWS FETCH NEXT :3 ROWS ONLY""",
                             [status, offset, limit]
+                        )
+                    elif path_prefix:
+                        cursor.execute(
+                            """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE,
+                                      STATUS, UPLOADED_BY, UPLOADED_AT
+                            FROM DENPYO_FILES
+                            WHERE OBJECT_STORAGE_PATH LIKE :1
+                            ORDER BY UPLOADED_AT DESC
+                            OFFSET :2 ROWS FETCH NEXT :3 ROWS ONLY""",
+                            [f"{path_prefix}/%", offset, limit]
                         )
                     else:
                         cursor.execute(
@@ -848,15 +1159,34 @@ class DatabaseService:
             logger.error("ファイル一覧取得エラー: %s", e, exc_info=True)
             return []
 
-    def get_files_count(self, status: str = None) -> int:
+    def get_files_count(self, status: str = None, upload_kind: Optional[str] = None) -> int:
         """ファイル総件数を取得"""
+        kind = (upload_kind or "").strip().lower()
+        raw_prefix = (os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw").strip("/")
+        category_prefix = (os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category").strip("/")
+        path_prefix = None
+        if kind == "raw":
+            path_prefix = raw_prefix
+        elif kind == "category":
+            path_prefix = category_prefix
+
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    if status:
+                    if status and path_prefix:
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM DENPYO_FILES WHERE STATUS = :1 AND OBJECT_STORAGE_PATH LIKE :2",
+                            [status, f"{path_prefix}/%"]
+                        )
+                    elif status:
                         cursor.execute(
                             "SELECT COUNT(*) FROM DENPYO_FILES WHERE STATUS = :1",
                             [status]
+                        )
+                    elif path_prefix:
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM DENPYO_FILES WHERE OBJECT_STORAGE_PATH LIKE :1",
+                            [f"{path_prefix}/%"]
                         )
                     else:
                         cursor.execute("SELECT COUNT(*) FROM DENPYO_FILES")

@@ -20,6 +20,7 @@ import {
   DenpyoCategory,
   CategoryUpdateRequest,
   SearchableTable,
+  TableBrowserTable,
   NLSearchRequest,
   NLSearchResponse,
   TableBrowseResult
@@ -53,6 +54,8 @@ const initialState: DenpyoSliceState = {
   // データ検索 (SCR-006)
   searchableTables: [],
   isSearchableTablesLoading: false,
+  tableBrowserTables: [],
+  isTableBrowserTablesLoading: false,
   nlSearchResult: null,
   isNLSearching: false,
   tableBrowseResult: null,
@@ -77,20 +80,22 @@ export const fetchDashboardStats = createAsyncThunk(
 
 export const uploadFiles = createAsyncThunk(
   'denpyo/uploadFiles',
-  async (files: File[]) => {
+  async (params: { files: File[]; uploadKind: 'raw' | 'category' }) => {
     const formData = new FormData();
-    files.forEach(f => formData.append('files', f));
+    params.files.forEach(f => formData.append('files', f));
+    formData.append('upload_kind', params.uploadKind);
     return await apiUpload<FileUploadResponse>('/api/v1/files/upload', formData);
   }
 );
 
 export const fetchFileList = createAsyncThunk(
   'denpyo/fetchFileList',
-  async (params: { page?: number; pageSize?: number; status?: FileStatus | null }) => {
+  async (params: { page?: number; pageSize?: number; status?: FileStatus | null; uploadKind?: 'raw' | 'category' | null }) => {
     const qs = new URLSearchParams();
     if (params.page) qs.set('page', String(params.page));
     if (params.pageSize) qs.set('page_size', String(params.pageSize));
     if (params.status) qs.set('status', params.status);
+    if (params.uploadKind) qs.set('upload_kind', params.uploadKind);
     const query = qs.toString();
     return await apiGet<FileListResponse>(`/api/v1/files${query ? '?' + query : ''}`);
   }
@@ -101,6 +106,17 @@ export const deleteFile = createAsyncThunk(
   async (fileId: string) => {
     await apiDelete<{ success: boolean }>(`/api/v1/files/${fileId}`);
     return fileId;
+  }
+);
+
+export const bulkDeleteFiles = createAsyncThunk(
+  'denpyo/bulkDeleteFiles',
+  async (fileIds: string[]) => {
+    const result = await apiPost<{ success: boolean; deleted_file_ids: string[]; errors: string[] }>(
+      '/api/v1/files/bulk-delete',
+      { file_ids: fileIds }
+    );
+    return result;
   }
 );
 
@@ -169,6 +185,14 @@ export const nlSearch = createAsyncThunk(
   }
 );
 
+export const fetchTableBrowserTables = createAsyncThunk(
+  'denpyo/fetchTableBrowserTables',
+  async () => {
+    const res = await apiGet<{ tables: TableBrowserTable[] }>('/api/v1/search/table-browser/tables');
+    return res.tables;
+  }
+);
+
 export const fetchTableData = createAsyncThunk(
   'denpyo/fetchTableData',
   async (params: { categoryId: number; page?: number; pageSize?: number; tableType?: 'header' | 'line' }) => {
@@ -178,6 +202,18 @@ export const fetchTableData = createAsyncThunk(
     if (params.tableType) qs.set('table_type', params.tableType);
     const query = qs.toString();
     return await apiGet<TableBrowseResult>(`/api/v1/search/tables/${params.categoryId}/data${query ? '?' + query : ''}`);
+  }
+);
+
+export const fetchTableDataByName = createAsyncThunk(
+  'denpyo/fetchTableDataByName',
+  async (params: { tableName: string; tableType?: 'header' | 'line'; page?: number; pageSize?: number }) => {
+    const qs = new URLSearchParams();
+    qs.set('table_name', params.tableName);
+    if (params.tableType) qs.set('table_type', params.tableType);
+    if (params.page) qs.set('page', String(params.page));
+    if (params.pageSize) qs.set('page_size', String(params.pageSize));
+    return await apiGet<TableBrowseResult>(`/api/v1/search/table-browser/data?${qs.toString()}`);
   }
 );
 
@@ -294,6 +330,24 @@ const denpyoSlice = createSlice({
         state.error = action.error.message || 'ファイルの削除に失敗しました';
       });
 
+    // Bulk Delete Files
+    builder
+      .addCase(bulkDeleteFiles.pending, (state) => {
+        state.isDeleting = true;
+      })
+      .addCase(bulkDeleteFiles.fulfilled, (state, action) => {
+        state.isDeleting = false;
+        const deletedSet = new Set((action.payload.deleted_file_ids || []).map(id => String(id)));
+        state.fileList.files = state.fileList.files.filter(
+          f => !deletedSet.has(String(f.file_id))
+        );
+        state.fileList.total = Math.max(0, state.fileList.total - deletedSet.size);
+      })
+      .addCase(bulkDeleteFiles.rejected, (state, action) => {
+        state.isDeleting = false;
+        state.error = action.error.message || 'ファイルの一括削除に失敗しました';
+      });
+
     // Analyze File
     builder
       .addCase(analyzeFile.pending, (state, action) => {
@@ -406,6 +460,19 @@ const denpyoSlice = createSlice({
       });
 
     builder
+      .addCase(fetchTableBrowserTables.pending, (state) => {
+        state.isTableBrowserTablesLoading = true;
+      })
+      .addCase(fetchTableBrowserTables.fulfilled, (state, action) => {
+        state.isTableBrowserTablesLoading = false;
+        state.tableBrowserTables = action.payload;
+      })
+      .addCase(fetchTableBrowserTables.rejected, (state, action) => {
+        state.isTableBrowserTablesLoading = false;
+        state.searchError = action.error.message || 'テーブル一覧の取得に失敗しました';
+      });
+
+    builder
       .addCase(nlSearch.pending, (state) => {
         state.isNLSearching = true;
         state.nlSearchResult = null;
@@ -433,6 +500,20 @@ const denpyoSlice = createSlice({
         state.tableBrowseResult = action.payload;
       })
       .addCase(fetchTableData.rejected, (state, action) => {
+        state.isTableBrowsing = false;
+        state.searchError = action.error.message || 'テーブルデータの取得に失敗しました';
+      });
+
+    builder
+      .addCase(fetchTableDataByName.pending, (state) => {
+        state.isTableBrowsing = true;
+        state.searchError = null;
+      })
+      .addCase(fetchTableDataByName.fulfilled, (state, action) => {
+        state.isTableBrowsing = false;
+        state.tableBrowseResult = action.payload;
+      })
+      .addCase(fetchTableDataByName.rejected, (state, action) => {
         state.isTableBrowsing = false;
         state.searchError = action.error.message || 'テーブルデータの取得に失敗しました';
       });

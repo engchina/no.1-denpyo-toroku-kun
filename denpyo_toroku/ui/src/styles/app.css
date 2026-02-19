@@ -1880,6 +1880,82 @@ html[dir="rtl"] .oracle-icon {
     word-break: break-all;
 }
 
+.applicationSettingsView--model .applicationSettingsView__heroMetrics--model {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.applicationSettingsView--model .applicationSettingsView__heroMetricValue--compact {
+    font-size: 0.92rem;
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.applicationSettingsView--model .applicationSettingsView__modelGrid {
+    gap: 14px 18px;
+}
+
+.applicationSettingsView--model .applicationSettingsView__modelInput {
+    min-height: 38px;
+}
+
+.applicationSettingsView--model .applicationSettingsView__modelToolbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 14px;
+    border: 1px solid #dce4ef;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #fbfdff 0%, #f5f9ff 100%);
+}
+
+.applicationSettingsView--model .applicationSettingsView__modelToolbarGroup {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.applicationSettingsView--model .applicationSettingsView__toolbarLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #4d6179;
+    margin-right: 2px;
+}
+
+.applicationSettingsView--model .applicationSettingsView__modelResultGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.applicationSettingsView--model .applicationSettingsView__resultPanel {
+    border: 1px solid #dbe4ef;
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: #fbfdff;
+}
+
+.applicationSettingsView--model .applicationSettingsView__resultTitle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #2f4866;
+}
+
+.applicationSettingsView--model .applicationSettingsView__resultTextArea {
+    min-height: 116px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    background: #fff;
+}
+
 @media (max-width: 900px) {
     .applicationSettingsView__grid,
     .applicationSettingsView__detailsGrid {
@@ -1888,6 +1964,19 @@ html[dir="rtl"] .oracle-icon {
 
     .applicationSettingsView__field--wide {
         grid-column: span 1;
+    }
+
+    .applicationSettingsView--model .applicationSettingsView__heroMetrics--model,
+    .applicationSettingsView--model .applicationSettingsView__modelResultGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .applicationSettingsView--model .applicationSettingsView__modelToolbar {
+        align-items: flex-start;
+    }
+
+    .applicationSettingsView--model .applicationSettingsView__modelToolbarGroup {
+        width: 100%;
     }
 }
 
@@ -4523,6 +4612,32 @@ html[dir="rtl"] .oracle-icon {
     pointer-events: none;
 }
 
+.ics-upload-kindSelector {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.ics-upload-kindSelector__label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #374151;
+}
+
+.ics-upload-kindOption {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9rem;
+    color: #374151;
+    cursor: pointer;
+}
+
+.ics-upload-kindOption input {
+    margin: 0;
+}
+
 /* File list in upload view */
 .ics-upload-fileList {
     display: flex;
@@ -4858,6 +4973,54 @@ html[dir="rtl"] .oracle-icon {
     font-size: 0.88rem;
 }
 
+.ics-table-mode-group {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.ics-table-mode-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #374151;
+    font-size: 0.9rem;
+}
+
+.ics-table-preview-block + .ics-table-preview-block {
+    margin-top: 16px;
+}
+
+.ics-table-preview-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #4b5563;
+    margin-bottom: 8px;
+}
+
+.ics-table-edit-input {
+    width: 100%;
+    min-width: 120px;
+    padding: 6px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    box-sizing: border-box;
+}
+
+.ics-table-edit-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
+.ics-registration-confirm {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+
 @media (max-width: 768px) {
     .ics-table-name-grid {
         grid-template-columns: 1fr;
@@ -5148,6 +5311,63 @@ html[dir="rtl"] .oracle-icon {
     justify-content: space-between;
     margin-bottom: 12px;
     color: #6b7280;
+}
+
+.ics-browser-panel {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fff;
+    padding: 16px;
+}
+
+.ics-browser-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.ics-browser-panel__title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #374151;
+}
+
+.ics-browser-panel__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ics-browser-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    color: #64748b;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.ics-browser-status-badge--loading {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.ics-browser-status-badge--success {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.ics-table-list-wrapper {
+    max-height: 280px;
+    overflow: auto;
+}
+
+.ics-table-row--selected {
+    background-color: #eff6ff;
 }
 
 /* Pagination */
