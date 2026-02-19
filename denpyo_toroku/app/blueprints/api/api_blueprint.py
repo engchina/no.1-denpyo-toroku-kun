@@ -2532,6 +2532,35 @@ def get_table_data_by_name():
         return jsonify(g.response.get_result()), 500
 
 
+@api_blueprint.route("/api/v1/search/table-browser/delete-row", methods=["POST"])
+def delete_table_browser_row():
+    """テーブルブラウザの1行をROWID指定で削除"""
+    try:
+        data = request.get_json(silent=True) or {}
+        table_name = (data.get("table_name") or "").strip()
+        row_id = (data.get("row_id") or "").strip()
+
+        if not table_name:
+            g.response.add_error_message("table_name を指定してください")
+            return jsonify(g.response.get_result()), 400
+        if not row_id:
+            g.response.add_error_message("row_id を指定してください")
+            return jsonify(g.response.get_result()), 400
+
+        db_service = DatabaseService()
+        result = db_service.delete_table_row_by_rowid(table_name, row_id)
+        if not result.get("success"):
+            g.response.add_error_message(result.get("message", "削除に失敗しました"))
+            return jsonify(g.response.get_result()), 400
+
+        g.response.set_data({"success": True, "deleted": result.get("deleted", 0)})
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("テーブル行削除エラー (table_name=%s): %s", (request.get_json(silent=True) or {}).get("table_name"), e, exc_info=True)
+        g.response.add_error_message(f"削除に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
 @api_blueprint.route("/api/v1/metrics", methods=["GET"])
 def get_metrics():
     """Prometheus metrics endpoint."""

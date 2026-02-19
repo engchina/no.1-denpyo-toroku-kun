@@ -398,6 +398,7 @@ export const ja = {
   'search.browser.col.rows': '行数',
   'search.browser.col.columns': '列数',
   'search.browser.col.createdAt': '作成日時',
+  'search.browser.col.actions': '操作',
   'search.browser.tableListStatus.loading': '取得中',
   'search.browser.tableListStatus.loaded': '取得済み',
   'search.browser.tableListStatus.empty': '未取得',
@@ -405,6 +406,9 @@ export const ja = {
   'search.browser.lastAnalyzed': '最終分析: {value}',
   'search.browser.noData': 'データがありません',
   'search.browser.totalRows': '合計: {count}件',
+  'search.browser.deleteRowConfirm': 'このレコードを削除します。よろしいですか？',
+  'search.browser.deleteRowSuccess': 'レコードを削除しました',
+  'search.browser.deleteRowFailed': 'レコードの削除に失敗しました',
   'search.error.emptyQuery': '検索クエリを入力してください',
   'search.error.noTables': '検索可能なテーブルがありません。伝票を登録してください。',
   'search.error.searchFailed': '検索に失敗しました'

@@ -50,11 +50,10 @@ class AppConfig:
     OCI_SLIPS_CATEGORY_PREFIX = os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category")
 
     # AI Model Configuration
-    VISION_MODEL_NAME = os.environ.get(
-        "VISION_MODEL_NAME",
-        config.get("ai", "vision_model_name", fallback="google.gemini-2.5-flash")
+    LLM_MODEL_ID = os.environ.get(
+        "LLM_MODEL_ID",
+        config.get("ai", "llm_model_id", fallback=config.get("ai", "vision_model_name", fallback="google.gemini-2.5-flash"))
     )
-    LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "google.gemini-2.5-flash")
     EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
 
     # Storage limits

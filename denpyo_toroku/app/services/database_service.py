@@ -974,20 +974,26 @@ class DatabaseService:
                     total = cursor.fetchone()[0]
 
                     # データ取得（ページング）
+                    # 行削除に使うため、ROWIDを ROW_ID_META として含める（表示カラムからは除外可能）
                     cursor.execute(
-                        f"""SELECT * FROM {table_name.upper()}
-                        ORDER BY 1
-                        OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY""",
+                        f"""SELECT ROWIDTOCHAR(RID) AS ROW_ID_META, DATA_ROW.*
+                        FROM (
+                          SELECT t.ROWID AS RID, t.*
+                          FROM {table_name.upper()} t
+                          ORDER BY 2
+                          OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY
+                        ) DATA_ROW""",
                         {"offset": offset, "limit": limit}
                     )
                     columns = [desc[0] for desc in cursor.description]
                     rows_raw = cursor.fetchall()
                     rows = [dict(zip(columns, row)) for row in rows_raw]
+                    display_columns = [c for c in columns if c != "ROW_ID_META"]
 
                     return {
                         "success": True,
                         "table_name": table_name.upper(),
-                        "columns": columns,
+                        "columns": display_columns,
                         "rows": rows,
                         "total": total,
                         "limit": limit,
@@ -997,6 +1003,42 @@ class DatabaseService:
             logger.error("テーブルデータ取得エラー (%s): %s", table_name, e, exc_info=True)
             return {"success": False, "message": f"データ取得エラー: {str(e)}",
                     "table_name": table_name, "columns": [], "rows": [], "total": 0}
+
+    def delete_table_row_by_rowid(self, table_name: str, rowid: str) -> Dict[str, Any]:
+        """ROWID指定でテーブル行を削除"""
+        if not table_name:
+            return {"success": False, "message": "テーブル名が指定されていません"}
+        if not rowid:
+            return {"success": False, "message": "row_id が指定されていません"}
+
+        allowed = self._get_allowed_table_set()
+        table_name_upper = table_name.upper()
+        if table_name_upper not in allowed:
+            logger.warning("許可されていないテーブルへの削除試行: %s", table_name)
+            return {"success": False, "message": "許可されていないテーブルです"}
+
+        if not self._is_safe_table_name(table_name_upper):
+            return {"success": False, "message": "不正なテーブル名です"}
+
+        if not re.match(r"^[A-Za-z0-9+/=]+$", rowid):
+            return {"success": False, "message": "不正な row_id 形式です"}
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        f"DELETE FROM {table_name_upper} WHERE ROWID = CHARTOROWID(:rid)",
+                        {"rid": rowid}
+                    )
+                    deleted = cursor.rowcount
+                conn.commit()
+
+            if deleted > 0:
+                return {"success": True, "deleted": deleted}
+            return {"success": False, "message": "対象レコードが見つかりません"}
+        except Exception as e:
+            logger.error("ROWID削除エラー (%s, %s): %s", table_name_upper, rowid, e, exc_info=True)
+            return {"success": False, "message": f"削除エラー: {str(e)}"}
 
     def log_activity(self, activity_type: str, description: str,
                      file_id: int = None, registration_id: int = None,
@@ -1079,55 +1121,40 @@ class DatabaseService:
         offset: int = 0,
         upload_kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """ファイル一覧を取得"""
+        """ファイル一覧を取得（SLIPS_RAW / SLIPS_CATEGORY 基準）"""
         kind = (upload_kind or "").strip().lower()
         raw_prefix = (os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw").strip("/")
         category_prefix = (os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category").strip("/")
         path_prefix = None
+        table_name = "SLIPS_RAW"
         if kind == "raw":
             path_prefix = raw_prefix
+            table_name = "SLIPS_RAW"
         elif kind == "category":
             path_prefix = category_prefix
+            table_name = "SLIPS_CATEGORY"
 
         try:
+            normalized_status = (status or "").strip().upper()
+            if normalized_status and normalized_status != "UPLOADED":
+                return []
+
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    if status and path_prefix:
+                    if path_prefix:
                         cursor.execute(
-                            """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE,
-                                      STATUS, UPLOADED_BY, UPLOADED_AT
-                            FROM DENPYO_FILES
-                            WHERE STATUS = :1
-                              AND OBJECT_STORAGE_PATH LIKE :2
-                            ORDER BY UPLOADED_AT DESC
-                            OFFSET :3 ROWS FETCH NEXT :4 ROWS ONLY""",
-                            [status, f"{path_prefix}/%", offset, limit]
-                        )
-                    elif status:
-                        cursor.execute(
-                            """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE,
-                                      STATUS, UPLOADED_BY, UPLOADED_AT
-                            FROM DENPYO_FILES WHERE STATUS = :1
-                            ORDER BY UPLOADED_AT DESC
-                            OFFSET :2 ROWS FETCH NEXT :3 ROWS ONLY""",
-                            [status, offset, limit]
-                        )
-                    elif path_prefix:
-                        cursor.execute(
-                            """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE,
-                                      STATUS, UPLOADED_BY, UPLOADED_AT
-                            FROM DENPYO_FILES
-                            WHERE OBJECT_STORAGE_PATH LIKE :1
-                            ORDER BY UPLOADED_AT DESC
+                            f"""SELECT ID, OBJECT_NAME, FILE_NAME, CONTENT_TYPE, FILE_SIZE_BYTES, CREATED_AT
+                            FROM {table_name}
+                            WHERE OBJECT_NAME LIKE :1
+                            ORDER BY CREATED_AT DESC
                             OFFSET :2 ROWS FETCH NEXT :3 ROWS ONLY""",
                             [f"{path_prefix}/%", offset, limit]
                         )
                     else:
                         cursor.execute(
-                            """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE,
-                                      STATUS, UPLOADED_BY, UPLOADED_AT
-                            FROM DENPYO_FILES
-                            ORDER BY UPLOADED_AT DESC
+                            f"""SELECT ID, OBJECT_NAME, FILE_NAME, CONTENT_TYPE, FILE_SIZE_BYTES, CREATED_AT
+                            FROM {table_name}
+                            ORDER BY CREATED_AT DESC
                             OFFSET :1 ROWS FETCH NEXT :2 ROWS ONLY""",
                             [offset, limit]
                         )
@@ -1140,9 +1167,9 @@ class DatabaseService:
                             "original_file_name": row[2],
                             "content_type": row[3],
                             "file_size": row[4],
-                            "status": row[5],
-                            "uploaded_by": row[6],
-                            "uploaded_at": str(row[7]) if row[7] else "",
+                            "status": "UPLOADED",
+                            "uploaded_by": "",
+                            "uploaded_at": str(row[5]) if row[5] else "",
                         })
                     return files
         except Exception as e:
@@ -1150,36 +1177,33 @@ class DatabaseService:
             return []
 
     def get_files_count(self, status: str = None, upload_kind: Optional[str] = None) -> int:
-        """ファイル総件数を取得"""
+        """ファイル総件数を取得（SLIPS_RAW / SLIPS_CATEGORY 基準）"""
         kind = (upload_kind or "").strip().lower()
         raw_prefix = (os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw").strip("/")
         category_prefix = (os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category").strip("/")
         path_prefix = None
+        table_name = "SLIPS_RAW"
         if kind == "raw":
             path_prefix = raw_prefix
+            table_name = "SLIPS_RAW"
         elif kind == "category":
             path_prefix = category_prefix
+            table_name = "SLIPS_CATEGORY"
 
         try:
+            normalized_status = (status or "").strip().upper()
+            if normalized_status and normalized_status != "UPLOADED":
+                return 0
+
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    if status and path_prefix:
+                    if path_prefix:
                         cursor.execute(
-                            "SELECT COUNT(*) FROM DENPYO_FILES WHERE STATUS = :1 AND OBJECT_STORAGE_PATH LIKE :2",
-                            [status, f"{path_prefix}/%"]
-                        )
-                    elif status:
-                        cursor.execute(
-                            "SELECT COUNT(*) FROM DENPYO_FILES WHERE STATUS = :1",
-                            [status]
-                        )
-                    elif path_prefix:
-                        cursor.execute(
-                            "SELECT COUNT(*) FROM DENPYO_FILES WHERE OBJECT_STORAGE_PATH LIKE :1",
+                            f"SELECT COUNT(*) FROM {table_name} WHERE OBJECT_NAME LIKE :1",
                             [f"{path_prefix}/%"]
                         )
                     else:
-                        cursor.execute("SELECT COUNT(*) FROM DENPYO_FILES")
+                        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
                     return cursor.fetchone()[0]
         except Exception as e:
             logger.error("ファイル件数取得エラー: %s", e, exc_info=True)
@@ -1220,6 +1244,17 @@ class DatabaseService:
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
+                    logger.info("[DB] ファイルパス取得中 file_id=%s", file_id)
+                    cursor.execute(
+                        "SELECT OBJECT_STORAGE_PATH FROM DENPYO_FILES WHERE ID = :1",
+                        [file_id]
+                    )
+                    file_row = cursor.fetchone()
+                    if not file_row:
+                        logger.warning("❌ [DB] ファイルが見つかりません file_id=%s", file_id)
+                        return {"success": False, "message": "ファイルが見つかりません"}
+                    object_storage_path = file_row[0] or ""
+
                     # 登録済みチェック
                     logger.info("[DB] 登録済みチェック中 file_id=%s", file_id)
                     cursor.execute(
@@ -1248,6 +1283,29 @@ class DatabaseService:
                     )
                     deleted = cursor.rowcount
                     logger.info("[DB] ファイルレコード削除件数: %d (file_id=%s)", deleted, file_id)
+
+                    # 伝票一覧は raw 管理のため、SLIPS_RAW の同一 OBJECT_NAME を削除
+                    raw_deleted = 0
+                    if deleted > 0 and object_storage_path:
+                        try:
+                            cursor.execute(
+                                "DELETE FROM SLIPS_RAW WHERE OBJECT_NAME = :1",
+                                [object_storage_path]
+                            )
+                            raw_deleted = cursor.rowcount
+                        except Exception as raw_error:
+                            logger.warning(
+                                "[DB] SLIPS_RAW 削除をスキップ (file_id=%s, object=%s): %s",
+                                file_id,
+                                object_storage_path,
+                                raw_error,
+                            )
+                        logger.info(
+                            "[DB] SLIPS_RAW削除件数 file_id=%s object=%s raw=%d",
+                            file_id,
+                            object_storage_path,
+                            raw_deleted,
+                        )
                     
                 logger.info("[DB] commit 中 file_id=%s", file_id)
                 conn.commit()
@@ -1256,8 +1314,8 @@ class DatabaseService:
             if deleted > 0:
                 logger.info("✅ [DB] ファイルを削除しました file_id=%s", file_id)
                 return {"success": True, "message": "ファイルを削除しました"}
-            logger.warning("❌ [DB] ファイルが見つかりません file_id=%s", file_id)
-            return {"success": False, "message": "ファイルが見つかりません"}
+            logger.warning("❌ [DB] ファイル削除件数が 0 でした file_id=%s", file_id)
+            return {"success": False, "message": "ファイル削除に失敗しました"}
         except Exception as e:
             logger.error("❌ [DB] ファイル削除エラー (id=%s): %s", file_id, e, exc_info=True)
             return {"success": False, "message": str(e)}

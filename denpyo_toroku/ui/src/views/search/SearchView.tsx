@@ -3,6 +3,7 @@
  * - 自然言語検索 (NL -> SQL)
  * - テーブルブラウザ (直接閲覧)
  */
+import type { ComponentChildren } from 'preact';
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useAppSelector, useAppDispatch } from '../../redux/store';
 import {
@@ -13,10 +14,13 @@ import {
   clearSearchResults,
   clearSearchError
 } from '../../redux/slices/denpyoSlice';
+import { addNotification } from '../../redux/slices/notificationsSlice';
 import Pagination from '../../components/Pagination';
+import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
+import { apiPost } from '../../utils/apiUtils';
 import type { NLSearchResponse, SearchableTable, TableBrowseResult, TableBrowserTable } from '../../types/denpyoTypes';
-import { Search, Database, Copy, Check, Loader2, RefreshCw } from 'lucide-react';
+import { Search, Database, Copy, Check, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 
 type TabType = 'nlSearch' | 'tableBrowser';
 
@@ -277,9 +281,11 @@ function TableBrowserTab({
   result
 }: TableBrowserTabProps) {
   const dispatch = useAppDispatch();
+  const { requestConfirm, confirmToast } = useToastConfirm();
   const [selectedTable, setSelectedTable] = useState<TableBrowserTable | null>(null);
   const [page, setPage] = useState(1);
   const [goToPageInput, setGoToPageInput] = useState('');
+  const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
   const pageSize = 50;
 
   useEffect(() => {
@@ -348,6 +354,50 @@ function TableBrowserTab({
       setGoToPageInput('');
     }
   }, [goToPageInput, totalPages]);
+
+  const getRowId = useCallback((row: Record<string, any>): string | null => {
+    const raw = row.ROW_ID_META;
+    if (raw === null || raw === undefined || raw === '') return null;
+    return String(raw);
+  }, []);
+
+  const handleDeleteRow = useCallback((row: Record<string, any>) => {
+    const rowId = getRowId(row);
+    if (!rowId || !selectedTable) return;
+    requestConfirm({
+      message: t('search.browser.deleteRowConfirm'),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        setDeletingRowId(rowId);
+        try {
+          await apiPost<{ success: boolean }>('/api/v1/search/table-browser/delete-row', {
+            table_name: selectedTable.table_name,
+            row_id: rowId
+          });
+          dispatch(addNotification({
+            type: 'success',
+            message: t('search.browser.deleteRowSuccess')
+          }));
+          dispatch(fetchTableBrowserTables());
+          dispatch(fetchTableDataByName({
+            tableName: selectedTable.table_name,
+            tableType: selectedTable.table_type,
+            page,
+            pageSize
+          }));
+        } catch {
+          dispatch(addNotification({
+            type: 'error',
+            message: t('search.browser.deleteRowFailed')
+          }));
+        } finally {
+          setDeletingRowId(null);
+        }
+      }
+    });
+  }, [dispatch, getRowId, selectedTable, page, pageSize, requestConfirm]);
 
   return (
     <div class="ics-table-browser">
@@ -438,7 +488,29 @@ function TableBrowserTab({
             <div class="ics-browser-results oj-sm-margin-4x-top">
               {result.rows && result.rows.length > 0 ? (
                 <>
-                  <ResultsTable columns={result.columns} rows={result.rows} />
+                  <ResultsTable
+                    columns={result.columns}
+                    rows={result.rows}
+                    actionColumnLabel={t('search.browser.col.actions')}
+                    renderRowActions={(row) => {
+                      const rowId = getRowId(row);
+                      if (!rowId) return null;
+                      return (
+                        <button
+                          type="button"
+                          class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                          onClick={() => handleDeleteRow(row)}
+                          disabled={deletingRowId === rowId}
+                          title={t('common.delete')}
+                        >
+                          {deletingRowId === rowId
+                            ? <Loader2 size={14} class="ics-spinner" />
+                            : <Trash2 size={14} />
+                          }
+                        </button>
+                      );
+                    }}
+                  />
 
                   <Pagination
                     currentPage={page}
@@ -465,6 +537,7 @@ function TableBrowserTab({
       {noTables && (
         <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.error.noTables')}</p>
       )}
+      {confirmToast}
     </div>
   );
 }
@@ -476,9 +549,11 @@ function TableBrowserTab({
 interface ResultsTableProps {
   columns: string[];
   rows: Record<string, any>[];
+  actionColumnLabel?: string;
+  renderRowActions?: (row: Record<string, any>) => ComponentChildren;
 }
 
-function ResultsTable({ columns, rows }: ResultsTableProps) {
+function ResultsTable({ columns, rows, actionColumnLabel, renderRowActions }: ResultsTableProps) {
   if (!columns || columns.length === 0) return null;
 
   return (
@@ -489,6 +564,7 @@ function ResultsTable({ columns, rows }: ResultsTableProps) {
             {columns.map(col => (
               <th key={col}>{col}</th>
             ))}
+            {renderRowActions && <th>{actionColumnLabel || ''}</th>}
           </tr>
         </thead>
         <tbody>
@@ -497,6 +573,7 @@ function ResultsTable({ columns, rows }: ResultsTableProps) {
               {columns.map(col => (
                 <td key={col}>{formatCellValue(row[col])}</td>
               ))}
+              {renderRowActions && <td>{renderRowActions(row)}</td>}
             </tr>
           ))}
         </tbody>

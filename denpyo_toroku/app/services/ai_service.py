@@ -37,7 +37,7 @@ class AIService:
         self._client = None
         self._region = os.environ.get("OCI_REGION", "ap-osaka-1")
         self._compartment_id = os.environ.get("OCI_CONFIG_COMPARTMENT", "")
-        self._vision_model_name = os.environ.get("VISION_MODEL_NAME", "google.gemini-2.5-flash")
+        self._llm_model_id = os.environ.get("LLM_MODEL_ID", "google.gemini-2.5-flash")
         self._service_endpoint = os.environ.get(
             "OCI_SERVICE_ENDPOINT",
             f"https://inference.generativeai.{self._region}.oci.oraclecloud.com"
@@ -65,7 +65,7 @@ class AIService:
                 service_endpoint=self._service_endpoint,
                 timeout=(10, 240),
             )
-            logger.info("OCI Generative AI クライアントを初期化しました (model=%s)", self._vision_model_name)
+            logger.info("OCI Generative AI クライアントを初期化しました (model=%s)", self._llm_model_id)
         except Exception as e:
             logger.error("OCI Generative AI クライアント初期化エラー: %s", e, exc_info=True)
             return None
@@ -164,7 +164,7 @@ JSONのみを出力し、他のテキストは含めないでください。"""
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=self._compartment_id,
                 serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                    model_id=self._vision_model_name
+                    model_id=self._llm_model_id
                 ),
                 chat_request=chat_request,
             )
@@ -258,7 +258,7 @@ JSONのみを出力し、他のテキストは含めないでください。"""
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=self._compartment_id,
                 serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                    model_id=self._vision_model_name
+                    model_id=self._llm_model_id
                 ),
                 chat_request=chat_request,
             )
@@ -347,7 +347,7 @@ JSONのみを出力し、他のテキストは含めないでください。"""
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=self._compartment_id,
                 serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                    model_id=self._vision_model_name
+                    model_id=self._llm_model_id
                 ),
                 chat_request=chat_request,
             )
@@ -449,7 +449,7 @@ JSONのみを出力し、他のテキストは含めないでください。"""
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=self._compartment_id,
                 serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                    model_id=self._vision_model_name
+                    model_id=self._llm_model_id
                 ),
                 chat_request=chat_request,
             )
