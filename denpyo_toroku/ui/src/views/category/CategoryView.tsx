@@ -9,7 +9,6 @@
  *     4. テーブル作成 → カテゴリ登録
  *  B. カテゴリ一覧 CRUD (参照・編集・削除・有効/無効)
  */
-import { h, Fragment } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import {
@@ -47,8 +46,6 @@ import {
   Database,
   ChevronDown,
   ChevronUp,
-  CheckSquare,
-  Square,
   FileText,
   Table2,
 } from 'lucide-react';
@@ -205,7 +202,7 @@ function AnalysisModeModal({
   onConfirm: (mode: 'header' | 'header_line') => void;
   onClose: () => void;
 }) {
-  const [mode, setMode] = useState<'header' | 'header_line'>('header_line');
+  const [mode, setMode] = useState<'header' | 'header_line'>('header');
 
   return (
     <div class="ics-modal-overlay" onClick={onClose}>
@@ -225,19 +222,6 @@ function AnalysisModeModal({
               <input
                 type="radio"
                 name="analysisMode"
-                value="header_line"
-                checked={mode === 'header_line'}
-                onChange={() => setMode('header_line')}
-              />
-              <span class="ics-radio-text">
-                <strong>{t('category.analyze.modeHeaderLine')}</strong>
-                <span class="ics-form-hint">{t('category.analyze.modeHeaderLineDesc')}</span>
-              </span>
-            </label>
-            <label class="ics-radio-label">
-              <input
-                type="radio"
-                name="analysisMode"
                 value="header"
                 checked={mode === 'header'}
                 onChange={() => setMode('header')}
@@ -245,6 +229,19 @@ function AnalysisModeModal({
               <span class="ics-radio-text">
                 <strong>{t('category.analyze.modeHeaderOnly')}</strong>
                 <span class="ics-form-hint">{t('category.analyze.modeHeaderOnlyDesc')}</span>
+              </span>
+            </label>
+            <label class="ics-radio-label">
+              <input
+                type="radio"
+                name="analysisMode"
+                value="header_line"
+                checked={mode === 'header_line'}
+                onChange={() => setMode('header_line')}
+              />
+              <span class="ics-radio-text">
+                <strong>{t('category.analyze.modeHeaderLine')}</strong>
+                <span class="ics-form-hint">{t('category.analyze.modeHeaderLineDesc')}</span>
               </span>
             </label>
           </div>
@@ -736,11 +733,15 @@ export function CategoryView() {
   }, []);
 
   const toggleSelectAll = useCallback(() => {
-    if (selectedFileIds.size === Math.min(slipsCategoryFiles.length, 5)) {
+    const targetIds = slipsCategoryFiles.slice(0, 5).map(f => String(f.file_id));
+    const areAllTargetSelected =
+      targetIds.length > 0 &&
+      targetIds.every(id => selectedFileIds.has(id));
+
+    if (areAllTargetSelected) {
       setSelectedFileIds(new Set());
     } else {
-      const ids = slipsCategoryFiles.slice(0, 5).map(f => f.file_id);
-      setSelectedFileIds(new Set(ids));
+      setSelectedFileIds(new Set(targetIds));
     }
   }, [selectedFileIds, slipsCategoryFiles]);
 
@@ -891,9 +892,10 @@ export function CategoryView() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
+  const selectableOnPageIds = slipsCategoryFiles.slice(0, 5).map(file => String(file.file_id));
   const allSelectedOnPage =
-    slipsCategoryFiles.length > 0 &&
-    selectedFileIds.size >= Math.min(slipsCategoryFiles.length, 5);
+    selectableOnPageIds.length > 0 &&
+    selectableOnPageIds.every(id => selectedFileIds.has(id));
 
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
@@ -951,14 +953,14 @@ export function CategoryView() {
                 <thead>
                   <tr>
                     <th style={{ width: '40px' }}>
-                      <button
-                        type="button"
-                        class="ics-ops-btn ics-ops-btn--ghost"
-                        onClick={toggleSelectAll}
+                      <input
+                        type="checkbox"
+                        checked={allSelectedOnPage}
+                        onChange={toggleSelectAll}
+                        disabled={selectableOnPageIds.length === 0}
+                        aria-label={t('category.slipsFiles.selectAll')}
                         title={t('category.slipsFiles.selectAll')}
-                      >
-                        {allSelectedOnPage ? <CheckSquare size={16} /> : <Square size={16} />}
-                      </button>
+                      />
                     </th>
                     <th>{t('category.slipsFiles.colFileName')}</th>
                     <th>{t('category.slipsFiles.colType')}</th>
@@ -968,17 +970,28 @@ export function CategoryView() {
                 </thead>
                 <tbody>
                   {slipsCategoryFiles.map((file: DenpyoFile) => {
-                    const selected = selectedFileIds.has(file.file_id);
+                    const fileId = String(file.file_id);
+                    const selected = selectedFileIds.has(fileId);
                     const disabledByMax = !selected && selectedFileIds.size >= 5;
                     return (
                       <tr
-                        key={file.file_id}
+                        key={fileId}
                         class={selected ? 'ics-table__row--selected' : ''}
-                        onClick={() => !disabledByMax && toggleFileSelect(file.file_id)}
+                        onClick={(e: Event) => {
+                          const target = e.target as HTMLElement;
+                          if (target.closest('input[type="checkbox"]')) return;
+                          if (!disabledByMax) toggleFileSelect(fileId);
+                        }}
                         style={{ cursor: disabledByMax ? 'not-allowed' : 'pointer', opacity: disabledByMax ? 0.5 : 1 }}
                       >
                         <td class="ics-table__cell--center">
-                          {selected ? <CheckSquare size={16} /> : <Square size={16} />}
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => !disabledByMax && toggleFileSelect(fileId)}
+                            disabled={disabledByMax}
+                            aria-label={t('fileList.selectFile')}
+                          />
                         </td>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -987,7 +1000,7 @@ export function CategoryView() {
                           </div>
                         </td>
                         <td>
-                          <code class="ics-code">{file.file_type || '--'}</code>
+                          <code class="ics-code">{file.file_type || t('upload.kind.category')}</code>
                         </td>
                         <td>{formatFileSize(file.file_size)}</td>
                         <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
@@ -1073,7 +1086,7 @@ export function CategoryView() {
                         </span>
                       </td>
                       <td class="oj-text-color-secondary">{formatDateTime(cat.created_at)}</td>
-                      <td>
+                      <td class="ics-fileListView__actions">
                         <button
                           type="button"
                           class="ics-ops-btn ics-ops-btn--ghost"

@@ -32,7 +32,8 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  FolderSearch
+  FolderSearch,
+  X
 } from 'lucide-react';
 
 function formatDateTime(value: string | null | undefined): string {
@@ -125,6 +126,7 @@ export function ListView() {
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>('uploaded_at');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [previewTarget, setPreviewTarget] = useState<{ fileId: string; fileName: string } | null>(null);
 
   const loadFiles = useCallback(() => {
     dispatch(fetchFileList({ page, pageSize, status: statusFilter, uploadKind: 'raw' }));
@@ -221,9 +223,24 @@ export function ListView() {
     }
   }, [dispatch, goToPageInput, totalPages]);
 
-  const handlePreview = useCallback((fileId: string) => {
-    window.open(`/studio/api/v1/files/${fileId}/preview`, '_blank', 'noopener,noreferrer');
+  const handlePreview = useCallback((fileId: string, fileName: string) => {
+    setPreviewTarget({ fileId, fileName });
   }, []);
+
+  const closePreview = useCallback(() => {
+    setPreviewTarget(null);
+  }, []);
+
+  useEffect(() => {
+    if (!previewTarget) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closePreview();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [previewTarget, closePreview]);
 
   const handleSort = useCallback((nextKey: SortKey) => {
     setSortKey(prevKey => {
@@ -478,7 +495,7 @@ export function ListView() {
                         <button
                           type="button"
                           class="ics-ops-btn ics-ops-btn--ghost"
-                          onClick={() => handlePreview(String(file.file_id))}
+                          onClick={() => handlePreview(String(file.file_id), file.file_name)}
                           title={t('fileList.previewFile')}
                         >
                           <Eye size={14} />
@@ -544,6 +561,25 @@ export function ListView() {
           </div>
         </div>
       </section>
+      {previewTarget && (
+        <div class="ics-modal-overlay" onClick={closePreview}>
+          <div class="ics-modal ics-modal--xl ics-fileListView__previewModal" onClick={(e: Event) => e.stopPropagation()}>
+            <div class="ics-modal__header">
+              <h3>{previewTarget.fileName || t('fileList.previewFile')}</h3>
+              <button type="button" class="ics-ops-btn ics-ops-btn--ghost" onClick={closePreview} title={t('common.close')}>
+                <X size={16} />
+              </button>
+            </div>
+            <div class="ics-modal__body ics-fileListView__previewBody">
+              <iframe
+                src={`/studio/api/v1/files/${previewTarget.fileId}/preview`}
+                title={previewTarget.fileName || t('fileList.previewFile')}
+                class="ics-fileListView__previewFrame"
+              />
+            </div>
+          </div>
+        </div>
+      )}
       {confirmToast}
     </div>
   );

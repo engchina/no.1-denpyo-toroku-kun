@@ -4902,6 +4902,22 @@ html[dir="rtl"] .oracle-icon {
     font-size: 0.85rem;
 }
 
+.ics-fileListView__previewModal {
+    max-width: min(96vw, 1200px) !important;
+}
+
+.ics-fileListView__previewBody {
+    padding: 0;
+    height: min(78vh, 900px);
+}
+
+.ics-fileListView__previewFrame {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #f8fafc;
+}
+
 /* Danger ghost button variant */
 .ics-ops-btn--danger {
     color: #dc3545;
@@ -5293,6 +5309,19 @@ html[dir="rtl"] .oracle-icon {
 
 /* ================== DATA SEARCH (SCR-006) ================== */
 
+.ics-search-view {
+    padding-bottom: 20px;
+}
+
+.ics-search-workspace {
+    width: 100%;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 18px 18px 16px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
 /* Search tabs */
 .ics-search-tabs {
     display: flex;
@@ -5333,13 +5362,27 @@ html[dir="rtl"] .oracle-icon {
 
 /* Search content */
 .ics-search-content {
-    max-width: 900px;
+    width: 100%;
+}
+
+.ics-search-controls-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 14px;
 }
 
 /* Search query textarea */
 .ics-search-query {
-    min-height: 80px;
+    min-height: 92px;
     resize: vertical;
+}
+
+.ics-form-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
 }
 
 /* Search actions */
@@ -5507,10 +5550,21 @@ html[dir="rtl"] .oracle-icon {
 .ics-table-list-wrapper {
     max-height: 280px;
     overflow: auto;
+    border-radius: 8px;
+    border: 1px solid #edf0f4;
 }
 
 .ics-table-row--selected {
     background-color: #eff6ff;
+}
+
+.ics-table-list-wrapper .ics-table tbody tr {
+    cursor: pointer;
+}
+
+.ics-table-list-wrapper .ics-table tbody tr:focus-visible {
+    outline: 2px solid var(--aai-primary-lines-2);
+    outline-offset: -2px;
 }
 
 /* Pagination */
@@ -5595,6 +5649,26 @@ html[dir="rtl"] .oracle-icon {
     padding-top: 20px;
 }
 
+.ics-browser-title-wrap {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.ics-browser-table-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border: 1px solid #dbe4f2;
+    border-radius: 999px;
+    background: #f5f8ff;
+    color: #3b4a67;
+    font-size: 0.76rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
 /* Browser results */
 .ics-browser-results {
     /* standard layout */
@@ -5614,6 +5688,27 @@ html[dir="rtl"] .oracle-icon {
 .ics-browser-results .ics-table td {
     white-space: nowrap;
     vertical-align: middle;
+}
+
+@media (max-width: 840px) {
+    .ics-search-workspace {
+        padding: 12px 12px 14px;
+        border-radius: 10px;
+    }
+
+    .ics-search-tabs {
+        overflow-x: auto;
+        scrollbar-width: thin;
+    }
+
+    .ics-search-tab {
+        flex: 0 0 auto;
+    }
+
+    .ics-browser-panel__actions {
+        width: 100%;
+        justify-content: space-between;
+    }
 }
 
 /* ======================================================

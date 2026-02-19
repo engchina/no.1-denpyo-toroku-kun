@@ -55,58 +55,64 @@ export function SearchView() {
   };
 
   return (
-    <div class="ics-view-container">
+    <div class="ics-view-container ics-search-view">
       <header class="ics-view-header">
         <h1 class="oj-typography-heading-md">{t('search.title')}</h1>
         <p class="oj-typography-body-sm oj-sm-margin-2x-top">{t('search.subtitle')}</p>
       </header>
 
-      {/* Tab Bar */}
-      <div class="ics-search-tabs">
-        <button
-          type="button"
-          class={`ics-search-tab ${activeTab === 'nlSearch' ? 'ics-search-tab--active' : ''}`}
-          onClick={() => handleTabChange('nlSearch')}
-        >
-          <Search size={16} />
-          <span>{t('search.tab.nlSearch')}</span>
-        </button>
-        <button
-          type="button"
-          class={`ics-search-tab ${activeTab === 'tableBrowser' ? 'ics-search-tab--active' : ''}`}
-          onClick={() => handleTabChange('tableBrowser')}
-        >
-          <Database size={16} />
-          <span>{t('search.tab.tableBrowser')}</span>
-        </button>
-      </div>
-
-      {/* Error display */}
-      {searchError && (
-        <div class="ics-error-message oj-sm-margin-4x-top">
-          {searchError}
+      <div class="ics-search-workspace">
+        {/* Tab Bar */}
+        <div class="ics-search-tabs" role="tablist" aria-label={t('search.title')}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'nlSearch'}
+            class={`ics-search-tab ${activeTab === 'nlSearch' ? 'ics-search-tab--active' : ''}`}
+            onClick={() => handleTabChange('nlSearch')}
+          >
+            <Search size={16} />
+            <span>{t('search.tab.nlSearch')}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'tableBrowser'}
+            class={`ics-search-tab ${activeTab === 'tableBrowser' ? 'ics-search-tab--active' : ''}`}
+            onClick={() => handleTabChange('tableBrowser')}
+          >
+            <Database size={16} />
+            <span>{t('search.tab.tableBrowser')}</span>
+          </button>
         </div>
-      )}
 
-      {/* Tab content */}
-      <div class="ics-search-content oj-sm-margin-4x-top">
-        {activeTab === 'nlSearch' ? (
-          <NLSearchTab
-            searchableTables={searchableTables}
-            isLoading={isNLSearching}
-            isTablesLoading={isSearchableTablesLoading}
-            result={nlSearchResult}
-          />
-        ) : (
-          <TableBrowserTab
-            searchableTables={searchableTables}
-            tableBrowserTables={tableBrowserTables}
-            isLoading={isTableBrowsing}
-            isTablesLoading={isSearchableTablesLoading}
-            isTableListLoading={isTableBrowserTablesLoading}
-            result={tableBrowseResult}
-          />
+        {/* Error display */}
+        {searchError && (
+          <div class="ics-error-message oj-sm-margin-4x-top">
+            {searchError}
+          </div>
         )}
+
+        {/* Tab content */}
+        <div class="ics-search-content oj-sm-margin-4x-top">
+          {activeTab === 'nlSearch' ? (
+            <NLSearchTab
+              searchableTables={searchableTables}
+              isLoading={isNLSearching}
+              isTablesLoading={isSearchableTablesLoading}
+              result={nlSearchResult}
+            />
+          ) : (
+            <TableBrowserTab
+              searchableTables={searchableTables}
+              tableBrowserTables={tableBrowserTables}
+              isLoading={isTableBrowsing}
+              isTablesLoading={isSearchableTablesLoading}
+              isTableListLoading={isTableBrowserTablesLoading}
+              result={tableBrowseResult}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -152,58 +158,63 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
 
   return (
     <div class="ics-nl-search">
-      {/* Category filter */}
-      <div class="ics-form-group">
-        <label class="ics-form-label">{t('search.common.categoryFilter')}</label>
-        <select
-          class="ics-form-input"
-          value={categoryId ?? ''}
-          onChange={(e) => setCategoryId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined)}
-          disabled={noTables}
-        >
-          <option value="">{t('search.common.allCategories')}</option>
-          {searchableTables.map(table => (
-            <option key={table.category_id} value={table.category_id}>
-              {table.category_name}
-            </option>
-          ))}
-        </select>
-      </div>
+      <div class="ics-search-controls-card">
+        {/* Category filter */}
+        <div class="ics-form-group">
+          <label class="ics-form-label">{t('search.common.categoryFilter')}</label>
+          <select
+            class="ics-form-input"
+            value={categoryId ?? ''}
+            onChange={(e) => setCategoryId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined)}
+            disabled={noTables}
+          >
+            <option value="">{t('search.common.allCategories')}</option>
+            {searchableTables.map(table => (
+              <option key={table.category_id} value={table.category_id}>
+                {table.category_name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      {/* Query input */}
-      <div class="ics-form-group">
-        <label class="ics-form-label">{t('search.nl.queryLabel')}</label>
-        <textarea
-          class="ics-form-textarea ics-search-query"
-          placeholder={t('search.nl.queryPlaceholder')}
-          value={query}
-          onInput={(e) => setQuery(e.currentTarget.value)}
-          onKeyDown={handleKeyDown}
-          disabled={noTables || isLoading}
-          rows={3}
-        />
-      </div>
+        {/* Query input */}
+        <div class="ics-form-group">
+          <div class="ics-form-label-row">
+            <label class="ics-form-label">{t('search.nl.queryLabel')}</label>
+            <span class="ics-form-hint">Ctrl + Enter</span>
+          </div>
+          <textarea
+            class="ics-form-textarea ics-search-query"
+            placeholder={t('search.nl.queryPlaceholder')}
+            value={query}
+            onInput={(e) => setQuery(e.currentTarget.value)}
+            onKeyDown={handleKeyDown}
+            disabled={noTables || isLoading}
+            rows={3}
+          />
+        </div>
 
-      {/* Search button */}
-      <div class="ics-search-actions">
-        <button
-          type="button"
-          class="oj-button oj-button-primary"
-          onClick={handleSearch}
-          disabled={!query.trim() || noTables || isLoading}
-        >
-          {isLoading ? (
-            <>
-              <Loader2 size={16} class="ics-spinner" />
-              <span>{t('search.nl.searching')}</span>
-            </>
-          ) : (
-            <>
-              <Search size={16} />
-              <span>{t('search.nl.search')}</span>
-            </>
-          )}
-        </button>
+        {/* Search button */}
+        <div class="ics-search-actions">
+          <button
+            type="button"
+            class="oj-button oj-button-primary"
+            onClick={handleSearch}
+            disabled={!query.trim() || noTables || isLoading}
+          >
+            {isLoading ? (
+              <>
+                <Loader2 size={16} class="ics-spinner" />
+                <span>{t('search.nl.searching')}</span>
+              </>
+            ) : (
+              <>
+                <Search size={16} />
+                <span>{t('search.nl.search')}</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {noTables && (
@@ -285,8 +296,11 @@ function TableBrowserTab({
   const [selectedTable, setSelectedTable] = useState<TableBrowserTable | null>(null);
   const [page, setPage] = useState(1);
   const [goToPageInput, setGoToPageInput] = useState('');
+  const [tableListPage, setTableListPage] = useState(1);
+  const [tableListGoToPageInput, setTableListGoToPageInput] = useState('');
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
-  const pageSize = 50;
+  const pageSize = 20;
+  const tableListPageSize = 20;
 
   useEffect(() => {
     if (!selectedTable && tableBrowserTables.length > 0) {
@@ -302,6 +316,7 @@ function TableBrowserTab({
       if (!stillExists) {
         setSelectedTable(tableBrowserTables[0] || null);
         setPage(1);
+        setTableListPage(1);
       }
     }
   }, [tableBrowserTables, selectedTable]);
@@ -320,6 +335,11 @@ function TableBrowserTab({
 
   const noTables = !isTablesLoading && searchableTables.length === 0;
   const totalPages = result?.total_pages || 1;
+  const tableListTotalPages = Math.max(1, Math.ceil(tableBrowserTables.length / tableListPageSize));
+  const paginatedTableList = tableBrowserTables.slice(
+    (tableListPage - 1) * tableListPageSize,
+    tableListPage * tableListPageSize
+  );
   const tableListStatusLabel = isTableListLoading
     ? t('search.browser.tableListStatus.loading')
     : tableBrowserTables.length > 0
@@ -340,6 +360,12 @@ function TableBrowserTab({
     setPage(1);
     setGoToPageInput('');
   }, []);
+  const handleTableRowKeyDown = useCallback((e: KeyboardEvent, table: TableBrowserTable) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleTableSelect(table);
+    }
+  }, [handleTableSelect]);
 
   const handlePageChange = useCallback((nextPage: number) => {
     if (nextPage >= 1 && nextPage <= totalPages) {
@@ -354,6 +380,20 @@ function TableBrowserTab({
       setGoToPageInput('');
     }
   }, [goToPageInput, totalPages]);
+
+  const handleTableListPageChange = useCallback((nextPage: number) => {
+    if (nextPage >= 1 && nextPage <= tableListTotalPages) {
+      setTableListPage(nextPage);
+    }
+  }, [tableListTotalPages]);
+
+  const handleTableListGoToPage = useCallback(() => {
+    const target = parseInt(tableListGoToPageInput, 10);
+    if (!Number.isNaN(target) && target >= 1 && target <= tableListTotalPages) {
+      setTableListPage(target);
+      setTableListGoToPageInput('');
+    }
+  }, [tableListGoToPageInput, tableListTotalPages]);
 
   const getRowId = useCallback((row: Record<string, any>): string | null => {
     const raw = row.ROW_ID_META;
@@ -432,9 +472,11 @@ function TableBrowserTab({
                 </tr>
               </thead>
               <tbody>
-                {tableBrowserTables.map(table => (
+                {paginatedTableList.map(table => (
                   <tr
                     key={`${table.category_id}-${table.table_type}-${table.table_name}`}
+                    role="button"
+                    tabIndex={0}
                     class={
                       selectedTable &&
                       selectedTable.table_name === table.table_name &&
@@ -444,6 +486,7 @@ function TableBrowserTab({
                         : ''
                     }
                     onClick={() => handleTableSelect(table)}
+                    onKeyDown={(e) => handleTableRowKeyDown(e, table)}
                   >
                     <td>{table.table_name}</td>
                     <td>{table.category_name}</td>
@@ -455,6 +498,19 @@ function TableBrowserTab({
                 ))}
               </tbody>
             </table>
+            <Pagination
+              currentPage={tableListPage}
+              totalPages={tableListTotalPages}
+              totalItems={tableBrowserTables.length}
+              goToPageInput={tableListGoToPageInput}
+              onPageChange={handleTableListPageChange}
+              onGoToPageInputChange={setTableListGoToPageInput}
+              onGoToPage={handleTableListGoToPage}
+              isFirstPage={tableListPage <= 1}
+              isLastPage={tableListPage >= tableListTotalPages}
+              position="bottom"
+              show={tableListTotalPages > 1}
+            />
           </div>
         ) : (
           <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noTableList')}</p>
@@ -464,9 +520,12 @@ function TableBrowserTab({
       {selectedTable && (
         <div class="ics-browser-panel oj-sm-margin-4x-top">
           <div class="ics-browser-panel__header">
-            <span class="ics-browser-panel__title">
-              {t('search.browser.previewTitle')} - {selectedTable.table_name}
-            </span>
+            <div class="ics-browser-title-wrap">
+              <span class="ics-browser-panel__title">
+                {t('search.browser.previewTitle')}
+              </span>
+              <span class="ics-browser-table-chip">{selectedTable.table_name}</span>
+            </div>
             <div class="ics-results-header">
               <span class="oj-typography-body-sm">
                 {t('search.browser.totalRows').replace('{count}', String(result?.total || 0))}
