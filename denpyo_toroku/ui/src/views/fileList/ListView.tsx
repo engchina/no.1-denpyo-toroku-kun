@@ -3,7 +3,7 @@
  * テーブル + ステータスフィルタ + ページング + 削除
  */
 import { h } from 'preact';
-import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import {
   fetchFileList,
@@ -24,7 +24,14 @@ import {
   Filter,
   Sparkles,
   Loader2,
-  Eye
+  Eye,
+  Files,
+  CheckCircle2,
+  AlertTriangle,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  FolderSearch
 } from 'lucide-react';
 
 function formatDateTime(value: string | null | undefined): string {
@@ -34,7 +41,8 @@ function formatDateTime(value: string | null | undefined): string {
   return `${date.toLocaleDateString('ja-JP')} ${date.toLocaleTimeString('ja-JP')}`;
 }
 
-function formatFileSize(bytes: number): string {
+function formatFileSize(bytes: number | null | undefined): string {
+  if (typeof bytes !== 'number' || Number.isNaN(bytes) || bytes < 0) return '--';
   if (bytes === 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
@@ -50,6 +58,35 @@ const STATUS_OPTIONS: { value: FileStatus | ''; labelKey: Parameters<typeof t>[0
   { value: 'REGISTERED', labelKey: 'fileList.status.registered' },
   { value: 'ERROR', labelKey: 'fileList.status.error' }
 ];
+
+type SortKey = 'file_name' | 'file_size' | 'status' | 'uploaded_at';
+type SortDirection = 'asc' | 'desc';
+const FILE_LIST_SORT_STORAGE_KEY = 'denpyo.fileList.sort.v1';
+
+const SORT_LABEL_KEYS: Record<SortKey, Parameters<typeof t>[0]> = {
+  file_name: 'fileList.col.name',
+  file_size: 'fileList.col.size',
+  status: 'fileList.col.status',
+  uploaded_at: 'fileList.col.uploadedAt'
+};
+
+function loadSortPreference(): { sortKey: SortKey; sortDirection: SortDirection } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(FILE_LIST_SORT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { sortKey?: SortKey; sortDirection?: SortDirection };
+    if (!parsed.sortKey || !parsed.sortDirection) return null;
+    if (!Object.keys(SORT_LABEL_KEYS).includes(parsed.sortKey)) return null;
+    if (parsed.sortDirection !== 'asc' && parsed.sortDirection !== 'desc') return null;
+    return {
+      sortKey: parsed.sortKey,
+      sortDirection: parsed.sortDirection
+    };
+  } catch {
+    return null;
+  }
+}
 
 function StatusBadge({ status }: { status: FileStatus }) {
   const classMap: Record<FileStatus, string> = {
@@ -84,6 +121,8 @@ export function ListView() {
   const analyzingFileId = useAppSelector(state => state.denpyo.analyzingFileId);
   const [goToPageInput, setGoToPageInput] = useState('');
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
+  const [sortKey, setSortKey] = useState<SortKey>('uploaded_at');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   const loadFiles = useCallback(() => {
     dispatch(fetchFileList({ page, pageSize, status: statusFilter, uploadKind: 'raw' }));
@@ -98,10 +137,32 @@ export function ListView() {
     setSelectedFileIds(prev => prev.filter(id => currentIds.has(id)));
   }, [files]);
 
+  useEffect(() => {
+    const pref = loadSortPreference();
+    if (!pref) return;
+    setSortKey(pref.sortKey);
+    setSortDirection(pref.sortDirection);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(FILE_LIST_SORT_STORAGE_KEY, JSON.stringify({ sortKey, sortDirection }));
+    } catch {
+      // ignore storage errors
+    }
+  }, [sortKey, sortDirection]);
+
   const handleDelete = useCallback(async (fileId: string, fileName: string) => {
     if (!confirm(t('fileList.confirmDelete', { name: fileName }))) return;
     try {
       await dispatch(deleteFile(fileId)).unwrap();
+      const willBeEmptyOnPage = files.length <= 1 && page > 1;
+      if (willBeEmptyOnPage) {
+        dispatch(setFileListPage(page - 1));
+      } else {
+        loadFiles();
+      }
       dispatch(addNotification({
         type: 'success',
         message: t('fileList.notify.deleted', { name: fileName }),
@@ -114,7 +175,7 @@ export function ListView() {
         autoClose: true
       }));
     }
-  }, [dispatch]);
+  }, [dispatch, files.length, page, loadFiles]);
 
   const handleAnalyze = useCallback(async (fileId: string) => {
     try {
@@ -155,6 +216,17 @@ export function ListView() {
     window.open(`/studio/api/v1/files/${fileId}/preview`, '_blank', 'noopener,noreferrer');
   }, []);
 
+  const handleSort = useCallback((nextKey: SortKey) => {
+    setSortKey(prevKey => {
+      if (prevKey === nextKey) {
+        setSortDirection(prevDir => (prevDir === 'asc' ? 'desc' : 'asc'));
+        return prevKey;
+      }
+      setSortDirection('asc');
+      return nextKey;
+    });
+  }, []);
+
   const toggleFileSelection = useCallback((fileId: string) => {
     setSelectedFileIds(prev => (
       prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
@@ -192,7 +264,13 @@ export function ListView() {
           autoClose: true
         }));
       }
-      loadFiles();
+      const deletedSet = new Set(selectedFileIds);
+      const remainingOnPage = files.filter(f => !deletedSet.has(String(f.file_id))).length;
+      if (remainingOnPage === 0 && page > 1) {
+        dispatch(setFileListPage(page - 1));
+      } else {
+        loadFiles();
+      }
     } catch {
       dispatch(addNotification({
         type: 'error',
@@ -200,15 +278,49 @@ export function ListView() {
         autoClose: true
       }));
     }
-  }, [dispatch, selectedFileIds, loadFiles]);
+  }, [dispatch, selectedFileIds, loadFiles, files, page]);
 
-  const selectableIds = files
+  const sortedFiles = useMemo(() => {
+    const statusRank: Record<FileStatus, number> = {
+      ERROR: 0,
+      UPLOADED: 1,
+      ANALYZING: 2,
+      ANALYZED: 3,
+      REGISTERED: 4
+    };
+    const factor = sortDirection === 'asc' ? 1 : -1;
+    return [...files].sort((a, b) => {
+      if (sortKey === 'file_name') {
+        return factor * a.file_name.localeCompare(b.file_name, 'ja');
+      }
+      if (sortKey === 'file_size') {
+        return factor * ((a.file_size || 0) - (b.file_size || 0));
+      }
+      if (sortKey === 'status') {
+        return factor * (statusRank[a.status] - statusRank[b.status]);
+      }
+      const aTime = new Date(a.uploaded_at || '').getTime() || 0;
+      const bTime = new Date(b.uploaded_at || '').getTime() || 0;
+      return factor * (aTime - bTime);
+    });
+  }, [files, sortDirection, sortKey]);
+
+  const selectableIds = sortedFiles
     .filter(f => f.status !== 'REGISTERED')
     .map(f => String(f.file_id));
   const isAllSelectedOnPage = selectableIds.length > 0 && selectableIds.every(id => selectedFileIds.includes(id));
+  const uploadedCount = files.filter(file => file.status === 'UPLOADED').length;
+  const analyzedCount = files.filter(file => file.status === 'ANALYZED' || file.status === 'REGISTERED').length;
+  const errorCount = files.filter(file => file.status === 'ERROR').length;
+
+  const renderSortIcon = (key: SortKey) => {
+    if (sortKey !== key) return <ArrowUpDown size={13} />;
+    return sortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
+  };
+  const currentSortDirectionLabel = sortDirection === 'asc' ? t('fileList.sort.asc') : t('fileList.sort.desc');
 
   return (
-    <div class="ics-dashboard ics-dashboard--enhanced">
+    <div class="ics-dashboard ics-dashboard--enhanced ics-fileListView">
       {/* ヘッダー */}
       <section class="ics-ops-hero">
         <div class="ics-ops-hero__header">
@@ -227,6 +339,20 @@ export function ListView() {
             </button>
           </div>
         </div>
+        <div class="ics-fileListView__heroStats">
+          <div class="ics-fileListView__heroStat">
+            <span class="ics-fileListView__heroStatLabel"><Files size={13} /> {t('fileList.kpi.total')}</span>
+            <strong class="ics-fileListView__heroStatValue">{total}</strong>
+          </div>
+          <div class="ics-fileListView__heroStat">
+            <span class="ics-fileListView__heroStatLabel"><CheckCircle2 size={13} /> {t('fileList.kpi.ready')}</span>
+            <strong class="ics-fileListView__heroStatValue">{uploadedCount + analyzedCount}</strong>
+          </div>
+          <div class="ics-fileListView__heroStat">
+            <span class="ics-fileListView__heroStatLabel"><AlertTriangle size={13} /> {t('fileList.kpi.error')}</span>
+            <strong class="ics-fileListView__heroStatValue">{errorCount}</strong>
+          </div>
+        </div>
         <div class="ics-ops-hero__meta">
           <span>{t('fileList.totalFiles', { count: total })}</span>
           {selectedFileIds.length > 0 && (
@@ -240,32 +366,41 @@ export function ListView() {
         <div class="ics-card ics-ops-panel">
           <div class="ics-card-header oj-flex oj-sm-align-items-center oj-sm-justify-content-space-between">
             <span class="oj-typography-heading-xs">{t('fileList.tableTitle')}</span>
-            <div class="oj-flex oj-sm-align-items-center oj-sm-gap-2">
+            <div class="oj-flex oj-sm-align-items-center oj-sm-gap-2 ics-fileListView__toolbar">
               <button
                 type="button"
                 class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
                 onClick={handleBulkDelete}
-                disabled={isDeleting || selectedFileIds.length === 0}
+                disabled={isDeleting || isLoading || selectedFileIds.length === 0}
                 title={t('fileList.bulkDelete')}
               >
                 <Trash2 size={14} />
                 <span>{t('fileList.bulkDelete')}</span>
               </button>
-              <Filter size={14} />
+              <span class="ics-fileListView__filterIcon"><Filter size={14} /></span>
               <select
                 class="ics-select"
                 value={statusFilter || ''}
                 onChange={handleStatusChange}
+                disabled={isLoading || isDeleting}
               >
                 {STATUS_OPTIONS.map(opt => (
                   <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
                 ))}
               </select>
+              <span class="ics-fileListView__sortIndicator">
+                {sortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+                {t('fileList.sort.current', {
+                  field: t(SORT_LABEL_KEYS[sortKey]),
+                  direction: currentSortDirectionLabel
+                })}
+              </span>
             </div>
           </div>
           <div class="ics-card-body">
             {files.length > 0 ? (
-              <table class="ics-table">
+              <div class="ics-fileListView__tableWrap">
+                <table class="ics-table ics-fileListView__table">
                 <thead>
                   <tr>
                     <th>
@@ -273,20 +408,41 @@ export function ListView() {
                         type="checkbox"
                         checked={isAllSelectedOnPage}
                         onChange={handleSelectAllOnPage}
+                        disabled={isDeleting || isLoading || selectableIds.length === 0}
                         aria-label={t('fileList.selectAll')}
                       />
                     </th>
-                    <th>{t('fileList.col.name')}</th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('file_name')}>
+                        {t('fileList.col.name')}
+                        {renderSortIcon('file_name')}
+                      </button>
+                    </th>
                     <th>{t('fileList.col.type')}</th>
-                    <th>{t('fileList.col.size')}</th>
-                    <th>{t('fileList.col.status')}</th>
-                    <th>{t('fileList.col.uploadedAt')}</th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('file_size')}>
+                        {t('fileList.col.size')}
+                        {renderSortIcon('file_size')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('status')}>
+                        {t('fileList.col.status')}
+                        {renderSortIcon('status')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('uploaded_at')}>
+                        {t('fileList.col.uploadedAt')}
+                        {renderSortIcon('uploaded_at')}
+                      </button>
+                    </th>
                     <th>{t('fileList.col.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {files.map(file => (
-                    <tr key={file.file_id}>
+                  {sortedFiles.map(file => (
+                    <tr key={file.file_id} class={selectedFileIds.includes(String(file.file_id)) ? 'ics-fileListView__row--selected' : ''}>
                       <td>
                         <input
                           type="checkbox"
@@ -301,7 +457,7 @@ export function ListView() {
                       <td>{formatFileSize(file.file_size)}</td>
                       <td><StatusBadge status={file.status} /></td>
                       <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
-                      <td>
+                      <td class="ics-fileListView__actions">
                         <button
                           type="button"
                           class="ics-ops-btn ics-ops-btn--ghost"
@@ -337,10 +493,19 @@ export function ListView() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
             ) : (
-              <div class="ics-empty-text">
-                {isLoading ? t('common.loading') : t('fileList.noFiles')}
+              <div class="ics-empty-text ics-fileListView__emptyState">
+                {isLoading ? (
+                  t('common.loading')
+                ) : (
+                  <div class="ics-fileListView__emptyContent">
+                    <FolderSearch size={30} />
+                    <div class="ics-fileListView__emptyTitle">{t('fileList.noFiles')}</div>
+                    <div class="ics-fileListView__emptyHint">{t('fileList.emptyHint')}</div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -4754,6 +4754,69 @@ html[dir="rtl"] .oracle-icon {
 
 /* ==================== File List View (SCR-002) ==================== */
 
+.ics-fileListView .ics-ops-hero__meta {
+    margin-top: 12px;
+}
+
+.ics-fileListView__heroStats {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.ics-fileListView__heroStat {
+    border: 1px solid #d5e2f0;
+    border-radius: 10px;
+    background: #fff;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ics-fileListView__heroStatLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #5c728b;
+    font-size: 0.76rem;
+    font-weight: 600;
+}
+
+.ics-fileListView__heroStatValue {
+    color: #1f3f61;
+    font-size: 1rem;
+    line-height: 1.2;
+}
+
+.ics-fileListView__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ics-fileListView__filterIcon {
+    display: inline-flex;
+    align-items: center;
+    color: #58708a;
+}
+
+.ics-fileListView__sortIndicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid #d6e2ef;
+    border-radius: 999px;
+    background: #f7fbff;
+    color: #456788;
+    padding: 3px 10px;
+    font-size: 0.77rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
 .ics-select {
     padding: 4px 8px;
     font-size: 0.85rem;
@@ -4773,6 +4836,70 @@ html[dir="rtl"] .oracle-icon {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.ics-fileListView__tableWrap {
+    overflow-x: auto;
+    max-height: 58vh;
+    overflow-y: auto;
+    border-radius: 8px;
+    border: 1px solid #e3ecf6;
+}
+
+.ics-fileListView__row--selected {
+    background: #f2f8ff;
+}
+
+.ics-fileListView__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.ics-fileListView__table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f8fbff;
+}
+
+.ics-fileListView__sortBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+.ics-fileListView__sortBtn:hover {
+    color: #1f4f7f;
+}
+
+.ics-fileListView__emptyState {
+    min-height: 220px;
+}
+
+.ics-fileListView__emptyContent {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: #5d738d;
+}
+
+.ics-fileListView__emptyTitle {
+    font-weight: 600;
+    color: #2c4a69;
+}
+
+.ics-fileListView__emptyHint {
+    font-size: 0.85rem;
 }
 
 /* Danger ghost button variant */
@@ -4800,6 +4927,12 @@ html[dir="rtl"] .oracle-icon {
 /* Card footer */
 .ics-card-footer {
     padding: 0;
+}
+
+@media (max-width: 960px) {
+    .ics-fileListView__heroStats {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* ============================
