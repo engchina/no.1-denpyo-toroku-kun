@@ -2188,6 +2188,206 @@ def register_file(file_id: int):
 # Category Management API
 # ========================================
 
+_CATEGORY_TABLE_NAME_PATTERN = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,127}$')
+_ALLOWED_COL_DATA_TYPES = {"VARCHAR2", "NUMBER", "DATE", "TIMESTAMP", "CLOB"}
+
+
+def _validate_column_defs(columns: list) -> Optional[str]:
+    """カラム定義リストを検証し、問題があればエラーメッセージを返す"""
+    if not columns:
+        return "カラム定義が空です"
+    for col in columns:
+        col_name = (col.get("column_name") or "").strip()
+        if not col_name:
+            return "カラム名が未入力のカラムがあります"
+        if not re.match(r'^[A-Za-z][A-Za-z0-9_]{0,127}$', col_name):
+            return f"カラム名 '{col_name}' は英字始まりの英数字・アンダースコアのみ使用できます"
+        data_type = (col.get("data_type") or "").strip().upper()
+        if data_type not in _ALLOWED_COL_DATA_TYPES:
+            return f"データ型 '{data_type}' は使用できません（使用可能: {', '.join(sorted(_ALLOWED_COL_DATA_TYPES))}）"
+    return None
+
+
+@api_blueprint.route("/api/v1/categories/analyze-slips", methods=["POST"])
+def analyze_slips_for_category():
+    """SLIPS_CATEGORYファイルをAI分析してカテゴリのテーブル構造を提案する"""
+    from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
+    from denpyo_toroku.app.services.document_processor import DocumentProcessor
+    from denpyo_toroku.app.services.ai_service import AIService
+
+    body = request.get_json(silent=True) or {}
+    file_ids = body.get("file_ids", [])
+    analysis_mode = body.get("analysis_mode", "header_line")
+
+    if not isinstance(file_ids, list) or not (1 <= len(file_ids) <= 5):
+        g.response.add_error_message("file_idsは1〜5件のIDリストを指定してください")
+        return jsonify(g.response.get_result()), 400
+
+    if analysis_mode not in ("header", "header_line"):
+        analysis_mode = "header_line"
+
+    db_service = DatabaseService()
+    file_records = db_service.get_slips_category_files_by_ids([int(fid) for fid in file_ids])
+    if not file_records:
+        g.response.add_error_message("指定されたファイルが見つかりません")
+        return jsonify(g.response.get_result()), 404
+
+    storage_service = OCIStorageService()
+    doc_processor = DocumentProcessor()
+    ai_service = AIService()
+
+    # 全ファイルを分析してフィールドを収集
+    all_header_fields: List[Dict] = []
+    all_line_fields: List[Dict] = []
+    category_guesses: List[str] = []
+
+    for rec in file_records:
+        try:
+            object_name = rec.get("object_name", "")
+            content_type = rec.get("content_type", "image/jpeg")
+
+            file_data = storage_service.download_file(object_name)
+            if not file_data:
+                logging.warning("ファイルダウンロード失敗: %s", object_name)
+                continue
+
+            images = doc_processor.prepare_for_ai(file_data, rec.get("file_name", ""))
+            if not images:
+                logging.warning("AI用画像変換失敗: %s", object_name)
+                continue
+
+            image_data, img_content_type = images[0]
+
+            # 分類
+            classification = ai_service.classify_invoice(image_data, img_content_type)
+            if classification.get("success"):
+                category_guesses.append(classification.get("category", ""))
+
+            # フィールド抽出
+            category_hint = classification.get("category", "") if classification.get("success") else ""
+            extraction = ai_service.extract_fields(image_data, category_hint, img_content_type)
+            if extraction.get("success"):
+                all_header_fields.extend(extraction.get("header_fields", []))
+                if analysis_mode == "header_line":
+                    all_line_fields.extend(extraction.get("line_fields", []))
+
+        except Exception as e:
+            logging.error("ファイル分析エラー (id=%s): %s", rec.get("id"), e, exc_info=True)
+            continue
+
+    if not all_header_fields:
+        g.response.add_error_message("分析できるファイルがありませんでした")
+        return jsonify(g.response.get_result()), 500
+
+    # フィールドをマージ（同名のものは代表1件に集約、大文字英語名で統一）
+    def _merge_fields(fields_list: List[Dict]) -> List[Dict]:
+        seen: Dict[str, Dict] = {}
+        for f in fields_list:
+            key = (f.get("field_name_en") or "").strip().upper()
+            if not key:
+                continue
+            if key not in seen:
+                seen[key] = {
+                    "column_name": key,
+                    "column_name_jp": f.get("field_name") or f.get("field_name_en") or key,
+                    "data_type": (f.get("data_type") or "VARCHAR2").upper(),
+                    "max_length": f.get("max_length") or 500,
+                    "precision": None,
+                    "scale": None,
+                    "is_nullable": True,
+                    "is_primary_key": False,
+                }
+            else:
+                # 最大長は大きい方を採用
+                existing_len = seen[key].get("max_length") or 500
+                new_len = f.get("max_length") or 500
+                seen[key]["max_length"] = max(existing_len, new_len)
+        return list(seen.values())
+
+    header_columns = _merge_fields(all_header_fields)
+    line_columns = _merge_fields(all_line_fields) if analysis_mode == "header_line" else []
+
+    # カテゴリ名推定
+    category_guess = category_guesses[0] if category_guesses else "伝票"
+    # 英語名の推定（簡易変換）
+    category_map = {
+        "請求書": "invoice", "領収書": "receipt", "納品書": "delivery_note",
+        "注文書": "purchase_order", "見積書": "quotation", "発注書": "order_sheet",
+    }
+    category_guess_en = category_map.get(category_guess, "slip")
+
+    result = {
+        "category_guess": category_guess,
+        "category_guess_en": category_guess_en,
+        "analysis_mode": analysis_mode,
+        "header_columns": header_columns,
+        "line_columns": line_columns,
+    }
+    g.response.set_data(result)
+    return jsonify(g.response.get_result())
+
+
+@api_blueprint.route("/api/v1/categories", methods=["POST"])
+def create_category():
+    """カテゴリを新規作成（テーブル作成 + DENPYO_CATEGORIES登録）"""
+    try:
+        body = request.get_json(silent=True) or {}
+        category_name = (body.get("category_name") or "").strip()
+        category_name_en = (body.get("category_name_en") or "").strip()
+        description = (body.get("description") or "").strip()
+        header_table_name = (body.get("header_table_name") or "").strip().upper()
+        header_columns = body.get("header_columns", [])
+        line_table_name = (body.get("line_table_name") or "").strip().upper() or None
+        line_columns = body.get("line_columns") or []
+
+        # バリデーション
+        if not category_name:
+            g.response.add_error_message("カテゴリ名は必須です")
+            return jsonify(g.response.get_result()), 400
+
+        if not header_table_name or not _CATEGORY_TABLE_NAME_PATTERN.match(header_table_name):
+            g.response.add_error_message("ヘッダーテーブル名が無効です")
+            return jsonify(g.response.get_result()), 400
+
+        col_err = _validate_column_defs(header_columns)
+        if col_err:
+            g.response.add_error_message(f"ヘッダーカラム定義エラー: {col_err}")
+            return jsonify(g.response.get_result()), 400
+
+        if line_table_name:
+            if not _CATEGORY_TABLE_NAME_PATTERN.match(line_table_name):
+                g.response.add_error_message("明細テーブル名が無効です")
+                return jsonify(g.response.get_result()), 400
+            if line_columns:
+                line_col_err = _validate_column_defs(line_columns)
+                if line_col_err:
+                    g.response.add_error_message(f"明細カラム定義エラー: {line_col_err}")
+                    return jsonify(g.response.get_result()), 400
+
+        db_service = DatabaseService()
+        result = db_service.create_category_with_tables(
+            category_name=category_name,
+            category_name_en=category_name_en,
+            description=description,
+            header_table_name=header_table_name,
+            header_columns=header_columns,
+            line_table_name=line_table_name,
+            line_columns=line_columns if line_table_name else None,
+        )
+
+        if not result.get("success"):
+            g.response.add_error_message(result.get("message", "カテゴリ作成に失敗しました"))
+            return jsonify(g.response.get_result()), 500
+
+        g.response.set_data(result)
+        return jsonify(g.response.get_result()), 201
+
+    except Exception as e:
+        logging.error("カテゴリ作成エラー: %s", e, exc_info=True)
+        g.response.add_error_message(f"カテゴリ作成に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
 @api_blueprint.route("/api/v1/categories", methods=["GET"])
 def get_categories():
     """カテゴリ一覧を取得"""

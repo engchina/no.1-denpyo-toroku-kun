@@ -23,7 +23,10 @@ import {
   TableBrowserTable,
   NLSearchRequest,
   NLSearchResponse,
-  TableBrowseResult
+  TableBrowseResult,
+  CategoryAnalysisResult,
+  CategoryCreateRequest,
+  CategoryCreateResponse
 } from '../../types/denpyoTypes';
 import { apiGet, apiPost, apiPostWithTimeout, apiUpload, apiDelete, apiPut, apiPatch } from '../../utils/apiUtils';
 
@@ -51,6 +54,15 @@ const initialState: DenpyoSliceState = {
   registrationResult: null,
   categories: [],
   isCategoriesLoading: false,
+  // カテゴリ作成フロー (SCR-005 新機能)
+  slipsCategoryFiles: [],
+  slipsCategoryTotal: 0,
+  slipsCategoryPage: 1,
+  isSlipsCategoryLoading: false,
+  categoryAnalysisResult: null,
+  isCategoryAnalyzing: false,
+  isCategoryCreating: false,
+  categoryCreateResult: null,
   // データ検索 (SCR-006)
   searchableTables: [],
   isSearchableTablesLoading: false,
@@ -167,6 +179,38 @@ export const deleteCategory = createAsyncThunk(
   }
 );
 
+// --- カテゴリ作成フロー (SCR-005 新機能) ---
+
+export const fetchSlipsCategoryFiles = createAsyncThunk(
+  'denpyo/fetchSlipsCategoryFiles',
+  async (params: { page?: number; pageSize?: number } = {}) => {
+    const qs = new URLSearchParams();
+    qs.set('upload_kind', 'category');
+    if (params.page) qs.set('page', String(params.page));
+    if (params.pageSize) qs.set('page_size', String(params.pageSize));
+    const res = await apiGet<FileListResponse>(`/api/v1/files?${qs.toString()}`);
+    return res;
+  }
+);
+
+export const analyzeSlipsForCategory = createAsyncThunk(
+  'denpyo/analyzeSlipsForCategory',
+  async (params: { fileIds: number[]; analysisMode: 'header' | 'header_line' }) => {
+    return await apiPostWithTimeout<CategoryAnalysisResult>(
+      '/api/v1/categories/analyze-slips',
+      { file_ids: params.fileIds, analysis_mode: params.analysisMode },
+      120000
+    );
+  }
+);
+
+export const createCategoryWithTables = createAsyncThunk(
+  'denpyo/createCategoryWithTables',
+  async (data: CategoryCreateRequest) => {
+    return await apiPost<CategoryCreateResponse>('/api/v1/categories', data);
+  }
+);
+
 // --- データ検索 (SCR-006) ---
 
 export const fetchSearchableTables = createAsyncThunk(
@@ -248,6 +292,10 @@ const denpyoSlice = createSlice({
     },
     clearSearchError(state) {
       state.searchError = null;
+    },
+    clearCategoryAnalysis(state) {
+      state.categoryAnalysisResult = null;
+      state.categoryCreateResult = null;
     }
   },
   extraReducers: (builder) => {
@@ -445,6 +493,50 @@ const denpyoSlice = createSlice({
         state.error = action.error.message || 'カテゴリの削除に失敗しました';
       });
 
+    // カテゴリ作成フロー (SCR-005 新機能)
+    builder
+      .addCase(fetchSlipsCategoryFiles.pending, (state) => {
+        state.isSlipsCategoryLoading = true;
+      })
+      .addCase(fetchSlipsCategoryFiles.fulfilled, (state, action) => {
+        state.isSlipsCategoryLoading = false;
+        state.slipsCategoryFiles = action.payload.files || [];
+        state.slipsCategoryTotal = action.payload.total || 0;
+        state.slipsCategoryPage = action.payload.page || 1;
+      })
+      .addCase(fetchSlipsCategoryFiles.rejected, (state, action) => {
+        state.isSlipsCategoryLoading = false;
+        state.error = action.error.message || 'カテゴリファイル一覧の取得に失敗しました';
+      });
+
+    builder
+      .addCase(analyzeSlipsForCategory.pending, (state) => {
+        state.isCategoryAnalyzing = true;
+        state.categoryAnalysisResult = null;
+      })
+      .addCase(analyzeSlipsForCategory.fulfilled, (state, action) => {
+        state.isCategoryAnalyzing = false;
+        state.categoryAnalysisResult = action.payload;
+      })
+      .addCase(analyzeSlipsForCategory.rejected, (state, action) => {
+        state.isCategoryAnalyzing = false;
+        state.error = action.error.message || 'AI分析に失敗しました';
+      });
+
+    builder
+      .addCase(createCategoryWithTables.pending, (state) => {
+        state.isCategoryCreating = true;
+        state.categoryCreateResult = null;
+      })
+      .addCase(createCategoryWithTables.fulfilled, (state, action) => {
+        state.isCategoryCreating = false;
+        state.categoryCreateResult = action.payload;
+      })
+      .addCase(createCategoryWithTables.rejected, (state, action) => {
+        state.isCategoryCreating = false;
+        state.error = action.error.message || 'カテゴリ作成に失敗しました';
+      });
+
     // Data Search (SCR-006)
     builder
       .addCase(fetchSearchableTables.pending, (state) => {
@@ -520,6 +612,6 @@ const denpyoSlice = createSlice({
   }
 });
 
-export const { clearError, clearUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListStatusFilter, clearSearchResults, clearSearchError } = denpyoSlice.actions;
+export const { clearError, clearUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis } = denpyoSlice.actions;
 
 export default denpyoSlice.reducer;

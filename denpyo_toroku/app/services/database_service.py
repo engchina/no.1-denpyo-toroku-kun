@@ -721,6 +721,149 @@ class DatabaseService:
             logger.error("カテゴリ削除エラー (id=%s): %s", category_id, e, exc_info=True)
             return {"success": False, "message": str(e)}
 
+    # ── カテゴリ作成フロー ──────────────────────────────
+
+    def get_slips_category_files_by_ids(self, ids: List[int]) -> List[Dict[str, Any]]:
+        """IDのリストでSLIPS_CATEGORYレコードを取得（OCI Object Storage パス付き）"""
+        if not ids:
+            return []
+        try:
+            placeholders = ",".join([f":{i+1}" for i in range(len(ids))])
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        f"""SELECT ID, OBJECT_NAME, BUCKET_NAME, NAMESPACE,
+                                   FILE_NAME, FILE_SIZE_BYTES, CONTENT_TYPE, CREATED_AT
+                        FROM SLIPS_CATEGORY
+                        WHERE ID IN ({placeholders})
+                        ORDER BY CREATED_AT DESC""",
+                        ids
+                    )
+                    result = []
+                    for row in cursor.fetchall():
+                        result.append({
+                            "id": row[0],
+                            "object_name": row[1],
+                            "bucket_name": row[2],
+                            "namespace": row[3],
+                            "file_name": row[4],
+                            "file_size": row[5],
+                            "content_type": row[6] or "image/jpeg",
+                            "created_at": str(row[7]) if row[7] else "",
+                        })
+                    return result
+        except Exception as e:
+            logger.error("SLIPS_CATEGORY ファイル取得エラー (ids=%s): %s", ids, e, exc_info=True)
+            return []
+
+    @staticmethod
+    def _build_ddl_from_columns(table_name: str, columns: List[Dict[str, Any]]) -> str:
+        """カラム定義リストからCREATE TABLE DDLを生成"""
+        col_defs = []
+        pk_cols = []
+        for col in columns:
+            col_name = col.get("column_name", "").upper()
+            if not col_name:
+                continue
+            data_type = col.get("data_type", "VARCHAR2").upper()
+            max_length = col.get("max_length")
+            precision = col.get("precision")
+            scale = col.get("scale")
+            is_nullable = col.get("is_nullable", True)
+            is_pk = col.get("is_primary_key", False)
+
+            # 型定義
+            if data_type == "VARCHAR2":
+                length = int(max_length) if max_length else 500
+                type_def = f"VARCHAR2({length})"
+            elif data_type == "NUMBER":
+                if precision and scale:
+                    type_def = f"NUMBER({int(precision)},{int(scale)})"
+                elif precision:
+                    type_def = f"NUMBER({int(precision)})"
+                else:
+                    type_def = "NUMBER"
+            elif data_type in ("DATE", "TIMESTAMP", "CLOB"):
+                type_def = data_type
+            else:
+                type_def = "VARCHAR2(500)"
+
+            null_clause = "" if is_nullable else " NOT NULL"
+            col_defs.append(f"    {col_name} {type_def}{null_clause}")
+            if is_pk:
+                pk_cols.append(col_name)
+
+        if pk_cols:
+            pk_name = f"PK_{table_name[:20]}"
+            col_defs.append(f"    CONSTRAINT {pk_name} PRIMARY KEY ({', '.join(pk_cols)})")
+
+        cols_sql = ",\n".join(col_defs)
+        return f"CREATE TABLE {table_name.upper()} (\n{cols_sql}\n)"
+
+    def create_category_with_tables(
+        self,
+        category_name: str,
+        category_name_en: str,
+        description: str,
+        header_table_name: str,
+        header_columns: List[Dict[str, Any]],
+        line_table_name: Optional[str] = None,
+        line_columns: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """カラム定義からDDLを生成し、テーブル作成 + カテゴリ登録を行う"""
+        result = {
+            "success": False,
+            "category_id": None,
+            "category_name": category_name,
+            "header_table_name": header_table_name,
+            "line_table_name": line_table_name or "",
+            "header_table_created": False,
+            "line_table_created": False,
+            "message": "",
+        }
+
+        if not header_table_name or not header_columns:
+            result["message"] = "ヘッダーテーブル名とカラム定義は必須です"
+            return result
+
+        # DDL生成
+        header_ddl = self._build_ddl_from_columns(header_table_name, header_columns)
+        line_ddl = None
+        if line_table_name and line_columns:
+            line_ddl = self._build_ddl_from_columns(line_table_name, line_columns)
+
+        # ヘッダーテーブル作成
+        header_res = self.execute_ddl(header_ddl)
+        if not header_res.get("success"):
+            result["message"] = f"ヘッダーテーブル作成失敗: {header_res.get('message', '')}"
+            return result
+        result["header_table_created"] = True
+
+        # 明細テーブル作成（任意）
+        if line_ddl:
+            line_res = self.execute_ddl(line_ddl)
+            if not line_res.get("success"):
+                result["message"] = f"明細テーブル作成失敗: {line_res.get('message', '')}"
+                return result
+            result["line_table_created"] = True
+
+        # カテゴリレコード保存
+        cat_id = self.upsert_category(
+            category_name=category_name,
+            category_name_en=category_name_en or "",
+            header_table_name=header_table_name.upper(),
+            line_table_name=(line_table_name or "").upper() if line_table_name else "",
+            description=description or "",
+        )
+        if cat_id is None:
+            result["message"] = "カテゴリレコードの保存に失敗しました"
+            return result
+
+        result["success"] = True
+        result["category_id"] = cat_id
+        result["message"] = "カテゴリとテーブルを作成しました"
+        return result
+
     # ── データ検索 ─────────────────────────────────
 
     _TABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

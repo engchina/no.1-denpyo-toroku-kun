@@ -204,6 +204,53 @@ export interface RegistrationResult {
   inserted_rows?: number;
 }
 
+// --- カテゴリ作成フロー (SCR-005 新機能) ---
+
+// SLIPS_CATEGORY files use the existing DenpyoFile shape returned by /api/v1/files
+// (file_id: string, file_name: string as OBJECT_NAME, original_file_name: FILE_NAME, etc.)
+// Re-exported as alias for clarity in the creation flow.
+export type SlipsCategoryFile = DenpyoFile;
+
+export interface TableColumnDef {
+  column_name: string;        // English name (Oracle column name), e.g. INVOICE_DATE
+  column_name_jp: string;     // Japanese label
+  data_type: 'VARCHAR2' | 'NUMBER' | 'DATE' | 'TIMESTAMP' | 'CLOB';
+  max_length?: number;        // for VARCHAR2
+  precision?: number;         // for NUMBER
+  scale?: number;             // for NUMBER
+  is_nullable: boolean;
+  is_primary_key: boolean;
+}
+
+export interface CategoryAnalysisResult {
+  category_guess: string;
+  category_guess_en: string;
+  analysis_mode: 'header' | 'header_line';
+  header_columns: TableColumnDef[];
+  line_columns: TableColumnDef[];
+}
+
+export interface CategoryCreateRequest {
+  category_name: string;
+  category_name_en: string;
+  description: string;
+  header_table_name: string;
+  header_columns: TableColumnDef[];
+  line_table_name?: string;
+  line_columns?: TableColumnDef[];
+}
+
+export interface CategoryCreateResponse {
+  success: boolean;
+  category_id: number;
+  category_name: string;
+  header_table_name: string;
+  line_table_name?: string;
+  header_table_created: boolean;
+  line_table_created: boolean;
+  message: string;
+}
+
 // --- 検索 ---
 
 export interface NLSearchResult {
@@ -304,6 +351,16 @@ export interface DenpyoSliceState {
   // カテゴリ管理
   categories: DenpyoCategory[];
   isCategoriesLoading: boolean;
+
+  // カテゴリ作成フロー (SCR-005 新機能)
+  slipsCategoryFiles: DenpyoFile[];
+  slipsCategoryTotal: number;
+  slipsCategoryPage: number;
+  isSlipsCategoryLoading: boolean;
+  categoryAnalysisResult: CategoryAnalysisResult | null;
+  isCategoryAnalyzing: boolean;
+  isCategoryCreating: boolean;
+  categoryCreateResult: CategoryCreateResponse | null;
 
   // データ検索 (SCR-006)
   searchableTables: SearchableTable[];
