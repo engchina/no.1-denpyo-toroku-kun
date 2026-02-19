@@ -724,6 +724,7 @@ class DatabaseService:
     # ── データ検索 ─────────────────────────────────
 
     _TABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    _TABLE_BROWSER_TARGETS = ("SLIPS_RAW", "SLIPS_CATEGORY")
 
     def get_allowed_table_names(self) -> List[Dict[str, Any]]:
         """DENPYO_CATEGORIES から有効なユーザーテーブル名を取得"""
@@ -753,27 +754,7 @@ class DatabaseService:
 
     def get_table_browser_tables(self) -> List[Dict[str, Any]]:
         """テーブルブラウザ用の一覧情報を取得（行数・作成日時など）"""
-        entries: List[Dict[str, Any]] = []
-        for category in self.get_allowed_table_names():
-            if category.get("header_table_name"):
-                entries.append({
-                    "table_name": category["header_table_name"].upper(),
-                    "table_type": "header",
-                    "category_id": category["category_id"],
-                    "category_name": category["category_name"],
-                })
-            if category.get("line_table_name"):
-                entries.append({
-                    "table_name": category["line_table_name"].upper(),
-                    "table_type": "line",
-                    "category_id": category["category_id"],
-                    "category_name": category["category_name"],
-                })
-
-        if not entries:
-            return []
-
-        safe_table_names = sorted({e["table_name"] for e in entries if self._is_safe_table_name(e["table_name"])})
+        safe_table_names = [name for name in self._TABLE_BROWSER_TARGETS if self._is_safe_table_name(name)]
         if not safe_table_names:
             return []
 
@@ -787,6 +768,8 @@ class DatabaseService:
             }
             for table_name in safe_table_names
         }
+
+        existing_table_names: set = set()
 
         try:
             with self.get_connection() as conn:
@@ -805,9 +788,13 @@ class DatabaseService:
                     )
                     for row in cursor.fetchall():
                         table_name = row[0]
+                        existing_table_names.add(table_name)
                         meta_map[table_name]["estimated_rows"] = int(row[1] or 0)
                         meta_map[table_name]["last_analyzed"] = str(row[2]) if row[2] else ""
                         meta_map[table_name]["created_at"] = str(row[3]) if row[3] else ""
+
+                    if not existing_table_names:
+                        return []
 
                     cursor.execute(
                         f"""SELECT TABLE_NAME, COUNT(*)
@@ -820,7 +807,7 @@ class DatabaseService:
                         table_name = row[0]
                         meta_map[table_name]["column_count"] = int(row[1] or 0)
 
-                    for table_name in safe_table_names:
+                    for table_name in sorted(existing_table_names):
                         try:
                             cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
                             count_row = cursor.fetchone()
@@ -834,14 +821,16 @@ class DatabaseService:
             return []
 
         result: List[Dict[str, Any]] = []
-        for entry in entries:
-            table_name = entry["table_name"]
+        for table_name in safe_table_names:
+            # 未作成テーブルは表示対象外（エラーにはしない）
+            if table_name not in existing_table_names:
+                continue
             meta = meta_map.get(table_name, {})
             result.append({
                 "table_name": table_name,
-                "table_type": entry["table_type"],
-                "category_id": entry["category_id"],
-                "category_name": entry["category_name"],
+                "table_type": "header",
+                "category_id": 0,
+                "category_name": "SLIPS",
                 "row_count": meta.get("row_count", 0),
                 "estimated_rows": meta.get("estimated_rows", 0),
                 "column_count": meta.get("column_count", 0),
@@ -849,7 +838,7 @@ class DatabaseService:
                 "last_analyzed": meta.get("last_analyzed", ""),
             })
 
-        result.sort(key=lambda x: (x["category_name"], x["table_type"], x["table_name"]))
+        result.sort(key=lambda x: x["table_name"])
         return result
 
     def _get_allowed_table_set(self) -> set:
@@ -860,6 +849,7 @@ class DatabaseService:
                 allowed.add(entry["header_table_name"].upper())
             if entry["line_table_name"]:
                 allowed.add(entry["line_table_name"].upper())
+        allowed.update(self._TABLE_BROWSER_TARGETS)
         return allowed
 
     def get_table_columns(self, table_name: str) -> List[Dict[str, str]]:
@@ -1145,7 +1135,7 @@ class DatabaseService:
                     files = []
                     for row in cursor.fetchall():
                         files.append({
-                            "id": row[0],
+                            "file_id": str(row[0]),
                             "file_name": row[1],
                             "original_file_name": row[2],
                             "content_type": row[3],
@@ -1226,34 +1216,50 @@ class DatabaseService:
 
     def delete_file_record(self, file_id: int) -> Dict[str, Any]:
         """ファイルレコードを削除（登録済みの場合は拒否）"""
+        logger.info("[DB] delete_file_record 開始 file_id=%s", file_id)
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     # 登録済みチェック
+                    logger.info("[DB] 登録済みチェック中 file_id=%s", file_id)
                     cursor.execute(
                         "SELECT COUNT(*) FROM DENPYO_REGISTRATIONS WHERE FILE_ID = :1",
                         [file_id]
                     )
-                    if cursor.fetchone()[0] > 0:
+                    reg_count = cursor.fetchone()[0]
+                    logger.info("[DB] 登録済み件数: %d (file_id=%s)", reg_count, file_id)
+                    if reg_count > 0:
+                        logger.warning("❌ [DB] 登録済みファイルは削除できません file_id=%s", file_id)
                         return {"success": False, "message": "登録済みファイルは削除できません"}
 
                     # アクティビティログも削除
+                    logger.info("[DB] アクティビティログ削除中 file_id=%s", file_id)
                     cursor.execute(
                         "DELETE FROM DENPYO_ACTIVITY_LOG WHERE FILE_ID = :1",
                         [file_id]
                     )
+                    log_deleted = cursor.rowcount
+                    logger.info("[DB] アクティビティログ削除件数: %d (file_id=%s)", log_deleted, file_id)
+                    
+                    logger.info("[DB] ファイルレコード削除中 file_id=%s", file_id)
                     cursor.execute(
                         "DELETE FROM DENPYO_FILES WHERE ID = :1",
                         [file_id]
                     )
                     deleted = cursor.rowcount
+                    logger.info("[DB] ファイルレコード削除件数: %d (file_id=%s)", deleted, file_id)
+                    
+                logger.info("[DB] commit 中 file_id=%s", file_id)
                 conn.commit()
+                logger.info("[DB] commit 完了 file_id=%s", file_id)
 
             if deleted > 0:
+                logger.info("✅ [DB] ファイルを削除しました file_id=%s", file_id)
                 return {"success": True, "message": "ファイルを削除しました"}
+            logger.warning("❌ [DB] ファイルが見つかりません file_id=%s", file_id)
             return {"success": False, "message": "ファイルが見つかりません"}
         except Exception as e:
-            logger.error("ファイル削除エラー (id=%s): %s", file_id, e, exc_info=True)
+            logger.error("❌ [DB] ファイル削除エラー (id=%s): %s", file_id, e, exc_info=True)
             return {"success": False, "message": str(e)}
 
     def update_file_status(self, file_id: int, status: str) -> bool:

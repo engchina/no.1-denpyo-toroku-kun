@@ -1704,42 +1704,80 @@ def preview_file(file_id: int):
 
 @api_blueprint.route("/api/v1/files/<int:file_id>", methods=["DELETE"])
 def delete_file(file_id: int):
-    """伝票ファイルを削除（Object Storage + DB）"""
+    """伝票ファイルを削除（Object Storage → DB の順で削除）"""
     from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
     from denpyo_toroku.app.services.database_service import DatabaseService
 
+    logging.info("========== ファイル削除開始 file_id=%s ==========", file_id)
     try:
         db_service = DatabaseService()
+        logging.info("[STEP 1] ファイル情報をDBから取得中... file_id=%s", file_id)
         file_record = db_service.get_file_by_id(file_id)
         if not file_record:
+            logging.warning("ファイルが見つかりません file_id=%s", file_id)
             g.response.set_data({"success": False, "message": "ファイルが見つかりません"})
             return jsonify(g.response.get_result()), 404
+        
+        logging.info("[STEP 1] ファイル情報取得成功: file_name=%s, storage_path=%s", 
+                    file_record.get('original_file_name'), 
+                    file_record.get('object_storage_path'))
 
-        # Object Storage から削除
+        # ステップ2: Object Storage から削除
         storage_path = file_record.get("object_storage_path", "")
         if storage_path:
+            logging.info("[STEP 2] Object Storage から削除開始: %s", storage_path)
             storage_service = OCIStorageService()
             if storage_service.is_configured:
-                storage_service.delete_file(storage_path)
+                logging.info("[STEP 2] OCI Storage Service 設定済み (namespace=%s, bucket=%s)",
+                           storage_service._namespace, storage_service._bucket_name)
+                storage_result = storage_service.delete_file(storage_path)
+                logging.info("[STEP 2] Object Storage 削除結果: %s", storage_result)
+                if not storage_result.get("success"):
+                    # Object Storage 削除失敗時はエラーを返す
+                    logging.error("[STEP 2] Object Storage 削除失敗: %s", storage_result.get('message'))
+                    g.response.set_data({
+                        "success": False,
+                        "message": f"Object Storage からの削除に失敗しました: {storage_result.get('message')}"
+                    })
+                    return jsonify(g.response.get_result()), 500
+                logging.info("[STEP 2] ✅ Object Storage からファイルを削除しました: %s", storage_path)
+            else:
+                logging.warning("[STEP 2] OCI Storage Service が設定されていません")
+        else:
+            logging.warning("[STEP 2] storage_path が空です（Object Storage 削除スキップ）")
 
-        # DB レコード削除
+        # ステップ3: DB レコード削除
+        logging.info("[STEP 3] DB レコード削除開始 file_id=%s", file_id)
         delete_result = db_service.delete_file_record(file_id)
+        logging.info("[STEP 3] DB 削除結果: %s", delete_result)
         if not delete_result.get("success"):
+            # DB削除失敗（Object Storageは既に削除済み）
+            logging.error(
+                "[STEP 3] DB削除失敗（Object Storageは削除済み） file_id=%s: %s",
+                file_id,
+                delete_result.get("message")
+            )
             g.response.set_data(delete_result)
             return jsonify(g.response.get_result()), 400
+        
+        logging.info("[STEP 3] ✅ DB レコードを削除しました file_id=%s", file_id)
 
         # アクティビティログ
         user = session.get("user", "")
+        logging.info("[STEP 4] アクティビティログ記録中 user=%s", user)
         db_service.log_activity(
             activity_type="DELETE",
             description=f"ファイル '{file_record.get('original_file_name', '')}' を削除しました",
             user_name=user,
         )
+        logging.info("[STEP 4] ✅ アクティビティログ記録完了")
 
+        logging.info("========== ファイル削除成功 file_id=%s ==========", file_id)
         g.response.set_data({"success": True, "message": "ファイルを削除しました"})
         return jsonify(g.response.get_result())
 
     except Exception as e:
+        logging.error("========== ファイル削除エラー file_id=%s ==========", file_id)
         logging.error("ファイル削除エラー (id=%s): %s", file_id, e, exc_info=True)
         g.response.set_data({"success": False, "message": str(e)})
         return jsonify(g.response.get_result()), 500
@@ -1747,7 +1785,7 @@ def delete_file(file_id: int):
 
 @api_blueprint.route("/api/v1/files/bulk-delete", methods=["POST"])
 def bulk_delete_files():
-    """伝票ファイルを一括削除"""
+    """伝票ファイルを一括削除（各ファイルにつき Object Storage → DB の順で削除）"""
     from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
     from denpyo_toroku.app.services.database_service import DatabaseService
 
@@ -1776,12 +1814,26 @@ def bulk_delete_files():
                 errors.append(f"{file_id}: ファイルが見つかりません")
                 continue
 
+            # ステップ1: Object Storage から削除
             storage_path = file_record.get("object_storage_path", "")
             if storage_path and storage_service.is_configured:
-                storage_service.delete_file(storage_path)
+                storage_result = storage_service.delete_file(storage_path)
+                if not storage_result.get("success"):
+                    errors.append(
+                        f"{file_id}: Object Storage 削除失敗 - {storage_result.get('message')}"
+                    )
+                    continue
+                logging.info("Object Storage からファイルを削除しました: %s", storage_path)
 
+            # ステップ2: DB レコード削除
             delete_result = db_service.delete_file_record(file_id)
             if not delete_result.get("success"):
+                # DB削除失敗（Object Storageは既に削除済み）
+                logging.warning(
+                    "DB削除失敗（Object Storageは削除済み） file_id=%s: %s",
+                    file_id,
+                    delete_result.get("message")
+                )
                 errors.append(f"{file_id}: {delete_result.get('message', '削除失敗')}")
                 continue
 

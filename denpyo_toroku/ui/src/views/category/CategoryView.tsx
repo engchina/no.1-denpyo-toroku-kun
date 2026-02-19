@@ -12,6 +12,7 @@ import {
   deleteCategory
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
+import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
 import { DenpyoCategory, CategoryUpdateRequest } from '../../types/denpyoTypes';
 import {
@@ -143,6 +144,7 @@ function EditModal({
 
 export function CategoryView() {
   const dispatch = useAppDispatch();
+  const { requestConfirm, confirmToast } = useToastConfirm();
   const categories = useAppSelector(state => state.denpyo.categories);
   const isLoading = useAppSelector(state => state.denpyo.isCategoriesLoading);
   const [editTarget, setEditTarget] = useState<DenpyoCategory | null>(null);
@@ -173,23 +175,30 @@ export function CategoryView() {
     }
   }, [dispatch]);
 
-  const handleDelete = useCallback(async (cat: DenpyoCategory) => {
-    if (!confirm(t('category.confirmDelete', { name: cat.category_name }))) return;
-    try {
-      await dispatch(deleteCategory(cat.id)).unwrap();
-      dispatch(addNotification({
-        type: 'success',
-        message: t('category.notify.deleted', { name: cat.category_name }),
-        autoClose: true
-      }));
-    } catch {
-      dispatch(addNotification({
-        type: 'error',
-        message: t('category.notify.deleteFailed'),
-        autoClose: true
-      }));
-    }
-  }, [dispatch]);
+  const handleDelete = useCallback((cat: DenpyoCategory) => {
+    requestConfirm({
+      message: t('category.confirmDelete', { name: cat.category_name }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        try {
+          await dispatch(deleteCategory(cat.id)).unwrap();
+          dispatch(addNotification({
+            type: 'success',
+            message: t('category.notify.deleted', { name: cat.category_name }),
+            autoClose: true
+          }));
+        } catch {
+          dispatch(addNotification({
+            type: 'error',
+            message: t('category.notify.deleteFailed'),
+            autoClose: true
+          }));
+        }
+      }
+    });
+  }, [dispatch, requestConfirm]);
 
   const handleSave = useCallback(async (data: CategoryUpdateRequest) => {
     if (!editTarget) return;
@@ -322,6 +331,7 @@ export function CategoryView() {
           isSaving={isSaving}
         />
       )}
+      {confirmToast}
     </div>
   );
 }

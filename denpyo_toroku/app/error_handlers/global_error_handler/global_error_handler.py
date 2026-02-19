@@ -1,6 +1,6 @@
 import logging
 import traceback
-from flask import g, jsonify
+from flask import g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from denpyo_toroku.config import AppConfig
@@ -10,12 +10,21 @@ from denpyo_toroku.app.util.response import Response
 def handle_error(e):
     g.response = Response()
 
+    # HTTPメソッドとURLを取得
+    method = request.method if request else "UNKNOWN"
+    path = request.path if request else "UNKNOWN"
+
     # HTTPException（例: 404 NotFound）は元のステータスコードを保持
     if isinstance(e, HTTPException):
         code = e.code
+        logging.warning("[%s %s] HTTPException: %s (code=%d)", method, path, str(e), code)
     else:
         code = 500
-        logging.error(traceback.format_exc())
+        # エラー詳細をログに出力
+        logging.error("========== 内部エラー発生 [%s %s] ==========", method, path)
+        logging.error("エラータイプ: %s", type(e).__name__)
+        logging.error("エラーメッセージ: %s", str(e))
+        logging.error("スタックトレース:\n%s", traceback.format_exc())
 
     # デバッグモード
     debug_mode = AppConfig.DENPYO_TOROKU_DEBUG_MODE
@@ -34,11 +43,6 @@ def handle_error(e):
         g.response.add_error_message("要求されたリソースが見つかりません。")
     else:
         g.response.add_error_message("内部エラーが発生しました。")
-        result = g.response.get_result()
-        if "errorMessages" in result:
-            for entry in result["errorMessages"]:
-                logging.error(entry)
-        return jsonify(result), code
 
     return jsonify(g.response.get_result()), code
 

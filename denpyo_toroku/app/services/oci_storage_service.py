@@ -242,11 +242,19 @@ class OCIStorageService:
 
     def delete_file(self, object_name: str) -> Dict[str, Any]:
         """Object Storageからファイルを削除"""
+        logger.info("[OCI Storage] delete_file 開始: object_name=%s", object_name)
         client = self._get_client()
-        if not client or not self.is_configured:
+        if not client:
+            logger.error("[OCI Storage] client が None です")
+            return {"success": False, "message": "OCI クライアントが利用できません"}
+        if not self.is_configured:
+            logger.error("[OCI Storage] is_configured=False (namespace=%s, bucket=%s)",
+                        self._namespace, self._bucket_name)
             return {"success": False, "message": "OCI クライアントが利用できません"}
 
         try:
+            logger.info("[OCI Storage] API呼び出し中: delete_object(namespace=%s, bucket=%s, object=%s)",
+                       self._namespace, self._bucket_name, object_name)
             self._retry_api_call(
                 "delete_file",
                 client.delete_object,
@@ -254,10 +262,10 @@ class OCIStorageService:
                 bucket_name=self._bucket_name,
                 object_name=object_name,
             )
-            logger.info("ファイルを削除しました: %s", object_name)
+            logger.info("✅ [OCI Storage] ファイルを削除しました: %s", object_name)
             return {"success": True, "message": "削除完了", "object_name": object_name}
         except Exception as e:
-            logger.error("ファイル削除エラー: %s", e, exc_info=True)
+            logger.error("❌ [OCI Storage] ファイル削除エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"削除失敗: {str(e)}"}
 
     def get_file_metadata(self, object_name: str) -> Optional[Dict[str, Any]]:

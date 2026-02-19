@@ -4910,6 +4910,13 @@ html[dir="rtl"] .oracle-icon {
     background: #fef2f2;
 }
 
+.ics-toast-confirm__actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
+
 /* Pagination */
 .ics-pagination {
     display: flex;
@@ -5442,6 +5449,8 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 12px;
     margin-bottom: 12px;
     color: #6b7280;
 }
@@ -5457,6 +5466,7 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 12px;
     margin-bottom: 12px;
 }
@@ -5588,4 +5598,20 @@ html[dir="rtl"] .oracle-icon {
 /* Browser results */
 .ics-browser-results {
     /* standard layout */
+}
+
+.ics-browser-results .ics-table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.ics-browser-results .ics-table {
+    min-width: max-content;
+}
+
+.ics-browser-results .ics-table th,
+.ics-browser-results .ics-table td {
+    white-space: nowrap;
+    vertical-align: middle;
 }

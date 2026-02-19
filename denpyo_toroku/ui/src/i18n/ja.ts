@@ -23,6 +23,7 @@ export const ja = {
   'common.optional': '任意',
   'common.loading': '読み込み中…',
   'common.save': '保存',
+  'common.delete': '削除',
   'common.cancel': 'キャンセル',
   'common.close': '閉じる',
   'common.clear': 'クリア',

@@ -16,6 +16,7 @@ import {
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import { setCurrentView } from '../../redux/slices/applicationSlice';
 import Pagination from '../../components/Pagination';
+import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
 import { FileStatus } from '../../types/denpyoTypes';
 import {
@@ -112,6 +113,7 @@ function StatusBadge({ status }: { status: FileStatus }) {
 
 export function ListView() {
   const dispatch = useAppDispatch();
+  const { requestConfirm, confirmToast } = useToastConfirm();
   const { files, total, page, pageSize, totalPages, statusFilter } = useAppSelector(
     state => state.denpyo.fileList
   );
@@ -153,29 +155,36 @@ export function ListView() {
     }
   }, [sortKey, sortDirection]);
 
-  const handleDelete = useCallback(async (fileId: string, fileName: string) => {
-    if (!confirm(t('fileList.confirmDelete', { name: fileName }))) return;
-    try {
-      await dispatch(deleteFile(fileId)).unwrap();
-      const willBeEmptyOnPage = files.length <= 1 && page > 1;
-      if (willBeEmptyOnPage) {
-        dispatch(setFileListPage(page - 1));
-      } else {
-        loadFiles();
+  const handleDelete = useCallback((fileId: string, fileName: string) => {
+    requestConfirm({
+      message: t('fileList.confirmDelete', { name: fileName }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        try {
+          await dispatch(deleteFile(fileId)).unwrap();
+          const willBeEmptyOnPage = files.length <= 1 && page > 1;
+          if (willBeEmptyOnPage) {
+            dispatch(setFileListPage(page - 1));
+          } else {
+            loadFiles();
+          }
+          dispatch(addNotification({
+            type: 'success',
+            message: t('fileList.notify.deleted', { name: fileName }),
+            autoClose: true
+          }));
+        } catch {
+          dispatch(addNotification({
+            type: 'error',
+            message: t('fileList.notify.deleteFailed', { name: fileName }),
+            autoClose: true
+          }));
+        }
       }
-      dispatch(addNotification({
-        type: 'success',
-        message: t('fileList.notify.deleted', { name: fileName }),
-        autoClose: true
-      }));
-    } catch {
-      dispatch(addNotification({
-        type: 'error',
-        message: t('fileList.notify.deleteFailed', { name: fileName }),
-        autoClose: true
-      }));
-    }
-  }, [dispatch, files.length, page, loadFiles]);
+    });
+  }, [dispatch, files.length, page, loadFiles, requestConfirm]);
 
   const handleAnalyze = useCallback(async (fileId: string) => {
     try {
@@ -241,44 +250,52 @@ export function ListView() {
     setSelectedFileIds(allSelected ? [] : selectableIds);
   }, [files, selectedFileIds]);
 
-  const handleBulkDelete = useCallback(async () => {
+  const handleBulkDelete = useCallback(() => {
     if (selectedFileIds.length === 0) return;
-    if (!confirm(t('fileList.confirmBulkDelete', { count: selectedFileIds.length }))) return;
+    const targetIds = [...selectedFileIds];
 
-    try {
-      const result = await dispatch(bulkDeleteFiles(selectedFileIds)).unwrap();
-      setSelectedFileIds([]);
-      if (result.errors.length > 0) {
-        dispatch(addNotification({
-          type: 'warning',
-          message: t('fileList.notify.bulkDeletedWithErrors', {
-            deleted: result.deleted_file_ids.length,
-            errors: result.errors.length
-          }),
-          autoClose: true
-        }));
-      } else {
-        dispatch(addNotification({
-          type: 'success',
-          message: t('fileList.notify.bulkDeleted', { count: result.deleted_file_ids.length }),
-          autoClose: true
-        }));
+    requestConfirm({
+      message: t('fileList.confirmBulkDelete', { count: targetIds.length }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        try {
+          const result = await dispatch(bulkDeleteFiles(targetIds)).unwrap();
+          setSelectedFileIds([]);
+          if (result.errors.length > 0) {
+            dispatch(addNotification({
+              type: 'warning',
+              message: t('fileList.notify.bulkDeletedWithErrors', {
+                deleted: result.deleted_file_ids.length,
+                errors: result.errors.length
+              }),
+              autoClose: true
+            }));
+          } else {
+            dispatch(addNotification({
+              type: 'success',
+              message: t('fileList.notify.bulkDeleted', { count: result.deleted_file_ids.length }),
+              autoClose: true
+            }));
+          }
+          const deletedSet = new Set(targetIds);
+          const remainingOnPage = files.filter(f => !deletedSet.has(String(f.file_id))).length;
+          if (remainingOnPage === 0 && page > 1) {
+            dispatch(setFileListPage(page - 1));
+          } else {
+            loadFiles();
+          }
+        } catch {
+          dispatch(addNotification({
+            type: 'error',
+            message: t('fileList.notify.bulkDeleteFailed'),
+            autoClose: true
+          }));
+        }
       }
-      const deletedSet = new Set(selectedFileIds);
-      const remainingOnPage = files.filter(f => !deletedSet.has(String(f.file_id))).length;
-      if (remainingOnPage === 0 && page > 1) {
-        dispatch(setFileListPage(page - 1));
-      } else {
-        loadFiles();
-      }
-    } catch {
-      dispatch(addNotification({
-        type: 'error',
-        message: t('fileList.notify.bulkDeleteFailed'),
-        autoClose: true
-      }));
-    }
-  }, [dispatch, selectedFileIds, loadFiles, files, page]);
+    });
+  }, [dispatch, selectedFileIds, loadFiles, files, page, requestConfirm]);
 
   const sortedFiles = useMemo(() => {
     const statusRank: Record<FileStatus, number> = {
@@ -527,6 +544,7 @@ export function ListView() {
           </div>
         </div>
       </section>
+      {confirmToast}
     </div>
   );
 }
