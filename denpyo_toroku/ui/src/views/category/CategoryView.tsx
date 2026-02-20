@@ -1,13 +1,13 @@
 /**
- * CategoryView - カテゴリ管理画面 (SCR-005)
+ * CategoryView - 伝票分類管理画面 (SCR-005)
  *
  * 機能:
  *  A. SLIPS_CATEGORY ファイル一覧 + AI 分析フロー
  *     1. SLIPS_CATEGORY アップロードファイル一覧（最大5件選択）
  *     2. AI 分析モード選択 (HEADER only / HEADER+LINE)
  *     3. テーブルデザイナー UI（カラム追加/削除/編集）
- *     4. テーブル作成 → カテゴリ登録
- *  B. カテゴリ一覧 CRUD (参照・編集・削除・有効/無効)
+ *     4. テーブル作成 → 伝票分類登録
+ *  B. 伝票分類一覧 CRUD (参照・編集・削除・有効/無効)
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
@@ -675,7 +675,7 @@ function TableDesignerPanel({
 
             {/* 右カラム: フォーム */}
             <div class="ics-category-designer-right">
-              {/* カテゴリ基本情報 */}
+              {/* 伝票分類基本情報 */}
               <div class="ics-card ics-card--flat">
                 <div class="ics-card-header">
                   <span class="oj-typography-heading-xs">{t('category.designer.categoryInfo')}</span>
@@ -907,10 +907,10 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     });
   }, [categories, categorySortDirection, categorySortKey]);
 
-  // カテゴリ一覧ページネーション (client-side)
+  // 伝票分類一覧ページネーション (client-side)
   const categoryPagination = usePagination(sortedCategories, { pageSize: categoryPageSize, initialPage: categoryInitialPage });
 
-  // カテゴリ一覧選択 (useSelection)
+  // 伝票分類一覧選択 (useSelection)
   const categorySelection = useSelection<DenpyoCategory>({
     getItemId: (cat) => String(cat.id),
     isSelectable: (cat) => cat.registration_count === 0,
@@ -1632,7 +1632,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       </>
       )}
 
-      {/* ═══ Section B: カテゴリ一覧 ═══ */}
+      {/* ═══ Section B: 伝票分類一覧 ═══ */}
       {mode === 'management' && (
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">

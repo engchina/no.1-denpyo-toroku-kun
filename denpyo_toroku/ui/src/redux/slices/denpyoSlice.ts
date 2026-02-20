@@ -4,7 +4,7 @@
  * Phase 2: ファイルアップロード + 一覧
  * Phase 3: AI分析
  * Phase 4: DB登録
- * Phase 5: カテゴリ管理
+ * Phase 5: 伝票分類管理
  */
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import type {
@@ -54,7 +54,7 @@ const initialState: DenpyoSliceState = {
   registrationResult: null,
   categories: [],
   isCategoriesLoading: false,
-  // カテゴリ作成フロー (SCR-005 新機能)
+  // 伝票分類作成フロー (SCR-005 新機能)
   slipsCategoryFiles: [],
   slipsCategoryTotal: 0,
   slipsCategoryPage: 1,
@@ -151,7 +151,7 @@ export const registerFile = createAsyncThunk(
   }
 );
 
-// --- カテゴリ管理 ---
+// --- 伝票分類管理 ---
 
 export const fetchCategories = createAsyncThunk(
   'denpyo/fetchCategories',
@@ -183,7 +183,7 @@ export const deleteCategory = createAsyncThunk(
   }
 );
 
-// --- カテゴリ作成フロー (SCR-005 新機能) ---
+// --- 伝票分類作成フロー (SCR-005 新機能) ---
 
 export const fetchSlipsCategoryFiles = createAsyncThunk(
   'denpyo/fetchSlipsCategoryFiles',
@@ -481,7 +481,7 @@ const denpyoSlice = createSlice({
       })
       .addCase(fetchCategories.rejected, (state, action) => {
         state.isCategoriesLoading = false;
-        state.error = action.error.message || 'カテゴリ一覧の取得に失敗しました';
+        state.error = action.error.message || '伝票分類一覧の取得に失敗しました';
       });
 
     builder
@@ -492,7 +492,7 @@ const denpyoSlice = createSlice({
         }
       })
       .addCase(updateCategory.rejected, (state, action) => {
-        state.error = action.error.message || 'カテゴリの更新に失敗しました';
+        state.error = action.error.message || '伝票分類の更新に失敗しました';
       });
 
     builder
@@ -509,10 +509,10 @@ const denpyoSlice = createSlice({
         state.categories = state.categories.filter(c => c.id !== action.payload);
       })
       .addCase(deleteCategory.rejected, (state, action) => {
-        state.error = action.error.message || 'カテゴリの削除に失敗しました';
+        state.error = action.error.message || '伝票分類の削除に失敗しました';
       });
 
-    // カテゴリ作成フロー (SCR-005 新機能)
+    // 伝票分類作成フロー (SCR-005 新機能)
     builder
       .addCase(fetchSlipsCategoryFiles.pending, (state) => {
         state.isSlipsCategoryLoading = true;
@@ -527,7 +527,7 @@ const denpyoSlice = createSlice({
       })
       .addCase(fetchSlipsCategoryFiles.rejected, (state, action) => {
         state.isSlipsCategoryLoading = false;
-        state.error = action.error.message || 'カテゴリファイル一覧の取得に失敗しました';
+        state.error = action.error.message || '伝票分類ファイル一覧の取得に失敗しました';
       });
 
     builder
@@ -555,7 +555,7 @@ const denpyoSlice = createSlice({
       })
       .addCase(createCategoryWithTables.rejected, (state, action) => {
         state.isCategoryCreating = false;
-        state.error = action.error.message || 'カテゴリ作成に失敗しました';
+        state.error = action.error.message || '伝票分類作成に失敗しました';
       });
 
     // Data Search (SCR-006)

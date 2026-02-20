@@ -206,7 +206,7 @@ export interface RegistrationResult {
   inserted_rows?: number;
 }
 
-// --- カテゴリ作成フロー (SCR-005 新機能) ---
+// --- 伝票分類作成フロー (SCR-005 新機能) ---
 
 // SLIPS_CATEGORY files use the existing DenpyoFile shape returned by /api/v1/files
 // (file_id: string, file_name: string as OBJECT_NAME, original_file_name: FILE_NAME, etc.)
@@ -351,11 +351,11 @@ export interface DenpyoSliceState {
   isRegistering: boolean;
   registrationResult: RegistrationResponse | null;
 
-  // カテゴリ管理
+  // 伝票分類管理
   categories: DenpyoCategory[];
   isCategoriesLoading: boolean;
 
-  // カテゴリ作成フロー (SCR-005 新機能)
+  // 伝票分類作成フロー (SCR-005 新機能)
   slipsCategoryFiles: DenpyoFile[];
   slipsCategoryTotal: number;
   slipsCategoryPage: number;
