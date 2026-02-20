@@ -3877,6 +3877,11 @@ html[dir="rtl"] .oracle-icon {
     gap: 10px;
 }
 
+/* Dashboard KPI cards: keep 4 cards filling a single row */
+.ics-dashboard--enhanced .ics-ops-kpiGrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .ics-dashboard--enhanced .ics-ops-kpiCard,
 .ics-stats--enhanced .ics-ops-kpiCard,
 .ics-model-info--enhanced .ics-ops-kpiCard {
@@ -3918,6 +3923,152 @@ html[dir="rtl"] .oracle-icon {
 .ics-model-info--enhanced .ics-ops-kpiCard__meta {
     font-size: 0.79rem;
     color: #627992;
+}
+
+.ics-dashboard-featureGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 10px;
+}
+
+.ics-dashboard-featureCard {
+    border: 1px solid #d6e4f2;
+    border-radius: 10px;
+    background: linear-gradient(160deg, #fafdff 0%, #f1f7fe 100%);
+    padding: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.ics-dashboard-featureCard p {
+    margin: 0;
+    color: #48627f;
+    font-size: 0.81rem;
+    line-height: 1.45;
+}
+
+.ics-dashboard-featureCard__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ics-dashboard-featureCard__head strong {
+    color: #1d446d;
+    font-size: 0.89rem;
+}
+
+.ics-dashboard-featureCard__icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    background: #e4f0fb;
+    color: #1f629f;
+    border: 1px solid #c4d9ed;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.ics-dashboard-featureCard__meta {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    color: #4f6984;
+    font-size: 0.78rem;
+}
+
+.ics-dashboard-featureCard__meta strong {
+    color: #1b436d;
+    font-size: 1rem;
+}
+
+.ics-dashboard-workflow {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ics-dashboard-workflowStep {
+    width: 100%;
+    border: 1px solid #d7e5f3;
+    border-radius: 9px;
+    background: #fff;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: #1f4a76;
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0 11px;
+}
+
+.ics-dashboard-workflowStep:hover {
+    background: #f4f9ff;
+}
+
+.ics-dashboard-workflowStep__index {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: #e3f0fc;
+    border: 1px solid #bed6ec;
+    color: #1f5f9a;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.ics-dashboard-workflowStep__name {
+    flex: 1;
+    text-align: left;
+}
+
+.ics-dashboard-activityList {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ics-dashboard-activityItem {
+    border: 1px solid #dde8f5;
+    border-radius: 9px;
+    padding: 8px 9px;
+    background: #fbfdff;
+}
+
+.ics-dashboard-activityItem__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: #607791;
+    font-size: 0.75rem;
+}
+
+.ics-dashboard-activityItem__body {
+    margin-top: 5px;
+    color: #25486d;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    word-break: break-all;
+}
+
+.ics-dashboard-systemHint {
+    margin-top: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #4f6983;
+    font-size: 0.8rem;
 }
 
 .ics-dashboard--enhanced .ics-ops-grid,

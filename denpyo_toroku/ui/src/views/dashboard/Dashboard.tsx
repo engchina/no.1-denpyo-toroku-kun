@@ -3,17 +3,85 @@
  */
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
+import { setCurrentView } from '../../redux/slices/applicationSlice';
 import { fetchHealth, fetchDashboardStats } from '../../redux/slices/denpyoSlice';
 import { t } from '../../i18n';
 import {
   Activity,
+  ArrowRight,
   CheckCircle,
-  FileUp,
+  Database,
+  FileText,
+  Files,
   FolderOpen,
   Layers,
   RefreshCw,
+  Search,
   Server,
+  Tags,
+  Upload,
 } from 'lucide-react';
+
+interface DashboardActivityItem {
+  type?: string;
+  status?: string;
+  description?: string;
+  file_name?: string;
+  timestamp?: string;
+  created_at?: string;
+}
+
+interface FeatureCard {
+  id: 'upload' | 'fileList' | 'categorySamples' | 'categoryManagement' | 'search';
+  titleKey: Parameters<typeof t>[0];
+  descriptionKey: Parameters<typeof t>[0];
+  metricKey: Parameters<typeof t>[0];
+  metricValue: (stats: any) => number;
+  Icon: any;
+}
+
+const featureCards: FeatureCard[] = [
+  {
+    id: 'upload',
+    titleKey: 'nav.upload',
+    descriptionKey: 'dashboard.feature.upload.description',
+    metricKey: 'dashboard.metric.totalUploads',
+    metricValue: stats => stats?.upload_stats?.total_files ?? 0,
+    Icon: Upload
+  },
+  {
+    id: 'fileList',
+    titleKey: 'nav.fileList',
+    descriptionKey: 'dashboard.feature.fileList.description',
+    metricKey: 'dashboard.metric.totalRegistrations',
+    metricValue: stats => stats?.registration_stats?.total_registrations ?? 0,
+    Icon: FileText
+  },
+  {
+    id: 'categorySamples',
+    titleKey: 'nav.categorySamples',
+    descriptionKey: 'dashboard.feature.categorySamples.description',
+    metricKey: 'dashboard.metric.totalCategories',
+    metricValue: stats => stats?.category_stats?.total_categories ?? 0,
+    Icon: Files
+  },
+  {
+    id: 'categoryManagement',
+    titleKey: 'nav.categoryManagement',
+    descriptionKey: 'dashboard.feature.categoryManagement.description',
+    metricKey: 'dashboard.metric.activeCategories',
+    metricValue: stats => stats?.category_stats?.active_categories ?? 0,
+    Icon: Tags
+  },
+  {
+    id: 'search',
+    titleKey: 'nav.dataSearch',
+    descriptionKey: 'dashboard.feature.search.description',
+    metricKey: 'dashboard.metric.searchableRows',
+    metricValue: stats => stats?.registration_stats?.total_registrations ?? 0,
+    Icon: Search
+  }
+];
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '--';
@@ -51,13 +119,32 @@ export function Dashboard() {
 
   const isRefreshing = isHealthLoading || isDashboardLoading;
   const stats = dashboardStats;
+  const activities = (stats?.recent_activities ?? []) as DashboardActivityItem[];
 
   const statusLabel = health?.status === 'healthy' ? '正常' : health?.status || '不明';
   const StatusIcon = health?.status === 'healthy' ? CheckCircle : Activity;
 
+  const goToView = (viewId: FeatureCard['id']) => {
+    dispatch(setCurrentView(viewId));
+  };
+
+  const getActivityLabel = (item: DashboardActivityItem) => {
+    const type = (item.type || '').toUpperCase();
+    if (type.includes('UPLOAD')) return t('dashboard.activity.upload');
+    if (type.includes('REGISTER')) return t('dashboard.activity.registration');
+    return t('dashboard.activity.other');
+  };
+
+  const getActivityMessage = (item: DashboardActivityItem) => {
+    return item.file_name || item.description || '--';
+  };
+
+  const getActivityAt = (item: DashboardActivityItem) => {
+    return formatDateTime(item.timestamp || item.created_at);
+  };
+
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
-      {/* ヘッダー */}
       <section class="ics-ops-hero">
         <div class="ics-ops-hero__header">
           <div>
@@ -80,7 +167,6 @@ export function Dashboard() {
         </div>
       </section>
 
-      {/* KPI カード */}
       <section class="ics-ops-kpiGrid">
         <article class="ics-ops-kpiCard">
           <div class="ics-ops-kpiCard__label"><Server size={14} />{t('dashboard.card.serviceStatus')}</div>
@@ -92,7 +178,7 @@ export function Dashboard() {
         </article>
 
         <article class="ics-ops-kpiCard">
-          <div class="ics-ops-kpiCard__label"><FileUp size={14} />{t('dashboard.card.totalFiles')}</div>
+          <div class="ics-ops-kpiCard__label"><Upload size={14} />{t('dashboard.card.totalFiles')}</div>
           <div class="ics-ops-kpiCard__value">{stats?.upload_stats?.total_files ?? 0}</div>
           <div class="ics-ops-kpiCard__meta">{t('dashboard.card.thisMonth')}: {stats?.upload_stats?.this_month ?? 0}</div>
         </article>
@@ -108,6 +194,116 @@ export function Dashboard() {
           <div class="ics-ops-kpiCard__value">{stats?.category_stats?.total_categories ?? 0}</div>
           <div class="ics-ops-kpiCard__meta">{t('dashboard.card.activeCategories')}: {stats?.category_stats?.active_categories ?? 0}</div>
         </article>
+      </section>
+
+      <section class="ics-ops-panel">
+        <header class="ics-card-header">
+          <strong>{t('dashboard.featureHub.title')}</strong>
+          <span class="ics-text-muted">{t('dashboard.featureHub.subtitle')}</span>
+        </header>
+        <div class="ics-card-body">
+          <div class="ics-dashboard-featureGrid">
+            {featureCards.map(item => (
+              <article key={item.id} class="ics-dashboard-featureCard">
+                <div class="ics-dashboard-featureCard__head">
+                  <div class="ics-dashboard-featureCard__icon"><item.Icon size={16} /></div>
+                  <strong>{t(item.titleKey)}</strong>
+                </div>
+                <p>{t(item.descriptionKey)}</p>
+                <div class="ics-dashboard-featureCard__meta">
+                  <span>{t(item.metricKey)}</span>
+                  <strong>{item.metricValue(stats)}</strong>
+                </div>
+                <button
+                  class="ics-ops-btn ics-ops-btn--ghost"
+                  type="button"
+                  onClick={() => goToView(item.id)}
+                >
+                  <span>{t('dashboard.feature.open')}</span>
+                  <ArrowRight size={14} />
+                </button>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section class="ics-ops-grid ics-ops-grid--two">
+        <article class="ics-ops-panel">
+          <header class="ics-card-header">
+            <strong>{t('dashboard.workflow.title')}</strong>
+            <span class="ics-text-muted">{t('dashboard.workflow.subtitle')}</span>
+          </header>
+          <div class="ics-card-body">
+            <div class="ics-dashboard-workflow">
+              {featureCards.map((item, index) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  class="ics-dashboard-workflowStep"
+                  onClick={() => goToView(item.id)}
+                >
+                  <span class="ics-dashboard-workflowStep__index">{index + 1}</span>
+                  <span class="ics-dashboard-workflowStep__name">{t(item.titleKey)}</span>
+                  <ArrowRight size={14} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </article>
+
+        <article class="ics-ops-panel">
+          <header class="ics-card-header">
+            <strong>{t('dashboard.activity.title')}</strong>
+            <span class="ics-text-muted">{t('dashboard.activity.subtitle')}</span>
+          </header>
+          <div class="ics-card-body">
+            {activities.length > 0 ? (
+              <div class="ics-dashboard-activityList">
+                {activities.slice(0, 6).map((item, idx) => (
+                  <div key={`${item.created_at || item.timestamp || 'activity'}-${idx}`} class="ics-dashboard-activityItem">
+                    <div class="ics-dashboard-activityItem__head">
+                      <span class="ics-badge ics-badge-info">{getActivityLabel(item)}</span>
+                      <span>{getActivityAt(item)}</span>
+                    </div>
+                    <div class="ics-dashboard-activityItem__body">{getActivityMessage(item)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div class="ics-ops-callout">
+                <div class="ics-ops-callout__title">{t('dashboard.activity.empty')}</div>
+                <p>{t('dashboard.activity.emptyHint')}</p>
+              </div>
+            )}
+          </div>
+        </article>
+      </section>
+
+      <section class="ics-ops-panel">
+        <header class="ics-card-header">
+          <strong>{t('dashboard.system.title')}</strong>
+        </header>
+        <div class="ics-card-body">
+          <div class="ics-ops-inlineStats">
+            <div>
+              <span>{t('dashboard.system.serviceStatus')}</span>
+              <strong>{statusLabel}</strong>
+            </div>
+            <div>
+              <span>{t('dashboard.system.version')}</span>
+              <strong>{health?.version || '--'}</strong>
+            </div>
+            <div>
+              <span>{t('dashboard.system.registeredRows')}</span>
+              <strong>{stats?.registration_stats?.total_registrations ?? 0}</strong>
+            </div>
+          </div>
+          <div class="ics-dashboard-systemHint">
+            <Database size={14} />
+            <span>{t('dashboard.system.hint')}</span>
+          </div>
+        </div>
       </section>
 
     </div>
