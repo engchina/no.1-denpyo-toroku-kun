@@ -1,7 +1,6 @@
 /**
  * Dashboard - 伝票処理状況の概要ダッシュボード
  */
-import { h } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import { fetchHealth, fetchDashboardStats } from '../../redux/slices/denpyoSlice';
@@ -9,13 +8,11 @@ import { t } from '../../i18n';
 import {
   Activity,
   CheckCircle,
-  Clock,
   FileUp,
   FolderOpen,
   Layers,
   RefreshCw,
   Server,
-  XCircle
 } from 'lucide-react';
 
 function formatDateTime(value: string | null | undefined): string {
@@ -25,23 +22,6 @@ function formatDateTime(value: string | null | undefined): string {
   return `${date.toLocaleDateString('ja-JP')} ${date.toLocaleTimeString('ja-JP')}`;
 }
 
-function formatRelativeTime(timestamp: string): string {
-  const now = Date.now();
-  const then = new Date(timestamp).getTime();
-  const diff = Math.floor((now - then) / 1000);
-  if (diff < 60) return `${diff}秒前`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}分前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}時間前`;
-  return `${Math.floor(diff / 86400)}日前`;
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-}
 
 export function Dashboard() {
   const dispatch = useAppDispatch();
@@ -130,50 +110,6 @@ export function Dashboard() {
         </article>
       </section>
 
-      {/* 最近のアクティビティ */}
-      <section class="ics-ops-grid ics-ops-grid--one">
-        <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header oj-flex oj-sm-align-items-center">
-            <Clock size={18} class="oj-sm-margin-2x-end" />
-            <span class="oj-typography-heading-xs">{t('dashboard.recentActivity')}</span>
-          </div>
-          <div class="ics-card-body">
-            {stats?.recent_activities && stats.recent_activities.length > 0 ? (
-              <table class="ics-table">
-                <thead>
-                  <tr>
-                    <th>種別</th>
-                    <th>ファイル名</th>
-                    <th>状態</th>
-                    <th>日時</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats.recent_activities.map((activity) => (
-                    <tr key={activity.id}>
-                      <td>
-                        <span class={`ics-badge ${activity.type === 'UPLOAD' ? 'ics-badge-info' : 'ics-badge-success'}`}>
-                          {activity.type === 'UPLOAD' ? t('dashboard.activity.upload') : t('dashboard.activity.registration')}
-                        </span>
-                      </td>
-                      <td>{activity.file_name}</td>
-                      <td>
-                        {activity.status === 'SUCCESS'
-                          ? <CheckCircle size={14} class="ics-icon-success" />
-                          : <XCircle size={14} class="ics-icon-error" />
-                        }
-                      </td>
-                      <td class="oj-text-color-secondary">{formatRelativeTime(activity.timestamp)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div class="ics-empty-text">{t('dashboard.noData')}</div>
-            )}
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

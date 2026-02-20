@@ -46,8 +46,6 @@ import {
   Database,
   ChevronDown,
   ChevronUp,
-  ChevronLeft,
-  ChevronRight,
   FileText,
   Table2,
   ImageIcon,
@@ -482,112 +480,50 @@ function TableDesigner({
   );
 }
 
-// ─── Image Carousel ───────────────────────────────────────────────────────────
+// ─── Image List ──────────────────────────────────────────────────────────────
 
-function ImageCarousel({ fileIds }: { fileIds: number[] }) {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [imgError, setImgError] = useState(false);
-
-  const total = fileIds.length;
-  const currentFileId = fileIds[currentIndex];
-
-  useEffect(() => {
-    if (total === 0) {
-      setCurrentIndex(0);
-      return;
-    }
-    if (currentIndex >= total) {
-      setCurrentIndex(0);
-    }
-  }, [currentIndex, total]);
+function ImageList({
+  fileIds,
+  onPreview,
+}: {
+  fileIds: number[];
+  onPreview: (fileId: number) => void;
+}) {
+  const [imgErrors, setImgErrors] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
-    setImgError(false);
-  }, [currentFileId]);
-
-  const goPrev = () => {
-    setImgError(false);
-    setCurrentIndex(i => (i - 1 + total) % total);
-  };
-  const goNext = () => {
-    setImgError(false);
-    setCurrentIndex(i => (i + 1) % total);
-  };
+    setImgErrors({});
+  }, [fileIds.join(',')]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '8px' }}>
-      {/* 画像エリア */}
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          background: 'var(--oj-core-bg-secondary, #f5f5f5)',
-          borderRadius: '6px',
-          border: '1px solid var(--oj-core-divider-color, #e0e0e0)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          overflow: 'hidden',
-          position: 'relative',
-        }}
-      >
-        {imgError ? (
-          <div style={{ textAlign: 'center', color: 'var(--oj-text-color-secondary, #888)' }}>
-            <ImageIcon size={32} style={{ marginBottom: '8px', opacity: 0.5 }} />
-            <p style={{ fontSize: '12px' }}>画像を読み込めませんでした</p>
-          </div>
-        ) : (
-          <img
-            src={`/studio/api/v1/files/${currentFileId}/preview`}
-            alt={`分析画像 ${currentIndex + 1}`}
-            onError={() => setImgError(true)}
-            style={{
-              maxWidth: '100%',
-              maxHeight: '100%',
-              objectFit: 'contain',
-              display: 'block',
-            }}
-          />
-        )}
-      </div>
-
-      {/* ナビゲーション */}
-      {total > 1 && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '12px',
-            flexShrink: 0,
-          }}
-        >
+    <div class="ics-category-image-list">
+      {fileIds.map((fileId, idx) => {
+        const hasError = Boolean(imgErrors[fileId]);
+        return (
           <button
             type="button"
-            class="ics-ops-btn ics-ops-btn--ghost"
-            onClick={goPrev}
-            title="前の画像"
+            key={fileId}
+            class="ics-category-image-card"
+            onClick={() => onPreview(fileId)}
+            title={`分析画像 ${idx + 1} をプレビュー`}
           >
-            <ChevronLeft size={16} />
+            <div class="ics-category-image-card__frame">
+              {hasError ? (
+                <div class="ics-category-image-card__error">
+                  <ImageIcon size={30} />
+                  <span>画像を読み込めませんでした</span>
+                </div>
+              ) : (
+                <img
+                  src={`/studio/api/v1/files/${fileId}/preview`}
+                  alt={`分析画像 ${idx + 1}`}
+                  onError={() => setImgErrors(prev => ({ ...prev, [fileId]: true }))}
+                />
+              )}
+            </div>
           </button>
-          <span style={{ fontSize: '13px', color: 'var(--oj-text-color-secondary, #666)' }}>
-            {currentIndex + 1} / {total}
-          </span>
-          <button
-            type="button"
-            class="ics-ops-btn ics-ops-btn--ghost"
-            onClick={goNext}
-            title="次の画像"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      )}
-      {total === 1 && (
-        <p style={{ textAlign: 'center', fontSize: '12px', color: 'var(--oj-text-color-secondary, #888)', margin: 0 }}>
-          1 / 1
-        </p>
-      )}
+        );
+      })}
     </div>
   );
 }
@@ -623,6 +559,16 @@ function TableDesignerPanel({
 
   const hasLine = analysisResult.analysis_mode === 'header_line';
   const fileIds = analysisResult.analyzed_file_ids ?? [];
+  const [previewFileId, setPreviewFileId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!previewFileId) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPreviewFileId(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewFileId]);
 
   const handleConfirm = () => {
     setValidationError('');
@@ -687,31 +633,25 @@ function TableDesignerPanel({
           </button>
         </div>
 
-        <div class="ics-card-body">
+        <div class="ics-card-body ics-card-body--designer">
           {/* 2カラムレイアウト: 左=画像プレビュー、右=フォーム */}
           <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: fileIds.length > 0 ? '1fr 2fr' : '1fr',
-              gap: '24px',
-              alignItems: 'start',
-            }}
+            class="ics-category-designer-layout"
+            style={{ gridTemplateColumns: fileIds.length > 0 ? '1fr 2fr' : '1fr' }}
           >
             {/* 左カラム: 画像プレビュー */}
             {fileIds.length > 0 && (
-              <div style={{ minHeight: '420px', display: 'flex', flexDirection: 'column' }}>
+              <div class="ics-category-image-panel">
                 <p class="ics-form-hint" style={{ marginBottom: '8px' }}>
                   <ImageIcon size={12} style={{ display: 'inline', marginRight: '4px' }} />
                   分析した画像（{fileIds.length}件）
                 </p>
-                <div style={{ flex: 1 }}>
-                  <ImageCarousel fileIds={fileIds} />
-                </div>
+                <ImageList fileIds={fileIds} onPreview={setPreviewFileId} />
               </div>
             )}
 
             {/* 右カラム: フォーム */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div class="ics-category-designer-right">
               {/* カテゴリ基本情報 */}
               <div class="ics-card ics-card--flat">
                 <div class="ics-card-header">
@@ -825,6 +765,30 @@ function TableDesignerPanel({
           </div>
         </div>
       </div>
+      {previewFileId && (
+        <div class="ics-modal-overlay" onClick={() => setPreviewFileId(null)}>
+          <div class="ics-modal ics-modal--xl ics-fileListView__previewModal" onClick={(e: Event) => e.stopPropagation()}>
+            <div class="ics-modal__header">
+              <h3>分析画像プレビュー</h3>
+              <button
+                type="button"
+                class="ics-ops-btn ics-ops-btn--ghost"
+                onClick={() => setPreviewFileId(null)}
+                title={t('common.close')}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div class="ics-modal__body ics-fileListView__previewBody">
+              <iframe
+                src={`/studio/api/v1/files/${previewFileId}/preview`}
+                title="分析画像プレビュー"
+                class="ics-fileListView__previewFrame"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

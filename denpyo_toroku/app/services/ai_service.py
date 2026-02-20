@@ -229,12 +229,49 @@ class AIService:
         return json.loads(repaired)
 
     def _parse_json_with_regeneration(self, operation_name: str, generate_text_func, max_attempts: int) -> Any:
-        """JSON 解析失敗時に AI 再生成して再試行する"""
-        last_error = None
+        """JSON 解析失敗時に AI 再生成して再試行する
+
+        空レスポンス・不正JSON・生成エラーのいずれも再試行対象とする。
+        """
+        last_error: Optional[Exception] = None
         last_text = ""
         for attempt in range(1, max_attempts + 1):
-            result_text = generate_text_func()
+            try:
+                result_text = generate_text_func()
+            except Exception as gen_error:
+                # 生成自体のエラー（API障害など）も再試行対象
+                last_error = gen_error
+                if attempt < max_attempts:
+                    logger.warning(
+                        "%s: AI生成エラー。再生成を実行します (%d/%d): %s",
+                        operation_name, attempt, max_attempts, str(gen_error)[:200]
+                    )
+                    continue
+                else:
+                    logger.error(
+                        "%s: AI生成エラー。再試行上限に到達: %s",
+                        operation_name, str(gen_error)[:200]
+                    )
+                    raise gen_error
+
             last_text = result_text
+
+            # 空レスポンスのチェック（JSONDecodeError より先に検知）
+            if not result_text or not result_text.strip():
+                last_error = json.JSONDecodeError("AI returned empty response", "", 0)
+                if attempt < max_attempts:
+                    logger.warning(
+                        "%s: AI応答が空です。再生成を実行します (%d/%d)",
+                        operation_name, attempt, max_attempts
+                    )
+                    continue
+                else:
+                    logger.error(
+                        "%s: AI応答が空のまま再試行上限に到達",
+                        operation_name
+                    )
+                    raise last_error
+
             try:
                 return self._extract_json(result_text)
             except json.JSONDecodeError as e:
@@ -500,6 +537,12 @@ class AIService:
                         payload = self._get_tool_arguments_from_chat_response(chat_response, function_name)
                         if not payload:
                             payload = self._get_text_from_chat_response(chat_response)
+                        # 空レスポンスの検出とログ出力
+                        if not payload or not payload.strip():
+                            logger.warning(
+                                "classify_invoice_structured: 構造化出力が空。chat_response=%s",
+                                getattr(chat_response, '__dict__', str(chat_response))[:500]
+                            )
                         state["last_payload"] = payload
                         return payload
                     except Exception as e:
@@ -510,6 +553,12 @@ class AIService:
                 response = self._retry_api_call("classify_invoice", client.chat, fallback_chat_detail)
                 chat_response = response.data.chat_response
                 payload = self._get_text_from_chat_response(chat_response)
+                # 空レスポンスの検出とログ出力
+                if not payload or not payload.strip():
+                    logger.warning(
+                        "classify_invoice: テキスト出力が空。chat_response=%s",
+                        getattr(chat_response, '__dict__', str(chat_response))[:500]
+                    )
                 state["last_payload"] = payload
                 return payload
 
@@ -573,6 +622,12 @@ class AIService:
                         payload = self._get_tool_arguments_from_chat_response(chat_response, function_name)
                         if not payload:
                             payload = self._get_text_from_chat_response(chat_response)
+                        # 空レスポンスの検出とログ出力
+                        if not payload or not payload.strip():
+                            logger.warning(
+                                "classify_invoice_repair_structured: 修復出力が空。chat_response=%s",
+                                getattr(chat_response, '__dict__', str(chat_response))[:500]
+                            )
                         state["last_payload"] = payload
                         return payload
                     except Exception as e:
@@ -582,6 +637,12 @@ class AIService:
                 response = self._retry_api_call("classify_invoice_repair", client.chat, repair_text_detail)
                 chat_response = response.data.chat_response
                 payload = self._get_text_from_chat_response(chat_response)
+                # 空レスポンスの検出とログ出力
+                if not payload or not payload.strip():
+                    logger.warning(
+                        "classify_invoice_repair: 修復テキスト出力が空。chat_response=%s",
+                        getattr(chat_response, '__dict__', str(chat_response))[:500]
+                    )
                 state["last_payload"] = payload
                 return payload
 
