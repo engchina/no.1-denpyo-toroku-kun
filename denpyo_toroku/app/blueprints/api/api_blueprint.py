@@ -2223,7 +2223,7 @@ def analyze_slips_for_category():
         g.response.add_error_message("file_idsは1〜5件のIDリストを指定してください")
         return jsonify(g.response.get_result()), 400
 
-    if analysis_mode not in ("header", "header_line"):
+    if analysis_mode not in ("header_only", "header_line"):
         analysis_mode = "header_line"
 
     db_service = DatabaseService()
@@ -2342,12 +2342,15 @@ def analyze_slips_for_category():
     }
     category_guess_en = category_map.get(category_guess, "slip")
 
+    analyzed_file_ids = [rec.get("id") for rec in file_records if rec.get("id")]
+
     result = {
         "category_guess": category_guess,
         "category_guess_en": category_guess_en,
         "analysis_mode": analysis_mode,
         "header_columns": header_columns,
         "line_columns": line_columns,
+        "analyzed_file_ids": analyzed_file_ids,
     }
     g.response.set_data(result)
     return jsonify(g.response.get_result())

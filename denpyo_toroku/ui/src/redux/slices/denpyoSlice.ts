@@ -195,7 +195,7 @@ export const fetchSlipsCategoryFiles = createAsyncThunk(
 
 export const analyzeSlipsForCategory = createAsyncThunk(
   'denpyo/analyzeSlipsForCategory',
-  async (params: { fileIds: number[]; analysisMode: 'header' | 'header_line' }) => {
+  async (params: { fileIds: number[]; analysisMode: 'header_only' | 'header_line' }) => {
     return await apiPostWithTimeout<CategoryAnalysisResult>(
       '/api/v1/categories/analyze-slips',
       { file_ids: params.fileIds, analysis_mode: params.analysisMode },

@@ -9,7 +9,7 @@
  *     4. テーブル作成 → カテゴリ登録
  *  B. カテゴリ一覧 CRUD (参照・編集・削除・有効/無効)
  */
-import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import {
   fetchCategories,
@@ -46,8 +46,11 @@ import {
   Database,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   FileText,
   Table2,
+  ImageIcon,
 } from 'lucide-react';
 
 // ─── Utils ───────────────────────────────────────────────────────────────────
@@ -199,10 +202,10 @@ function AnalysisModeModal({
   onClose,
 }: {
   selectedCount: number;
-  onConfirm: (mode: 'header' | 'header_line') => void;
+  onConfirm: (mode: 'header_only' | 'header_line') => void;
   onClose: () => void;
 }) {
-  const [mode, setMode] = useState<'header' | 'header_line'>('header');
+  const [mode, setMode] = useState<'header_only' | 'header_line'>('header_only');
 
   return (
     <div class="ics-modal-overlay" onClick={onClose}>
@@ -222,9 +225,9 @@ function AnalysisModeModal({
               <input
                 type="radio"
                 name="analysisMode"
-                value="header"
-                checked={mode === 'header'}
-                onChange={() => setMode('header')}
+                value="header_only"
+                checked={mode === 'header_only'}
+                onChange={() => setMode('header_only')}
               />
               <span class="ics-radio-text">
                 <strong>{t('category.analyze.modeHeaderOnly')}</strong>
@@ -479,9 +482,119 @@ function TableDesigner({
   );
 }
 
-// ─── Table Designer Modal ─────────────────────────────────────────────────────
+// ─── Image Carousel ───────────────────────────────────────────────────────────
 
-function TableDesignerModal({
+function ImageCarousel({ fileIds }: { fileIds: number[] }) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [imgError, setImgError] = useState(false);
+
+  const total = fileIds.length;
+  const currentFileId = fileIds[currentIndex];
+
+  useEffect(() => {
+    if (total === 0) {
+      setCurrentIndex(0);
+      return;
+    }
+    if (currentIndex >= total) {
+      setCurrentIndex(0);
+    }
+  }, [currentIndex, total]);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [currentFileId]);
+
+  const goPrev = () => {
+    setImgError(false);
+    setCurrentIndex(i => (i - 1 + total) % total);
+  };
+  const goNext = () => {
+    setImgError(false);
+    setCurrentIndex(i => (i + 1) % total);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '8px' }}>
+      {/* 画像エリア */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          background: 'var(--oj-core-bg-secondary, #f5f5f5)',
+          borderRadius: '6px',
+          border: '1px solid var(--oj-core-divider-color, #e0e0e0)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          position: 'relative',
+        }}
+      >
+        {imgError ? (
+          <div style={{ textAlign: 'center', color: 'var(--oj-text-color-secondary, #888)' }}>
+            <ImageIcon size={32} style={{ marginBottom: '8px', opacity: 0.5 }} />
+            <p style={{ fontSize: '12px' }}>画像を読み込めませんでした</p>
+          </div>
+        ) : (
+          <img
+            src={`/studio/api/v1/files/${currentFileId}/preview`}
+            alt={`分析画像 ${currentIndex + 1}`}
+            onError={() => setImgError(true)}
+            style={{
+              maxWidth: '100%',
+              maxHeight: '100%',
+              objectFit: 'contain',
+              display: 'block',
+            }}
+          />
+        )}
+      </div>
+
+      {/* ナビゲーション */}
+      {total > 1 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '12px',
+            flexShrink: 0,
+          }}
+        >
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost"
+            onClick={goPrev}
+            title="前の画像"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <span style={{ fontSize: '13px', color: 'var(--oj-text-color-secondary, #666)' }}>
+            {currentIndex + 1} / {total}
+          </span>
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost"
+            onClick={goNext}
+            title="次の画像"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+      {total === 1 && (
+        <p style={{ textAlign: 'center', fontSize: '12px', color: 'var(--oj-text-color-secondary, #888)', margin: 0 }}>
+          1 / 1
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Table Designer Inline Panel ─────────────────────────────────────────────
+
+function TableDesignerPanel({
   analysisResult,
   onConfirm,
   onClose,
@@ -509,6 +622,7 @@ function TableDesignerModal({
   const [validationError, setValidationError] = useState('');
 
   const hasLine = analysisResult.analysis_mode === 'header_line';
+  const fileIds = analysisResult.analyzed_file_ids ?? [];
 
   const handleConfirm = () => {
     setValidationError('');
@@ -554,124 +668,164 @@ function TableDesignerModal({
   };
 
   return (
-    <div class="ics-modal-overlay" onClick={onClose}>
-      <div
-        class="ics-modal ics-modal--xl"
-        style={{ maxWidth: '900px', maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-        onClick={(e: Event) => e.stopPropagation()}
-      >
-        <div class="ics-modal__header">
+    <section class="ics-ops-grid ics-ops-grid--one">
+      <div class="ics-card ics-ops-panel">
+        {/* パネルヘッダー */}
+        <div class="ics-card-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Database size={18} />
-            <h3>{t('category.designer.title')}</h3>
+            <span class="oj-typography-heading-xs">{t('category.designer.title')}</span>
           </div>
-          <button type="button" class="ics-ops-btn ics-ops-btn--ghost" onClick={onClose} disabled={isCreating}>
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost"
+            onClick={onClose}
+            disabled={isCreating}
+            title={t('common.cancel')}
+          >
             <X size={16} />
           </button>
         </div>
 
-        <div class="ics-modal__body" style={{ overflowY: 'auto', flex: 1 }}>
-          {/* カテゴリ基本情報 */}
-          <div class="ics-card ics-card--flat">
-            <div class="ics-card-header">
-              <span class="oj-typography-heading-xs">{t('category.designer.categoryInfo')}</span>
-            </div>
-            <div class="ics-card-body">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                <div class="ics-form-group">
-                  <label class="ics-form-label">{t('category.col.name')} *</label>
-                  <input
-                    type="text"
-                    class="ics-form-input"
-                    value={categoryName}
-                    onInput={(e: Event) => setCategoryName((e.target as HTMLInputElement).value)}
-                    placeholder={t('category.designer.categoryNamePlaceholder')}
-                  />
-                </div>
-                <div class="ics-form-group">
-                  <label class="ics-form-label">{t('category.col.nameEn')}</label>
-                  <input
-                    type="text"
-                    class="ics-form-input"
-                    value={categoryNameEn}
-                    onInput={(e: Event) => setCategoryNameEn((e.target as HTMLInputElement).value)}
-                    placeholder="invoice"
-                  />
+        <div class="ics-card-body">
+          {/* 2カラムレイアウト: 左=画像プレビュー、右=フォーム */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: fileIds.length > 0 ? '1fr 2fr' : '1fr',
+              gap: '24px',
+              alignItems: 'start',
+            }}
+          >
+            {/* 左カラム: 画像プレビュー */}
+            {fileIds.length > 0 && (
+              <div style={{ minHeight: '420px', display: 'flex', flexDirection: 'column' }}>
+                <p class="ics-form-hint" style={{ marginBottom: '8px' }}>
+                  <ImageIcon size={12} style={{ display: 'inline', marginRight: '4px' }} />
+                  分析した画像（{fileIds.length}件）
+                </p>
+                <div style={{ flex: 1 }}>
+                  <ImageCarousel fileIds={fileIds} />
                 </div>
               </div>
-              <div class="ics-form-group">
-                <label class="ics-form-label">{t('category.col.description')}</label>
-                <textarea
-                  class="ics-form-textarea"
-                  value={description}
-                  rows={2}
-                  onInput={(e: Event) => setDescription((e.target as HTMLTextAreaElement).value)}
-                  placeholder={t('category.designer.descriptionPlaceholder')}
+            )}
+
+            {/* 右カラム: フォーム */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* カテゴリ基本情報 */}
+              <div class="ics-card ics-card--flat">
+                <div class="ics-card-header">
+                  <span class="oj-typography-heading-xs">{t('category.designer.categoryInfo')}</span>
+                </div>
+                <div class="ics-card-body">
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    <div class="ics-form-group">
+                      <label class="ics-form-label">{t('category.col.name')} *</label>
+                      <input
+                        type="text"
+                        class="ics-form-input"
+                        value={categoryName}
+                        onInput={(e: Event) => setCategoryName((e.target as HTMLInputElement).value)}
+                        placeholder={t('category.designer.categoryNamePlaceholder')}
+                      />
+                    </div>
+                    <div class="ics-form-group">
+                      <label class="ics-form-label">{t('category.col.nameEn')}</label>
+                      <input
+                        type="text"
+                        class="ics-form-input"
+                        value={categoryNameEn}
+                        onInput={(e: Event) => setCategoryNameEn((e.target as HTMLInputElement).value)}
+                        placeholder="invoice"
+                      />
+                    </div>
+                  </div>
+                  <div class="ics-form-group">
+                    <label class="ics-form-label">{t('category.col.description')}</label>
+                    <textarea
+                      class="ics-form-textarea"
+                      value={description}
+                      rows={2}
+                      onInput={(e: Event) => setDescription((e.target as HTMLTextAreaElement).value)}
+                      placeholder={t('category.designer.descriptionPlaceholder')}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* テーブルデザイナー タブ */}
+              {hasLine && (
+                <div class="ics-tabs" style={{ marginBottom: '8px' }}>
+                  <button
+                    type="button"
+                    class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
+                    onClick={() => setActiveTab('header')}
+                  >
+                    <FileText size={14} />
+                    {t('category.designer.tabHeader')}
+                  </button>
+                  <button
+                    type="button"
+                    class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
+                    onClick={() => setActiveTab('line')}
+                  >
+                    <Table2 size={14} />
+                    {t('category.designer.tabLine')}
+                  </button>
+                </div>
+              )}
+
+              {(!hasLine || activeTab === 'header') && (
+                <TableDesigner
+                  label={t('category.designer.headerTable')}
+                  tableName={headerTableName}
+                  columns={headerColumns}
+                  onTableNameChange={setHeaderTableName}
+                  onColumnsChange={setHeaderColumns}
                 />
+              )}
+
+              {hasLine && activeTab === 'line' && (
+                <TableDesigner
+                  label={t('category.designer.lineTable')}
+                  tableName={lineTableName}
+                  columns={lineColumns}
+                  onTableNameChange={setLineTableName}
+                  onColumnsChange={setLineColumns}
+                />
+              )}
+
+              {validationError && (
+                <div class="ics-alert ics-alert--error">
+                  {validationError}
+                </div>
+              )}
+
+              {/* アクションボタン */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px' }}>
+                <button
+                  type="button"
+                  class="ics-ops-btn ics-ops-btn--ghost"
+                  onClick={onClose}
+                  disabled={isCreating}
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  class="ics-ops-btn ics-ops-btn--primary"
+                  onClick={handleConfirm}
+                  disabled={isCreating}
+                >
+                  {isCreating ? <Loader2 size={14} class="ics-spin" /> : <Database size={14} />}
+                  <span>{isCreating ? t('category.designer.creating') : t('category.designer.createTable')}</span>
+                </button>
               </div>
             </div>
           </div>
-
-          {/* テーブルデザイナー タブ */}
-          {hasLine && (
-            <div class="ics-tabs" style={{ marginBottom: '8px' }}>
-              <button
-                type="button"
-                class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
-                onClick={() => setActiveTab('header')}
-              >
-                <FileText size={14} />
-                {t('category.designer.tabHeader')}
-              </button>
-              <button
-                type="button"
-                class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
-                onClick={() => setActiveTab('line')}
-              >
-                <Table2 size={14} />
-                {t('category.designer.tabLine')}
-              </button>
-            </div>
-          )}
-
-          {(!hasLine || activeTab === 'header') && (
-            <TableDesigner
-              label={t('category.designer.headerTable')}
-              tableName={headerTableName}
-              columns={headerColumns}
-              onTableNameChange={setHeaderTableName}
-              onColumnsChange={setHeaderColumns}
-            />
-          )}
-
-          {hasLine && activeTab === 'line' && (
-            <TableDesigner
-              label={t('category.designer.lineTable')}
-              tableName={lineTableName}
-              columns={lineColumns}
-              onTableNameChange={setLineTableName}
-              onColumnsChange={setLineColumns}
-            />
-          )}
-
-          {validationError && (
-            <div class="ics-alert ics-alert--error" style={{ marginTop: '12px' }}>
-              {validationError}
-            </div>
-          )}
-        </div>
-
-        <div class="ics-modal__footer">
-          <button type="button" class="ics-ops-btn ics-ops-btn--ghost" onClick={onClose} disabled={isCreating}>
-            {t('common.cancel')}
-          </button>
-          <button type="button" class="ics-ops-btn ics-ops-btn--primary" onClick={handleConfirm} disabled={isCreating}>
-            {isCreating ? <Loader2 size={14} class="ics-spin" /> : <Database size={14} />}
-            <span>{isCreating ? t('category.designer.creating') : t('category.designer.createTable')}</span>
-          </button>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -680,6 +834,7 @@ function TableDesignerModal({
 export function CategoryView() {
   const dispatch = useAppDispatch();
   const { requestConfirm, confirmToast } = useToastConfirm();
+  const analysisPanelRef = useRef<HTMLDivElement>(null);
 
   // Redux state
   const categories = useAppSelector(state => state.denpyo.categories);
@@ -696,7 +851,6 @@ export function CategoryView() {
   const [editTarget, setEditTarget] = useState<DenpyoCategory | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
-  const [showDesignerModal, setShowDesignerModal] = useState(false);
 
   // Load data on mount
   const loadSlipsFiles = useCallback(() => {
@@ -712,10 +866,10 @@ export function CategoryView() {
     loadCategories();
   }, [loadSlipsFiles, loadCategories]);
 
-  // Show designer when analysis result arrives
+  // 分析結果が届いたらパネルへスクロール
   useEffect(() => {
-    if (categoryAnalysisResult) {
-      setShowDesignerModal(true);
+    if (categoryAnalysisResult && analysisPanelRef.current) {
+      analysisPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [categoryAnalysisResult]);
 
@@ -753,7 +907,7 @@ export function CategoryView() {
     setShowAnalysisModeModal(true);
   };
 
-  const handleAnalysisModeConfirm = async (mode: 'header' | 'header_line') => {
+  const handleAnalysisModeConfirm = async (mode: 'header_only' | 'header_line') => {
     setShowAnalysisModeModal(false);
     try {
       await dispatch(
@@ -774,7 +928,6 @@ export function CategoryView() {
   };
 
   const handleDesignerClose = () => {
-    setShowDesignerModal(false);
     dispatch(clearCategoryAnalysis());
     setSelectedFileIds(new Set());
   };
@@ -789,7 +942,6 @@ export function CategoryView() {
           autoClose: true,
         })
       );
-      setShowDesignerModal(false);
       dispatch(clearCategoryAnalysis());
       setSelectedFileIds(new Set());
       loadCategories();
@@ -922,7 +1074,7 @@ export function CategoryView() {
               <button
                 class="ics-ops-btn ics-ops-btn--primary"
                 onClick={handleAnalyzeClick}
-                disabled={selectedFileIds.size === 0 || isCategoryAnalyzing}
+                disabled={selectedFileIds.size === 0 || isCategoryAnalyzing || !!categoryAnalysisResult}
               >
                 {isCategoryAnalyzing ? (
                   <Loader2 size={14} class="ics-spin" />
@@ -1028,6 +1180,18 @@ export function CategoryView() {
           </div>
         </div>
       </section>
+
+      {/* ═══ Section: AI分析結果 テーブルデザイナー（インラインパネル） ═══ */}
+      {categoryAnalysisResult && (
+        <div ref={analysisPanelRef}>
+          <TableDesignerPanel
+            analysisResult={categoryAnalysisResult}
+            onConfirm={handleCreateCategory}
+            onClose={handleDesignerClose}
+            isCreating={isCategoryCreating}
+          />
+        </div>
+      )}
 
       {/* ═══ Section B: カテゴリ一覧 ═══ */}
       <section class="ics-ops-grid ics-ops-grid--one">
@@ -1142,15 +1306,6 @@ export function CategoryView() {
           selectedCount={selectedFileIds.size}
           onConfirm={handleAnalysisModeConfirm}
           onClose={() => setShowAnalysisModeModal(false)}
-        />
-      )}
-
-      {showDesignerModal && categoryAnalysisResult && (
-        <TableDesignerModal
-          analysisResult={categoryAnalysisResult}
-          onConfirm={handleCreateCategory}
-          onClose={handleDesignerClose}
-          isCreating={isCategoryCreating}
         />
       )}
 

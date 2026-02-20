@@ -225,9 +225,10 @@ export interface TableColumnDef {
 export interface CategoryAnalysisResult {
   category_guess: string;
   category_guess_en: string;
-  analysis_mode: 'header' | 'header_line';
+  analysis_mode: 'header_only' | 'header_line';
   header_columns: TableColumnDef[];
   line_columns: TableColumnDef[];
+  analyzed_file_ids?: number[];
 }
 
 export interface CategoryCreateRequest {
