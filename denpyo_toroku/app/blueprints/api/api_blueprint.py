@@ -1675,7 +1675,31 @@ def preview_file(file_id: int):
 
     try:
         db_service = DatabaseService()
-        file_record = db_service.get_file_by_id(file_id)
+        upload_kind = _normalize_text(request.args.get("upload_kind"), "").lower()
+        if upload_kind not in ("raw", "category"):
+            upload_kind = ""
+
+        if upload_kind == "category":
+            slips_rows = db_service.get_slips_category_files_by_ids([file_id])
+            slips_row = slips_rows[0] if slips_rows else None
+            file_record = {
+                "id": slips_row.get("id"),
+                "original_file_name": slips_row.get("file_name", ""),
+                "object_storage_path": slips_row.get("object_name", ""),
+                "content_type": slips_row.get("content_type", "application/octet-stream"),
+            } if slips_row else None
+        elif upload_kind == "raw":
+            slips_rows = db_service.get_slips_raw_files_by_ids([file_id])
+            slips_row = slips_rows[0] if slips_rows else None
+            file_record = {
+                "id": slips_row.get("id"),
+                "original_file_name": slips_row.get("file_name", ""),
+                "object_storage_path": slips_row.get("object_name", ""),
+                "content_type": slips_row.get("content_type", "application/octet-stream"),
+            } if slips_row else None
+        else:
+            file_record = db_service.get_file_by_id(file_id)
+
         if not file_record:
             g.response.add_error_message("ファイルが見つかりません")
             return jsonify(g.response.get_result()), 404
@@ -1944,9 +1968,9 @@ def analyze_file(file_id: int):
             g.response.set_data({"success": False, "message": "ファイルが見つかりません"})
             return jsonify(g.response.get_result()), 404
 
-        # 2. ステータスチェック（UPLOADED / ERROR のみ分析可能）
+        # 2. ステータスチェック（UPLOADED / ERROR / ANALYZED のみ分析可能）
         current_status = file_record.get("status", "")
-        if current_status not in ("UPLOADED", "ERROR"):
+        if current_status not in ("UPLOADED", "ERROR", "ANALYZED"):
             g.response.set_data({
                 "success": False,
                 "message": f"このファイルは分析できません（現在のステータス: {current_status}）"
@@ -2053,6 +2077,12 @@ def analyze_file(file_id: int):
                 "header_ddl": ddl_suggestion.get("header_ddl", ""),
                 "line_ddl": ddl_suggestion.get("line_ddl", ""),
             },
+            "table_schema": {
+                "header_table_name": table_schema.get("header_table_name", ""),
+                "line_table_name": table_schema.get("line_table_name", ""),
+                "header_columns": table_schema.get("header_columns", []),
+                "line_columns": table_schema.get("line_columns", []),
+            },
         }
 
         g.response.set_data(result)
@@ -2092,7 +2122,7 @@ def _validate_ddl(ddl: str) -> Optional[str]:
 @api_blueprint.route("/api/v1/files/<int:file_id>/register", methods=["POST"])
 def register_file(file_id: int):
     """DB登録: DDL実行 + カテゴリ登録 + 登録レコード作成"""
-    db_service = g.db_service
+    db_service = DatabaseService()
     user = session.get("user", "")
 
     # --- ファイル存在確認 ---

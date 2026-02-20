@@ -631,7 +631,7 @@ export function ListView() {
             </div>
             <div class="ics-modal__body ics-fileListView__previewBody">
               <iframe
-                src={`/studio/api/v1/files/${previewTarget.fileId}/preview`}
+                src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=raw`}
                 title={previewTarget.fileName || t('fileList.previewFile')}
                 class="ics-fileListView__previewFrame"
               />

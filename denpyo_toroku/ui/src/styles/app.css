@@ -5240,83 +5240,33 @@ html[dir="rtl"] .oracle-icon {
     background: #fef2f2;
 }
 
-/* ─── Toast Confirm Dialog ──────────────────────────────────────────────────── */
-/* .ics-modal と完全に同じデザイン言語・数値で統一 */
+/* ─── Toast Confirm Modal ───────────────────────────────────────────────────── */
+/* AnalysisModeModal と同じ ics-modal 構造を利用 */
 
-@keyframes ics-toast-slide-in {
-    from {
-        opacity: 0;
-        transform: translateX(16px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
+.ics-toast-confirm-modal {
+    max-height: none;
 }
 
-.ics-toast-confirm {
-    position: fixed;
-    top: 70px;
-    right: 20px;
-    z-index: 9999;
-    width: 420px;
-    max-width: calc(100vw - 40px);
-    background: #fff;
-    border-radius: 12px;                        /* = .ics-modal */
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15); /* = .ics-modal */
-    overflow: hidden;
-    animation: ics-toast-slide-in 0.2s ease-out;
-}
-
-/* = .ics-modal__header */
-.ics-toast-confirm__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;                         /* = .ics-modal__header */
-    border-bottom: 1px solid #eceef1;           /* = .ics-modal__header */
-}
-
-/* アイコン＋メッセージをまとめるグループ */
-.ics-toast-confirm__title {
+.ics-toast-confirm-modal__title {
     display: flex;
     align-items: center;
     gap: 8px;
     min-width: 0;
 }
 
-.ics-toast-confirm__icon {
+.ics-toast-confirm-modal__icon {
     flex-shrink: 0;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-}
-
-/* = .ics-modal__header h3 */
-.ics-toast-confirm__message {
-    margin: 0;
-    font-size: 1.1rem;                          /* = .ics-modal__header h3 */
-    font-weight: 600;                           /* = .ics-modal__header h3 */
-    color: var(--aai-neutral-dark-2);           /* = .ics-modal__header h3 */
-    line-height: 1.4;
-}
-
-/* = .ics-modal__footer */
-.ics-toast-confirm__footer {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 10px;                                  /* = .ics-modal__footer */
-    padding: 14px 20px;                         /* = .ics-modal__footer */
-    border-top: 1px solid #eceef1;             /* = .ics-modal__footer */
 }
 
 /* Danger ボタンに赤ボーダーを付与 */
-.ics-toast-confirm .ics-ops-btn--ghost.ics-ops-btn--danger {
+.ics-toast-confirm-modal .ics-ops-btn--ghost.ics-ops-btn--danger {
     border-color: #fdbdbe;
     color: #ce2c31;
 }
 
-.ics-toast-confirm .ics-ops-btn--ghost.ics-ops-btn--danger:hover:not(:disabled) {
+.ics-toast-confirm-modal .ics-ops-btn--ghost.ics-ops-btn--danger:hover:not(:disabled) {
     background: #fef2f2;
     border-color: #f4a9aa;
 }

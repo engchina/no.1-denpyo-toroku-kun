@@ -23,6 +23,7 @@ import {
   clearCategoryAnalysis,
   setSlipsCategoryPage,
   setSlipsCategoryPageSize,
+  fetchTableDataByName,
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import Pagination from '../../components/Pagination';
@@ -31,6 +32,7 @@ import { useSelection } from '../../hooks/useSelection';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
 import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
+import { apiPost } from '../../utils/apiUtils';
 import type {
   DenpyoCategory,
   DenpyoFile,
@@ -123,6 +125,46 @@ type CategorySortKey =
   | 'registration_count'
   | 'is_active'
   | 'created_at';
+type PreviewTabType = 'header' | 'line';
+
+function compareValues(a: unknown, b: unknown): number {
+  if (a === b) return 0;
+  if (a === null || a === undefined) return -1;
+  if (b === null || b === undefined) return 1;
+
+  if (typeof a === 'number' && typeof b === 'number') {
+    return a - b;
+  }
+
+  const aDate = new Date(String(a)).getTime();
+  const bDate = new Date(String(b)).getTime();
+  if (!Number.isNaN(aDate) && !Number.isNaN(bDate)) {
+    return aDate - bDate;
+  }
+
+  const aNum = Number(a);
+  const bNum = Number(b);
+  if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) {
+    return aNum - bNum;
+  }
+
+  return String(a).localeCompare(String(b), 'ja');
+}
+
+function getDefaultDataSortColumn(columns: string[]): string {
+  if (!columns.length) return '';
+  const target = new Set(['created_at', 'uploaded_at', 'create_time', 'upload_time', 'created_date', 'uploaded_date']);
+  const matched = columns.find((col) => target.has(col.trim().toLowerCase()));
+  return matched || columns[0];
+}
+
+function formatCellValue(value: any): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
 
 // ─── Category Edit Modal (existing CRUD) ─────────────────────────────────────
 
@@ -538,7 +580,7 @@ function ImageList({
                 </div>
               ) : (
                 <img
-                  src={`/studio/api/v1/files/${fileId}/preview`}
+                  src={`/studio/api/v1/files/${fileId}/preview?upload_kind=category`}
                   alt={`分析画像 ${idx + 1}`}
                   onError={() => setImgErrors(prev => ({ ...prev, [fileId]: true }))}
                 />
@@ -804,7 +846,7 @@ function TableDesignerPanel({
             </div>
             <div class="ics-modal__body ics-fileListView__previewBody">
               <iframe
-                src={`/studio/api/v1/files/${previewFileId}/preview`}
+                src={`/studio/api/v1/files/${previewFileId}/preview?upload_kind=category`}
                 title="分析画像プレビュー"
                 class="ics-fileListView__previewFrame"
               />
@@ -838,6 +880,8 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const categoryAnalysisResult = useAppSelector(state => state.denpyo.categoryAnalysisResult);
   const isCategoryAnalyzing = useAppSelector(state => state.denpyo.isCategoryAnalyzing);
   const isCategoryCreating = useAppSelector(state => state.denpyo.isCategoryCreating);
+  const tableBrowseResult = useAppSelector(state => state.denpyo.tableBrowseResult);
+  const isTableBrowsing = useAppSelector(state => state.denpyo.isTableBrowsing);
 
   // Local state
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
@@ -852,6 +896,15 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const [slipsSortDirection, setSlipsSortDirection] = useState<SortDirection>('desc');
   const [categorySortKey, setCategorySortKey] = useState<CategorySortKey>('created_at');
   const [categorySortDirection, setCategorySortDirection] = useState<SortDirection>('desc');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [previewTab, setPreviewTab] = useState<PreviewTabType>('header');
+  const [previewPage, setPreviewPage] = useState(1);
+  const [previewPageSize, setPreviewPageSize] = useState(20);
+  const [previewGoToPageInput, setPreviewGoToPageInput] = useState('');
+  const [previewSortColumn, setPreviewSortColumn] = useState('');
+  const [previewSortDirection, setPreviewSortDirection] = useState<SortDirection>('desc');
+  const [isBulkDeletingPreviewRows, setIsBulkDeletingPreviewRows] = useState(false);
+  const [deletingPreviewRowId, setDeletingPreviewRowId] = useState<string | null>(null);
   const [categoryPageSize, setCategoryPageSize] = useState(() => {
     if (mode !== 'management') return 20;
     const nextPageSize = readScopedNumber(initialSearchParams, CATEGORY_MANAGEMENT_QUERY_SCOPE, 'ps', 20);
@@ -907,6 +960,29 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     });
   }, [categories, categorySortDirection, categorySortKey]);
 
+  const selectedCategory = useMemo(
+    () => categories.find((cat) => cat.id === selectedCategoryId) || null,
+    [categories, selectedCategoryId]
+  );
+  const hasLineTable = Boolean(selectedCategory?.line_table_name);
+  const previewTableType: PreviewTabType = previewTab === 'line' && hasLineTable ? 'line' : 'header';
+  const previewTableName = previewTableType === 'line'
+    ? selectedCategory?.line_table_name || ''
+    : selectedCategory?.header_table_name || '';
+  const sortedPreviewRows = useMemo(() => {
+    if (!tableBrowseResult?.rows || tableBrowseResult.rows.length === 0 || !previewSortColumn) {
+      return tableBrowseResult?.rows || [];
+    }
+    const factor = previewSortDirection === 'asc' ? 1 : -1;
+    return [...tableBrowseResult.rows].sort((a, b) => factor * compareValues(a[previewSortColumn], b[previewSortColumn]));
+  }, [tableBrowseResult?.rows, previewSortColumn, previewSortDirection]);
+  const isPreviewResultMatched = Boolean(
+    tableBrowseResult &&
+    previewTableName &&
+    tableBrowseResult.table_name?.toUpperCase() === previewTableName.toUpperCase() &&
+    tableBrowseResult.table_type === previewTableType
+  );
+
   // 伝票分類一覧ページネーション (client-side)
   const categoryPagination = usePagination(sortedCategories, { pageSize: categoryPageSize, initialPage: categoryInitialPage });
 
@@ -914,6 +990,16 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const categorySelection = useSelection<DenpyoCategory>({
     getItemId: (cat) => String(cat.id),
     isSelectable: (cat) => cat.registration_count === 0,
+  });
+  const previewRowSelection = useSelection<Record<string, any>>({
+    getItemId: (row) => {
+      const raw = row.ROW_ID_META;
+      return (raw === null || raw === undefined || raw === '') ? '' : String(raw);
+    },
+    isSelectable: (row) => {
+      const raw = row.ROW_ID_META;
+      return raw !== null && raw !== undefined && raw !== '';
+    },
   });
 
   // Load data on mount
@@ -1059,12 +1145,64 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     categorySelection.deselectAll();
   }, [mode, categorySortKey, categorySortDirection]);
 
-  // ── AI Analysis flow ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (mode !== 'management') return;
+    if (categories.length === 0) {
+      setSelectedCategoryId(null);
+      return;
+    }
+    const currentExists = selectedCategoryId !== null && categories.some((cat) => cat.id === selectedCategoryId);
+    if (!currentExists) {
+      setSelectedCategoryId(categories[0].id);
+    }
+  }, [mode, categories, selectedCategoryId]);
 
-  const handleAnalyzeClick = () => {
-    if (selectedFileIds.size === 0) return;
-    setShowAnalysisModeModal(true);
-  };
+  useEffect(() => {
+    if (previewTab === 'line' && !hasLineTable) {
+      setPreviewTab('header');
+    }
+  }, [previewTab, hasLineTable]);
+
+  useEffect(() => {
+    setPreviewPage(1);
+    setPreviewGoToPageInput('');
+    setPreviewSortColumn('');
+    setPreviewSortDirection('desc');
+    previewRowSelection.reset();
+  }, [selectedCategoryId, previewTab]);
+
+  useEffect(() => {
+    previewRowSelection.reset();
+  }, [previewPage, previewTableName, previewTableType]);
+
+  useEffect(() => {
+    if (!tableBrowseResult?.columns || tableBrowseResult.columns.length === 0) {
+      setPreviewSortColumn('');
+      return;
+    }
+    if (!previewSortColumn || !tableBrowseResult.columns.includes(previewSortColumn)) {
+      setPreviewSortColumn(getDefaultDataSortColumn(tableBrowseResult.columns));
+      setPreviewSortDirection('desc');
+    }
+  }, [tableBrowseResult?.columns, previewSortColumn]);
+
+  const requestCategoryPreview = useCallback(() => {
+    if (mode !== 'management' || !selectedCategory || !previewTableName) return;
+    dispatch(
+      fetchTableDataByName({
+        tableName: previewTableName,
+        tableType: previewTableType,
+        page: previewPage,
+        pageSize: previewPageSize,
+      })
+    );
+  }, [dispatch, mode, selectedCategory, previewTableName, previewTableType, previewPage, previewPageSize]);
+
+  useEffect(() => {
+    requestCategoryPreview();
+  }, [requestCategoryPreview]);
+
+  // ── AI Analysis flow ────────────────────────────────────────────────────────
 
   const handleAnalyzeSingleFile = useCallback((fileId: string) => {
     setSelectedFileIds(new Set([fileId]));
@@ -1368,6 +1506,10 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const slipsRangeEnd = slipsCategoryTotal === 0 ? 0 : Math.min(slipsCategoryPage * slipsCategoryPageSize, slipsCategoryTotal);
   const categoryRangeStart = categoryPagination.totalItems === 0 ? 0 : categoryPagination.startIndex;
   const categoryRangeEnd = categoryPagination.totalItems === 0 ? 0 : categoryPagination.endIndex;
+  const previewTotalPages = tableBrowseResult?.total_pages || 1;
+  const previewTotal = tableBrowseResult?.total || 0;
+  const previewRangeStart = previewTotal === 0 ? 0 : ((previewPage - 1) * previewPageSize) + 1;
+  const previewRangeEnd = previewTotal === 0 ? 0 : Math.min(previewPage * previewPageSize, previewTotal);
   const renderSlipsSortIcon = (key: SlipsSortKey) => {
     if (slipsSortKey !== key) return <ArrowUpDown size={13} />;
     return slipsSortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
@@ -1376,6 +1518,129 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     if (categorySortKey !== key) return <ArrowUpDown size={13} />;
     return categorySortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
   };
+  const renderPreviewSortIcon = (column: string) => {
+    if (previewSortColumn !== column) return <ArrowUpDown size={13} />;
+    return previewSortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
+  };
+  const handleCategoryRowSelect = useCallback((catId: number) => {
+    setSelectedCategoryId(catId);
+  }, []);
+  const handleCategoryRowKeyDown = useCallback((e: KeyboardEvent, catId: number) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleCategoryRowSelect(catId);
+    }
+  }, [handleCategoryRowSelect]);
+  const handlePreviewSort = useCallback((nextColumn: string) => {
+    if (!nextColumn) return;
+    setPreviewSortColumn((prevColumn) => {
+      if (prevColumn === nextColumn) {
+        setPreviewSortDirection((prevDir) => (prevDir === 'asc' ? 'desc' : 'asc'));
+        return prevColumn;
+      }
+      setPreviewSortDirection('asc');
+      return nextColumn;
+    });
+  }, []);
+  const handlePreviewPageSizeChange = useCallback((nextPageSize: number) => {
+    if (!PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize)) return;
+    setPreviewPageSize(nextPageSize);
+    setPreviewPage(1);
+    setPreviewGoToPageInput('');
+  }, []);
+  const handlePreviewPageChange = useCallback((nextPage: number) => {
+    if (nextPage >= 1 && nextPage <= previewTotalPages) {
+      setPreviewPage(nextPage);
+    }
+  }, [previewTotalPages]);
+  const handlePreviewGoToPage = useCallback(() => {
+    const target = parseInt(previewGoToPageInput, 10);
+    if (!Number.isNaN(target) && target >= 1 && target <= previewTotalPages) {
+      setPreviewPage(target);
+      setPreviewGoToPageInput('');
+    }
+  }, [previewGoToPageInput, previewTotalPages]);
+  const getPreviewRowId = useCallback((row: Record<string, any>): string | null => {
+    const raw = row.ROW_ID_META;
+    if (raw === null || raw === undefined || raw === '') return null;
+    return String(raw);
+  }, []);
+  const handleDeletePreviewRow = useCallback((row: Record<string, any>) => {
+    const rowId = getPreviewRowId(row);
+    if (!rowId || !previewTableName) return;
+    requestConfirm({
+      message: t('search.browser.deleteRowConfirm'),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        setDeletingPreviewRowId(rowId);
+        try {
+          await apiPost<{ success: boolean }>('/api/v1/search/table-browser/delete-row', {
+            table_name: previewTableName,
+            row_id: rowId,
+          });
+          dispatch(addNotification({
+            type: 'success',
+            message: t('search.browser.deleteRowSuccess'),
+          }));
+          requestCategoryPreview();
+        } catch {
+          dispatch(addNotification({
+            type: 'error',
+            message: t('search.browser.deleteRowFailed'),
+          }));
+        } finally {
+          setDeletingPreviewRowId(null);
+        }
+      },
+    });
+  }, [getPreviewRowId, previewTableName, requestConfirm, dispatch, requestCategoryPreview]);
+  const handleBulkDeletePreviewRows = useCallback(() => {
+    if (!previewTableName || previewRowSelection.selectedCount === 0) return;
+    const targetRowIds = Array.from(previewRowSelection.selectedIds);
+    requestConfirm({
+      message: t('search.browser.confirmBulkDelete', { count: targetRowIds.length }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        setIsBulkDeletingPreviewRows(true);
+        let deletedCount = 0;
+        let failedCount = 0;
+        for (const rowId of targetRowIds) {
+          try {
+            await apiPost<{ success: boolean }>('/api/v1/search/table-browser/delete-row', {
+              table_name: previewTableName,
+              row_id: rowId,
+            });
+            deletedCount += 1;
+          } catch {
+            failedCount += 1;
+          }
+        }
+        previewRowSelection.deselectAll();
+        requestCategoryPreview();
+        if (deletedCount > 0 && failedCount === 0) {
+          dispatch(addNotification({
+            type: 'success',
+            message: t('search.browser.bulkDeleteSuccess', { count: deletedCount }),
+          }));
+        } else if (deletedCount > 0) {
+          dispatch(addNotification({
+            type: 'warning',
+            message: t('search.browser.bulkDeletePartial', { deleted: deletedCount, errors: failedCount }),
+          }));
+        } else {
+          dispatch(addNotification({
+            type: 'error',
+            message: t('search.browser.bulkDeleteFailed'),
+          }));
+        }
+        setIsBulkDeletingPreviewRows(false);
+      },
+    });
+  }, [previewTableName, previewRowSelection.selectedCount, previewRowSelection.selectedIds, requestConfirm, requestCategoryPreview, dispatch, previewRowSelection]);
 
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
@@ -1407,22 +1672,6 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                     <Trash2 size={14} />
                     <span>{t('fileList.bulkDelete')}</span>
                   </button>
-                  <button
-                    class="ics-ops-btn ics-ops-btn--primary"
-                    onClick={handleAnalyzeClick}
-                    disabled={selectedFileIds.size === 0 || isCategoryAnalyzing || !!categoryAnalysisResult}
-                  >
-                    {isCategoryAnalyzing ? (
-                      <Loader2 size={14} class="ics-spin" />
-                    ) : (
-                      <Sparkles size={14} />
-                    )}
-                    <span>
-                      {isCategoryAnalyzing
-                        ? t('category.analyze.analyzing')
-                        : t('category.analyze.button')}
-                    </span>
-                  </button>
                   <span class="ics-unified-table-toolbar__meta">
                     {t('category.slipsFiles.selected', { count: selectedFileIds.size })}
                   </span>
@@ -1441,9 +1690,6 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
             </div>
           </div>
           <div class="ics-card-body">
-            <p class="ics-form-hint" style={{ marginBottom: '8px' }}>
-              {t('category.slipsFiles.hint')}
-            </p>
             {slipsCategoryFiles.length > 0 ? (
               <div class="ics-table-wrapper">
                 <table class="ics-table">
@@ -1515,10 +1761,10 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                             aria-label={t('fileList.selectFile')}
                           />
                         </td>
-                        <td>
+                        <td class="ics-fileListView__fileNameCell">
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <FileText size={14} />
-                            <span class="ics-table__cell--name">{file.file_name}</span>
+                            <span>{file.file_name}</span>
                           </div>
                         </td>
                         <td>
@@ -1609,7 +1855,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
             </div>
             <div class="ics-modal__body ics-fileListView__previewBody">
               <iframe
-                src={`/studio/api/v1/files/${previewTarget.fileId}/preview`}
+                src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=category`}
                 title={previewTarget.fileName || t('fileList.previewFile')}
                 class="ics-fileListView__previewFrame"
               />
@@ -1634,6 +1880,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
 
       {/* ═══ Section B: 伝票分類一覧 ═══ */}
       {mode === 'management' && (
+      <>
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
           <div class="ics-card-header ics-card-header--table-toolbar">
@@ -1736,12 +1983,20 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                 </thead>
                 <tbody>
                   {categoryPagination.paginatedItems.map(cat => (
-                    <tr key={cat.id} class={`${cat.is_active ? '' : 'ics-table__row--inactive'} ${categorySelection.isSelected(String(cat.id)) ? 'ics-table__row--selected' : ''}`}>
+                    <tr
+                      key={cat.id}
+                      role="button"
+                      tabIndex={0}
+                      class={`${cat.is_active ? '' : 'ics-table__row--inactive'} ${selectedCategoryId === cat.id ? 'ics-table-row--selected' : ''} ${categorySelection.isSelected(String(cat.id)) ? 'ics-table__row--selected' : ''}`}
+                      onClick={() => handleCategoryRowSelect(cat.id)}
+                      onKeyDown={(e) => handleCategoryRowKeyDown(e, cat.id)}
+                    >
                       <td class="ics-table__cell--center">
                         <input
                           type="checkbox"
                           checked={categorySelection.isSelected(String(cat.id))}
                           onChange={() => categorySelection.toggle(String(cat.id))}
+                          onClick={(e: Event) => e.stopPropagation()}
                           disabled={cat.registration_count > 0}
                           aria-label={t('common.selectAll')}
                         />
@@ -1769,7 +2024,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                         </span>
                       </td>
                       <td class="oj-text-color-secondary">{formatDateTime(cat.created_at)}</td>
-                      <td class="ics-fileListView__actions">
+                      <td class="ics-fileListView__actions" onClick={(e: Event) => e.stopPropagation()}>
                         <button
                           type="button"
                           class="ics-ops-btn ics-ops-btn--ghost"
@@ -1837,6 +2092,192 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
           </div>
         </div>
       </section>
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-card ics-ops-panel">
+          <div class="ics-card-header ics-card-header--table-toolbar">
+            <div class="ics-unified-table-header">
+              <div class="ics-browser-title-wrap">
+                <span class="oj-typography-heading-xs">{t('category.preview.title')}</span>
+                {selectedCategory && <span class="ics-browser-table-chip">{selectedCategory.category_name}</span>}
+                {previewTableName && <span class="ics-browser-table-chip">{previewTableName}</span>}
+              </div>
+              <div class="ics-unified-table-toolbar">
+                <div class="ics-unified-table-toolbar__group">
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
+                    onClick={handleBulkDeletePreviewRows}
+                    disabled={previewRowSelection.selectedCount === 0 || isBulkDeletingPreviewRows || isTableBrowsing}
+                  >
+                    {isBulkDeletingPreviewRows ? <Loader2 size={14} class="ics-spin" /> : <Trash2 size={14} />}
+                    <span>{t('fileList.bulkDelete')}</span>
+                  </button>
+                  <span class="ics-unified-table-toolbar__meta">
+                    {t('search.browser.selectedRows', { count: previewRowSelection.selectedCount })}
+                  </span>
+                </div>
+                <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={requestCategoryPreview}
+                    disabled={!selectedCategory || !previewTableName || isTableBrowsing}
+                  >
+                    {isTableBrowsing ? <Loader2 size={14} class="ics-spin" /> : <RefreshCw size={14} />}
+                    <span>{t('search.browser.refresh')}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="ics-card-body">
+            {selectedCategory && hasLineTable && (
+              <div class="ics-tabs" style={{ marginBottom: '12px' }}>
+                <button
+                  type="button"
+                  class={`ics-tab ${previewTab === 'header' ? 'ics-tab--active' : ''}`}
+                  onClick={() => setPreviewTab('header')}
+                >
+                  <FileText size={14} />
+                  {t('search.browser.header')}
+                </button>
+                <button
+                  type="button"
+                  class={`ics-tab ${previewTab === 'line' ? 'ics-tab--active' : ''}`}
+                  onClick={() => setPreviewTab('line')}
+                >
+                  <Table2 size={14} />
+                  {t('search.browser.line')}
+                </button>
+              </div>
+            )}
+
+            {!selectedCategory && (
+              <div class="ics-empty-text">{t('category.preview.noSelection')}</div>
+            )}
+
+            {selectedCategory && isTableBrowsing && (
+              <div class="ics-loading oj-sm-margin-4x-top">
+                <Loader2 size={24} class="ics-spin" />
+                <span>{t('common.loading')}</span>
+              </div>
+            )}
+
+            {selectedCategory && !isTableBrowsing && isPreviewResultMatched && tableBrowseResult && (
+              <div class="ics-browser-results">
+                {tableBrowseResult.rows && tableBrowseResult.rows.length > 0 ? (
+                  <>
+                    <div class="ics-table-wrapper">
+                      <table class="ics-table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: '40px' }}>
+                              <input
+                                type="checkbox"
+                                checked={previewRowSelection.isAllSelected(sortedPreviewRows)}
+                                ref={(el) => {
+                                  if (!el) return;
+                                  const selectableRowIds = sortedPreviewRows
+                                    .map((row) => row.ROW_ID_META)
+                                    .filter((raw) => raw !== null && raw !== undefined && raw !== '')
+                                    .map((raw) => String(raw));
+                                  const allSelected = previewRowSelection.isAllSelected(sortedPreviewRows);
+                                  const hasSelected = selectableRowIds.some((id) => previewRowSelection.isSelected(id));
+                                  el.indeterminate = !allSelected && hasSelected;
+                                }}
+                                onChange={() => {
+                                  if (previewRowSelection.isAllSelected(sortedPreviewRows)) {
+                                    previewRowSelection.deselectAll();
+                                  } else {
+                                    previewRowSelection.selectAll(sortedPreviewRows);
+                                  }
+                                }}
+                                aria-label={t('common.selectAll')}
+                              />
+                            </th>
+                            {tableBrowseResult.columns.map((column) => (
+                              <th key={column}>
+                                <button type="button" class="ics-fileListView__sortBtn" onClick={() => handlePreviewSort(column)}>
+                                  {column}
+                                  {renderPreviewSortIcon(column)}
+                                </button>
+                              </th>
+                            ))}
+                            <th>{t('search.browser.col.actions')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedPreviewRows.map((row, rowIndex) => {
+                            const rowId = getPreviewRowId(row);
+                            return (
+                            <tr key={rowIndex}>
+                              <td class="ics-table__cell--center">
+                                <input
+                                  type="checkbox"
+                                  checked={rowId ? previewRowSelection.isSelected(rowId) : false}
+                                  onChange={() => {
+                                    if (rowId) previewRowSelection.toggle(rowId);
+                                  }}
+                                  disabled={row.ROW_ID_META === null || row.ROW_ID_META === undefined || row.ROW_ID_META === ''}
+                                />
+                              </td>
+                              {tableBrowseResult.columns.map((column) => (
+                                <td key={column}>{formatCellValue(row[column])}</td>
+                              ))}
+                              <td class="ics-fileListView__actions">
+                                <button
+                                  type="button"
+                                  class="ics-ops-btn ics-ops-btn--ghost"
+                                  onClick={() => handleDeletePreviewRow(row)}
+                                  disabled={!rowId || deletingPreviewRowId === rowId || isBulkDeletingPreviewRows || isTableBrowsing}
+                                  title={t('common.delete')}
+                                >
+                                  {deletingPreviewRowId === rowId
+                                    ? <Loader2 size={14} class="ics-spin" />
+                                    : <Trash2 size={14} />
+                                  }
+                                </button>
+                              </td>
+                            </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <Pagination
+                      currentPage={previewPage}
+                      totalPages={previewTotalPages}
+                      totalItems={previewTotal}
+                      pageSize={previewPageSize}
+                      pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
+                      onPageSizeChange={handlePreviewPageSizeChange}
+                      goToPageInput={previewGoToPageInput}
+                      onPageChange={handlePreviewPageChange}
+                      onGoToPageInputChange={setPreviewGoToPageInput}
+                      onGoToPage={handlePreviewGoToPage}
+                      rangeStart={previewRangeStart}
+                      rangeEnd={previewRangeEnd}
+                      showGoToPage={false}
+                      isFirstPage={previewPage <= 1 || isTableBrowsing}
+                      isLastPage={previewPage >= previewTotalPages || isTableBrowsing}
+                      position="bottom"
+                      show
+                      summaryPlacement="controls"
+                    />
+                  </>
+                ) : (
+                  <div class="ics-empty-text">{t('search.browser.noData')}</div>
+                )}
+              </div>
+            )}
+
+            {selectedCategory && !isTableBrowsing && !isPreviewResultMatched && (
+              <div class="ics-empty-text">{t('common.loading')}</div>
+            )}
+          </div>
+        </div>
+      </section>
+      </>
       )}
 
       {/* ─── Modals ─── */}

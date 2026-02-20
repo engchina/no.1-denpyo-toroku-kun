@@ -148,6 +148,23 @@ export interface DDLSuggestion {
   line_ddl: string;
 }
 
+export interface TableColumnInfo {
+  column_name: string;
+  data_type: string;
+  data_length?: number;
+  precision?: number;
+  scale?: number;
+  nullable?: string;
+  comment?: string;
+}
+
+export interface CategoryTableSchema {
+  header_table_name: string;
+  line_table_name?: string;
+  header_columns: TableColumnInfo[];
+  line_columns: TableColumnInfo[];
+}
+
 export interface AnalysisResult {
   file_id: string;
   file_name: string;
@@ -156,6 +173,7 @@ export interface AnalysisResult {
   classification: InvoiceClassification;
   extraction: FieldExtraction;
   ddl_suggestion: DDLSuggestion;
+  table_schema?: CategoryTableSchema;
 }
 
 // --- 登録 ---

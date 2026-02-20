@@ -437,29 +437,35 @@ class AIService:
         if not client:
             return {"success": False, "message": "AI クライアントが初期化されていません"}
 
-        prompt = """あなたは伝票・ビジネス文書の分析専門家です。
-この画像に写っている伝票（ビジネス文書）を分類してください。
+        prompt = """あなたは日本語業務文書（帳票）の分析を専門とするエキスパートです。
+提示された画像が日本企業の業務伝票であることを前提に、文書種別を正確に判定してください。
 
-【分類候補】
-請求書 / 納品書 / 領収書 / 注文書 / 見積書 / 発注書 / 仕入伝票 / 売上伝票 /
-出荷伝票 / 入荷伝票 / 支払伝票 / 入金伝票 / 振替伝票 / 経費精算書 / 検収書 / その他
+【判定カテゴリ】（以下のいずれか1つを選択）
+請求書 / 納品書 / 領収書 / 注文書 / 見積書 / 発注書 /
+仕入伝票 / 売上伝票 / 出荷伝票 / 入荷伝票 / 支払伝票 /
+入金伝票 / 振替伝票 / 経費精算書 / 検収書 / その他
 
-【出力形式】
-以下の JSON をそのまま出力してください（説明文・コードブロック・コメントは一切不要）:
-{
-  "category": "請求書",
-  "confidence": 0.95,
-  "description": "仕入先への支払いを求める文書",
-  "has_line_items": true
-}
+【判定手順】
+1. 文書タイトル・ヘッダー記載を最優先で参照する
+2. タイトルが判読不能な場合は、記載内容・フォーム構成から推定する
+3. 上記16種に合致しない場合のみ「その他」を選択する
 
-フィールドの説明:
-- category: 上記の分類候補から最も近いもの（文字列）
-- confidence: 判断の確信度（0.0〜1.0 の数値）
-- description: この伝票の内容・用途（40字以内の文字列）
-- has_line_items: 品目・明細行テーブルがあれば true、なければ false（Boolean）
+【confidence（確信度）の基準】
+- 0.95〜1.00: タイトルが明示されており疑いなし
+- 0.80〜0.94: タイトルはないが内容・構成から確実に判断できる
+- 0.60〜0.79: 複数種別の可能性があるが最有力を選択
+- 0.40〜0.59: 画像が不鮮明または一部のみ視認可能で推定
+- 0.00〜0.39: ほぼ判断不能（この場合は category を「その他」にする）
 
-出力は必ず有効な JSON のみ。前後に説明文・コードブロック（```）・コメント（//）を含めないでください。"""
+【has_line_items の判定】
+- true: 品番・品名・数量・単価・金額等の列を持つ「明細行テーブル」が文書内に存在する
+- false: 明細行テーブルがなく、ヘッダー情報のみで構成された文書
+
+【出力規則】
+以下のJSON 1行のみを返してください。説明文・マークダウン（```）・コメント（//）は禁止です。
+{"category": "請求書", "confidence": 0.95, "description": "製品の購入代金を請求する文書", "has_line_items": true}
+
+- description: この文書の用途・内容を40字以内で簡潔に記述する"""
 
         try:
             import oci
@@ -692,116 +698,176 @@ class AIService:
             return {"success": False, "message": "AI クライアントが初期化されていません"}
 
         category_hint = f"この伝票の種別は「{category}」です。" if category else ""
-        schema_hint = ""
+
+        # ── スキーマ情報のフォーマット ────────────────────────────────────────
+        def _fmt_cols(columns: list) -> str:
+            if not columns:
+                return "  （定義なし）"
+            lines = []
+            for col in columns:
+                comment = col.get("comment", "")
+                comment_str = f"  -- {comment}" if comment else ""
+                dt = col.get("data_type", "VARCHAR2")
+                length = col.get("data_length")
+                if dt == "VARCHAR2" and length:
+                    type_str = f"VARCHAR2({length})"
+                elif dt == "NUMBER":
+                    prec = col.get("precision")
+                    scale = col.get("scale")
+                    if prec and scale is not None:
+                        type_str = f"NUMBER({prec},{scale})"
+                    elif prec:
+                        type_str = f"NUMBER({prec})"
+                    else:
+                        type_str = "NUMBER"
+                else:
+                    type_str = dt
+                lines.append(f"  {col['column_name']}  {type_str}{comment_str}")
+            return "\n".join(lines)
+
+        # ── モード分岐：テーブルスキーマの有無で目的が異なる ──────────────────
         if table_schema:
-            schema_hint = f"""
-【カテゴリの既存テーブル構造（この列名を必ず使う）】
-{json.dumps(table_schema, ensure_ascii=False, indent=2)}
+            # ================================================================
+            # ■ データ抽出モード（本登録用伝票）
+            #   目的: 定義済みDBテーブルの各カラムに対応する値を画像から正確に読む
+            # ================================================================
+            header_cols_fmt = _fmt_cols(table_schema.get("header_columns", []))
+            line_cols_fmt = _fmt_cols(table_schema.get("line_columns", []))
+            header_tbl = table_schema.get("header_table_name", "")
+            line_tbl = table_schema.get("line_table_name", "")
+            has_line_tbl = bool(line_tbl and table_schema.get("line_columns"))
 
-必須制約:
-- header_fields[].field_name_en は HEADER テーブルの column_name をそのまま使用する
-- raw_lines[] のキーは LINE テーブルの column_name をそのまま使用する
-- スキーマに存在しない列名は作らない
-"""
+            prompt = f"""あなたはOracleデータベースへの伝票データ登録を専門とするデータ入力エキスパートです。
+提示された伝票画像から、定義済みDBテーブルの各カラムに対応する値を正確に読み取り、JSONで返してください。
+{category_hint}
 
-        prompt = f"""あなたは伝票データ登録の専門家です。
-この画像は伝票（ビジネス文書）です。{category_hint}
-{schema_hint}
+【対象テーブル構造】（カラム名・データ型は厳守。右側の -- が日本語ラベル）
+▶ HEADERテーブル: {header_tbl}
+{header_cols_fmt}
 
-【目的】
-この伝票をOracleデータベースに登録するため、画像に含まれる全ての項目をフィールドとして抽出し、テーブル定義を設計してください。
+▶ LINEテーブル: {line_tbl if has_line_tbl else '（明細なし）'}
+{line_cols_fmt if has_line_tbl else '  （定義なし）'}
 
-【抽出ルール】
-- 印字済みの値・手書き記入欄・空欄のラベルを含め、全ての項目を漏れなく抽出する
-- 合計・小計・消費税・税率などの集計項目も含める
-- 承認欄・担当者印・受領印などの管理項目も含める（VARCHAR2として）
-- 備考・摘要・メモ欄も含める
+【値読み取りルール】
+1. 各カラムの日本語ラベル（-- 以降）に対応する項目を画像内で探し、値を転記する
+2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
+3. 日付: ISO 8601形式 YYYY-MM-DD（例: "令和6年1月15日" → "2024-01-15"）
+4. テキスト: 画像の文字をそのまま転記。手書き等で判読不能な場合は ""
+5. 画像に該当項目が存在しない場合: "" （null は使わない）
+6. スキーマに存在する全カラムを header_fields に出力する（値がなくても省略禁止）
 
-【データ型の選択基準】
-- VARCHAR2: 文字列全般（コード、名称、住所、電話番号、メモ、承認印など）
-- NUMBER: 純粋な数値（金額、数量、単価、税率、個数など）
-- DATE: 日付のみ（伝票日付、納品日、支払期限など）
+【カラム名の厳守】
+- header_fields[].field_name_en: 必ず HEADERテーブルの COLUMN_NAME をそのまま使用（UPPERCASE、変名・追加・省略禁止）
+- raw_lines[] のキー: 必ず LINEテーブルの COLUMN_NAME をそのまま使用（UPPERCASE）
+- スキーマに存在しないカラム名は絶対に作成しない
 
-【VARCHAR2の最大長の目安（max_length に整数値で指定）】
-伝票番号・コード: 50 / 氏名・担当者名: 100 / 会社名・取引先名・部署名: 200 /
-住所: 300 / 品名・商品名・件名: 200 / 電話番号・FAX: 20 / メール: 200 /
-備考・摘要・メモ: 500 / その他: 100
-
-【is_required の判定】
-- true: 必ず記入・印字される必須項目（伝票番号・日付・取引先名・合計金額など）
-- false: 任意記入・空欄になりうる項目
-
-【出力形式】
-以下の JSON をそのまま出力してください（説明文・コードブロック・コメントは一切不要）:
+【出力形式】（JSON のみ。マークダウン・コードブロック・コメント禁止）
 {{
   "header_fields": [
-    {{
-      "field_name": "伝票番号",
-      "field_name_en": "slip_number",
-      "value": "A-001",
-      "data_type": "VARCHAR2",
-      "max_length": 50,
-      "is_required": true
-    }},
-    {{
-      "field_name": "伝票日付",
-      "field_name_en": "slip_date",
-      "value": "2026-01-15",
-      "data_type": "DATE",
-      "max_length": null,
-      "is_required": true
-    }},
-    {{
-      "field_name": "合計金額",
-      "field_name_en": "total_amount",
-      "value": "10000",
-      "data_type": "NUMBER",
-      "max_length": null,
-      "is_required": true
-    }}
+    {{"field_name": "請求書番号", "field_name_en": "INVOICE_NO", "value": "INV-2024-001", "data_type": "VARCHAR2", "max_length": 50, "is_required": true}},
+    {{"field_name": "請求日", "field_name_en": "INVOICE_DATE", "value": "2024-01-15", "data_type": "DATE", "max_length": null, "is_required": true}},
+    {{"field_name": "請求金額合計", "field_name_en": "TOTAL_AMOUNT", "value": "110000", "data_type": "NUMBER", "max_length": null, "is_required": true}}
   ],
   "line_fields": [
-    {{
-      "field_name": "品名",
-      "field_name_en": "item_name",
-      "value": "商品A",
-      "data_type": "VARCHAR2",
-      "max_length": 200,
-      "is_required": true
-    }},
-    {{
-      "field_name": "数量",
-      "field_name_en": "quantity",
-      "value": "5",
-      "data_type": "NUMBER",
-      "max_length": null,
-      "is_required": true
-    }}
+    {{"field_name": "品名", "field_name_en": "ITEM_NAME", "value": "製品A", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
+    {{"field_name": "数量", "field_name_en": "QUANTITY", "value": "10", "data_type": "NUMBER", "max_length": null, "is_required": true}}
   ],
-  "line_count": 3,
+  "line_count": 2,
   "raw_lines": [
-    {{
-      "ITEM_NAME": "商品A",
-      "QUANTITY": "5",
-      "UNIT_PRICE": "1000",
-      "AMOUNT": "5000"
-    }}
+    {{"ITEM_NAME": "製品A", "QUANTITY": "10", "UNIT_PRICE": "5000", "AMOUNT": "50000"}},
+    {{"ITEM_NAME": "製品B", "QUANTITY": "5", "UNIT_PRICE": "8000", "AMOUNT": "40000"}}
   ]
 }}
 
-フィールドの説明:
-- header_fields: 伝票ヘッダー部分の全項目（番号・日付・取引先・金額・税額・備考など）
-- line_fields: 明細行の各カラム定義（品名・数量・単価・金額など）。明細がない場合は空配列 []
-- field_name: フィールド名（日本語）
-- field_name_en: フィールド名（英語スネークケース。例: invoice_date, customer_name）
-- value: 画像から読み取った値（空欄は ""）
-- data_type: "VARCHAR2" または "NUMBER" または "DATE" のいずれか
-- max_length: VARCHAR2 の場合は整数値、NUMBER または DATE の場合は null
-- is_required: true または false（必ず Boolean 型で）
-- line_count: 明細行の数（整数）。明細なしは 0
-- raw_lines: 明細の実データ配列。LINEテーブルに挿入する1行=1オブジェクト。明細なしは []
+各フィールドの説明:
+- header_fields: HEADERテーブルの全カラムに対応するエントリ（省略禁止）
+  - field_name: カラムの日本語ラベル（コメントから取得。コメントなしはカラム名から推測）
+  - field_name_en: HEADERテーブルの COLUMN_NAME（UPPERCASE、厳守）
+  - value: 画像から読み取った値（文字列。空欄・不存在は ""）
+  - data_type: HEADERテーブルのカラム定義に従う
+  - max_length: VARCHAR2 の場合は定義の数値、それ以外は null
+  - is_required: カラムが NOT NULL なら true、NULLABLE なら false
+- line_fields: LINEテーブルのカラム定義（明細なしは []）
+- line_count: 実際の明細行数（整数。明細なしは 0）
+- raw_lines: 各明細行の実データ配列。キーは LINEテーブルの COLUMN_NAME（明細なしは []）
 
-出力は必ず有効な JSON のみ。前後に説明文・コードブロック（```）・コメント（//）を含めないでください。"""
+出力は有効なJSON1つのみ。```や//や説明文を含めないこと。"""
+
+        else:
+            # ================================================================
+            # ■ スキーマ設計モード（分類用サンプル伝票）
+            #   目的: 伝票画像から最適なOracleテーブル構造を発見・設計する
+            # ================================================================
+            prompt = f"""あなたはOracle Database設計と日本語業務文書処理を専門とするエキスパートです。
+提示された伝票画像を解析し、Oracle DBに登録するための最適なテーブル構造を設計してください。
+{category_hint}
+
+【設計方針】
+ヘッダー部（1伝票=1レコードのマスター情報）と明細部（複数行の繰り返しデータ）を分離して設計します。
+明細テーブルが不要な場合（領収書・単行伝票等）は line_fields と raw_lines を空配列にします。
+
+【フィールド抽出の完全性】
+- 画像内の印字済み項目・手書き記入欄・空欄ラベルを全て漏れなく抽出する
+- 伝票番号・日付・取引先など管理項目は必ず含める
+- 合計・小計・消費税額・税率などの集計項目も全て含める
+- 承認印・受領印・担当者名・部署名などの運用管理項目も含める
+- 備考・摘要・特記事項欄も含める
+
+【Oracleカラム設計基準】
+▶ field_name_en（カラム名）: 英語UPPERCASE + アンダースコア区切り
+  例: INVOICE_NO, CUSTOMER_NAME, TOTAL_AMOUNT, ISSUE_DATE
+  Oracle 12c互換のため30文字以内を強く推奨する
+
+▶ データ型の選択:
+  - VARCHAR2: 文字列・コード・番号類・名称・住所・メモ・承認印
+    （「003」等の先頭ゼロを保持する必要があるコード・番号は VARCHAR2 を選択）
+  - NUMBER: 計算・集計対象の純粋な数値のみ（金額・数量・単価・税率・個数）
+  - DATE: 日付（時刻を含む場合も DATE で可）
+
+▶ VARCHAR2の max_length（文字数）目安:
+  コード・番号: 50 / 氏名・担当者名: 100 / 会社名・部署名: 200 / 住所: 300 /
+  品名・件名・商品名: 200 / 電話番号・FAX: 20 / メールアドレス: 200 /
+  備考・摘要・特記事項: 500 / その他テキスト: 100
+
+▶ is_required の判定:
+  - true: 常に印字・記入される必須項目（伝票番号・日付・取引先・合計金額等）
+  - false: 状況により空欄になりうる任意項目
+
+【出力形式】（JSON のみ。マークダウン・コードブロック・コメント禁止）
+{{
+  "header_fields": [
+    {{"field_name": "請求書番号", "field_name_en": "INVOICE_NO", "value": "INV-2024-001", "data_type": "VARCHAR2", "max_length": 50, "is_required": true}},
+    {{"field_name": "請求日", "field_name_en": "INVOICE_DATE", "value": "2024-01-15", "data_type": "DATE", "max_length": null, "is_required": true}},
+    {{"field_name": "取引先名", "field_name_en": "CUSTOMER_NAME", "value": "株式会社サンプル", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
+    {{"field_name": "請求金額合計", "field_name_en": "TOTAL_AMOUNT", "value": "110000", "data_type": "NUMBER", "max_length": null, "is_required": true}},
+    {{"field_name": "消費税額", "field_name_en": "TAX_AMOUNT", "value": "10000", "data_type": "NUMBER", "max_length": null, "is_required": false}}
+  ],
+  "line_fields": [
+    {{"field_name": "品名", "field_name_en": "ITEM_NAME", "value": "製品A", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
+    {{"field_name": "数量", "field_name_en": "QUANTITY", "value": "10", "data_type": "NUMBER", "max_length": null, "is_required": true}},
+    {{"field_name": "単価", "field_name_en": "UNIT_PRICE", "value": "5000", "data_type": "NUMBER", "max_length": null, "is_required": true}},
+    {{"field_name": "金額", "field_name_en": "AMOUNT", "value": "50000", "data_type": "NUMBER", "max_length": null, "is_required": true}}
+  ],
+  "line_count": 2,
+  "raw_lines": [
+    {{"ITEM_NAME": "製品A", "QUANTITY": "10", "UNIT_PRICE": "5000", "AMOUNT": "50000"}},
+    {{"ITEM_NAME": "製品B", "QUANTITY": "5", "UNIT_PRICE": "8000", "AMOUNT": "40000"}}
+  ]
+}}
+
+各フィールドの説明:
+- header_fields: 伝票ヘッダーの全項目（番号・日付・取引先・金額・税額・承認欄・備考など）
+  - field_name: 日本語ラベル（簡潔な名称。例: 「請求書番号」「取引先名」）
+  - field_name_en: Oracleカラム名（UPPERCASE、30字以内推奨）
+  - value: 画像から読み取った代表的なサンプル値（空欄・不読は ""）
+  - data_type: "VARCHAR2" / "NUMBER" / "DATE" のいずれか
+  - max_length: VARCHAR2 の場合は整数値、NUMBER / DATE の場合は null
+  - is_required: true（必須）/ false（任意）
+- line_fields: 明細テーブルのカラム定義（明細なしは []）
+- line_count: 画像内の実際の明細行数（整数。明細なしは 0）
+- raw_lines: 各明細行の実データ配列。キーは field_name_en と一致させること（明細なしは []）
+
+出力は有効なJSON1つのみ。```や//や説明文を含めないこと。"""
 
         try:
             import oci

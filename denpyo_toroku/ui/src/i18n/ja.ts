@@ -301,7 +301,7 @@ export const ja = {
   'fileList.notify.analyzeFailed': 'AI分析に失敗しました',
 
   'analysis.title': 'AI分析結果',
-  'analysis.subtitle': 'OCI GenAI による伝票分類・フィールド抽出・DDL提案を表示します。',
+  'analysis.subtitle': '伝票分類のテーブル構造に基づいて抽出データを確認します。',
   'analysis.analyzing': 'AI分析を実行中です。しばらくお待ちください…',
   'analysis.backToList': '一覧に戻る',
   'analysis.noResult': '分析結果がありません',
@@ -322,7 +322,17 @@ export const ja = {
   'analysis.ddl.lineTitle': '明細テーブル DDL',
   'analysis.ddl.copy': 'コピー',
   'analysis.ddl.copied': 'コピーしました',
-  'analysis.goToRegister': '登録画面へ',
+  'analysis.goToRegister': '登録内容を確認・登録する',
+  // データ登録確認テーブル
+  'analysis.confirm.headerTable': 'ヘッダーテーブル',
+  'analysis.confirm.lineTable': '明細テーブル',
+  'analysis.confirm.colCount': '{count}列',
+  'analysis.confirm.lineCount': '明細 {count}件',
+  'analysis.confirm.headerDataTitle': 'ヘッダーデータ確認（{table}）',
+  'analysis.confirm.lineDataTitle': '明細データ確認（{count}件）',
+  'analysis.confirm.colLabel': '項目名',
+  'analysis.confirm.colName': 'カラム名',
+  'analysis.confirm.colValue': '抽出値',
 
   // DB登録画面 (SCR-004)
   'registration.title': 'DB登録確認',
@@ -365,6 +375,8 @@ export const ja = {
   'category.refresh': '再取得',
   'category.totalCategories': '合計: {count}件',
   'category.tableTitle': '伝票分類一覧',
+  'category.preview.title': 'テーブルデータプレビュー',
+  'category.preview.noSelection': '伝票分類を選択すると、対応するテーブルデータを表示します。',
   'category.col.name': '伝票分類名',
   'category.col.nameEn': '伝票分類名（英語）',
   'category.col.description': '説明',
@@ -401,7 +413,6 @@ export const ja = {
 
   // SLIPS_CATEGORY ファイル一覧 (SCR-005 新機能)
   'category.slipsFiles.title': 'SLIPS_CATEGORY ファイル一覧',
-  'category.slipsFiles.hint': '1〜5件のファイルを選択して「AI 分析」ボタンをクリックしてください。',
   'category.slipsFiles.selected': '選択中: {count}件',
   'category.slipsFiles.selectAll': '最大5件を全選択',
   'category.slipsFiles.colFileName': 'ファイル名',

@@ -668,8 +668,19 @@ class DatabaseService:
                 ORDER BY COLUMN_ID""",
                 [table_name]
             )
+            column_rows = cursor.fetchall()
+
+            # カラムコメントを USER_COL_COMMENTS から取得
+            cursor.execute(
+                """SELECT COLUMN_NAME, COMMENTS
+                FROM USER_COL_COMMENTS
+                WHERE TABLE_NAME = :1""",
+                [table_name]
+            )
+            comments_map: Dict[str, str] = {row[0]: (row[1] or "") for row in cursor.fetchall()}
+
             cols: List[Dict[str, Any]] = []
-            for row in cursor.fetchall():
+            for row in column_rows:
                 cols.append({
                     "column_name": row[0],
                     "data_type": row[1],
@@ -677,6 +688,7 @@ class DatabaseService:
                     "precision": row[3],
                     "scale": row[4],
                     "nullable": row[5],
+                    "comment": comments_map.get(row[0], ""),
                 })
             return cols
 
@@ -810,6 +822,39 @@ class DatabaseService:
                     return result
         except Exception as e:
             logger.error("SLIPS_CATEGORY ファイル取得エラー (ids=%s): %s", ids, e, exc_info=True)
+            return []
+
+    def get_slips_raw_files_by_ids(self, ids: List[int]) -> List[Dict[str, Any]]:
+        """IDのリストでSLIPS_RAWレコードを取得（OCI Object Storage パス付き）"""
+        if not ids:
+            return []
+        try:
+            placeholders = ",".join([f":{i+1}" for i in range(len(ids))])
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        f"""SELECT ID, OBJECT_NAME, BUCKET_NAME, NAMESPACE,
+                                   FILE_NAME, FILE_SIZE_BYTES, CONTENT_TYPE, CREATED_AT
+                        FROM SLIPS_RAW
+                        WHERE ID IN ({placeholders})
+                        ORDER BY CREATED_AT DESC""",
+                        ids
+                    )
+                    result = []
+                    for row in cursor.fetchall():
+                        result.append({
+                            "id": row[0],
+                            "object_name": row[1],
+                            "bucket_name": row[2],
+                            "namespace": row[3],
+                            "file_name": row[4],
+                            "file_size": row[5],
+                            "content_type": row[6] or "application/octet-stream",
+                            "created_at": str(row[7]) if row[7] else "",
+                        })
+                    return result
+        except Exception as e:
+            logger.error("SLIPS_RAW ファイル取得エラー (ids=%s): %s", ids, e, exc_info=True)
             return []
 
     def delete_slips_category_file_record(self, file_id: int) -> Dict[str, Any]:

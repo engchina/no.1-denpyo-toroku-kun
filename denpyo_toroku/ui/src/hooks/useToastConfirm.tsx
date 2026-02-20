@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { AlertTriangle, AlertCircle, CheckCircle, Info, X } from 'lucide-react';
 
 type ConfirmSeverity = 'error' | 'warning' | 'confirmation' | 'info' | 'none';
@@ -44,42 +44,59 @@ function ToastConfirmPopup({
   const sev = request.severity ?? 'warning';
   const accentColor = SEVERITY_ACCENT[sev];
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   return (
-    <div class="ics-toast-confirm" role="alertdialog" aria-label={request.message}>
-      {/* .ics-modal__header と同一構造: justify-content: space-between */}
-      <div class="ics-toast-confirm__header">
-        <div class="ics-toast-confirm__title">
-          <span class="ics-toast-confirm__icon" style={{ color: accentColor }}>
-            <SeverityIcon severity={sev} />
-          </span>
-          <p class="ics-toast-confirm__message">{request.message}</p>
+    <div class="ics-modal-overlay" onClick={onClose}>
+      <div
+        class="ics-modal ics-toast-confirm-modal"
+        style={{ maxWidth: '520px' }}
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={request.message}
+        onClick={(e: Event) => e.stopPropagation()}
+      >
+        <div class="ics-modal__header">
+          <h3 class="ics-toast-confirm-modal__title">
+            <span class="ics-toast-confirm-modal__icon" style={{ color: accentColor }}>
+              <SeverityIcon severity={sev} />
+            </span>
+            <span>{request.message}</span>
+          </h3>
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost"
+            onClick={onClose}
+            aria-label="閉じる"
+          >
+            <X size={16} />
+          </button>
         </div>
-        {/* .ics-modal__header の X ボタンと同じクラス・サイズ */}
-        <button
-          type="button"
-          class="ics-ops-btn ics-ops-btn--ghost"
-          onClick={onClose}
-          aria-label="閉じる"
-        >
-          <X size={16} />
-        </button>
-      </div>
-      {/* .ics-modal__footer と同一構造: キャンセル（左）→ 実行（右） */}
-      <div class="ics-toast-confirm__footer">
-        <button
-          type="button"
-          class="ics-ops-btn ics-ops-btn--ghost"
-          onClick={onClose}
-        >
-          {request.cancelLabel}
-        </button>
-        <button
-          type="button"
-          class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-          onClick={onConfirm}
-        >
-          {request.confirmLabel}
-        </button>
+        <div class="ics-modal__footer">
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost"
+            onClick={onClose}
+          >
+            {request.cancelLabel}
+          </button>
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+            onClick={onConfirm}
+          >
+            {request.confirmLabel}
+          </button>
+        </div>
       </div>
     </div>
   );

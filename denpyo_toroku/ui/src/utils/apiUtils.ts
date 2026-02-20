@@ -4,6 +4,20 @@
 
 const BASE_URL = '/studio';
 
+const extractErrorMessage = (body: any, status: number): string => {
+  if (Array.isArray(body?.errorMessages) && body.errorMessages.length > 0) {
+    return String(body.errorMessages[0]);
+  }
+  const nestedMessage = body?.data?.message;
+  if (typeof nestedMessage === 'string' && nestedMessage.trim()) {
+    return nestedMessage;
+  }
+  if (typeof body?.message === 'string' && body.message.trim()) {
+    return body.message;
+  }
+  return `HTTP ${status}`;
+};
+
 /**
  * DB接続テスト用のタイムアウト設定（秒）
  * バックエンドの _DB_TEST_TIMEOUT_SECONDS と合わせる
@@ -23,7 +37,7 @@ export const apiGet = async <T>(endpoint: string): Promise<T> => {
     throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
   }
   if (!response.ok) {
-    const errMsg = (body.errorMessages && body.errorMessages[0]) || `HTTP ${response.status}`;
+    const errMsg = extractErrorMessage(body, response.status);
     throw new Error(errMsg);
   }
   return body.data !== undefined ? body.data : body;
@@ -46,7 +60,7 @@ export const apiPost = async <T>(endpoint: string, data?: any): Promise<T> => {
     throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
   }
   if (!response.ok) {
-    const errMsg = (body.errorMessages && body.errorMessages[0]) || `HTTP ${response.status}`;
+    const errMsg = extractErrorMessage(body, response.status);
     throw new Error(errMsg);
   }
   return body.data !== undefined ? body.data : body;
@@ -89,7 +103,7 @@ export const apiPostWithTimeout = async <T>(
       throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
     }
     if (!response.ok) {
-      const errMsg = (body.errorMessages && body.errorMessages[0]) || `HTTP ${response.status}`;
+      const errMsg = extractErrorMessage(body, response.status);
       throw new Error(errMsg);
     }
     return body.data !== undefined ? body.data : body;
@@ -117,7 +131,7 @@ export const apiUpload = async <T>(endpoint: string, formData: FormData): Promis
     throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
   }
   if (!response.ok) {
-    const errMsg = (body.errorMessages && body.errorMessages[0]) || `HTTP ${response.status}`;
+    const errMsg = extractErrorMessage(body, response.status);
     throw new Error(errMsg);
   }
   return body.data !== undefined ? body.data : body;
@@ -156,7 +170,7 @@ export const apiUploadWithProgress = async <T>(
       }
 
       if (xhr.status < 200 || xhr.status >= 300) {
-        const errMsg = (body?.errorMessages && body.errorMessages[0]) || `HTTP ${xhr.status}`;
+        const errMsg = extractErrorMessage(body, xhr.status);
         reject(new Error(errMsg));
         return;
       }
@@ -181,7 +195,7 @@ export const apiDelete = async <T>(endpoint: string): Promise<T> => {
     throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
   }
   if (!response.ok) {
-    const errMsg = (body.errorMessages && body.errorMessages[0]) || `HTTP ${response.status}`;
+    const errMsg = extractErrorMessage(body, response.status);
     throw new Error(errMsg);
   }
   return body.data !== undefined ? body.data : body;
@@ -204,7 +218,7 @@ export const apiPut = async <T>(endpoint: string, data?: any): Promise<T> => {
     throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
   }
   if (!response.ok) {
-    const errMsg = (body.errorMessages && body.errorMessages[0]) || `HTTP ${response.status}`;
+    const errMsg = extractErrorMessage(body, response.status);
     throw new Error(errMsg);
   }
   return body.data !== undefined ? body.data : body;
@@ -227,7 +241,7 @@ export const apiPatch = async <T>(endpoint: string, data?: any): Promise<T> => {
     throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
   }
   if (!response.ok) {
-    const errMsg = (body.errorMessages && body.errorMessages[0]) || `HTTP ${response.status}`;
+    const errMsg = extractErrorMessage(body, response.status);
     throw new Error(errMsg);
   }
   return body.data !== undefined ? body.data : body;
