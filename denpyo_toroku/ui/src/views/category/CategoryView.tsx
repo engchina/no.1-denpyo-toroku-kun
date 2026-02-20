@@ -98,7 +98,7 @@ function buildDDLPreview(tableName: string, columns: TableColumnDef[]): string {
   return `CREATE TABLE ${tableName.toUpperCase()} (\n${colDefs.join(',\n')}\n)`;
 }
 
-const DATA_TYPES = ['VARCHAR2', 'NUMBER', 'DATE', 'TIMESTAMP', 'CLOB'] as const;
+const DATA_TYPES = ['VARCHAR2', 'NUMBER', 'DATE', 'TIMESTAMP'] as const;
 
 // ─── Category Edit Modal (existing CRUD) ─────────────────────────────────────
 
@@ -285,6 +285,7 @@ function ColumnRow({
           type="text"
           class="ics-form-input ics-form-input--sm"
           value={col.column_name}
+          title={col.column_name}
           placeholder="COLUMN_NAME"
           onInput={(e: Event) => update({ column_name: (e.target as HTMLInputElement).value.toUpperCase() })}
         />
@@ -294,6 +295,7 @@ function ColumnRow({
           type="text"
           class="ics-form-input ics-form-input--sm"
           value={col.column_name_jp}
+          title={col.column_name_jp}
           placeholder={t('category.designer.colNameJp')}
           onInput={(e: Event) => update({ column_name_jp: (e.target as HTMLInputElement).value })}
         />
@@ -412,9 +414,9 @@ function TableDesigner({
     <div class="ics-table-designer">
       <div class="ics-table-designer__header">
         <Table2 size={16} />
-        <strong>{label}</strong>
+        <span>{label}</span>
       </div>
-      <div class="ics-form-group ics-form-group--inline">
+      <div class="ics-table-designer__table-name-row">
         <label class="ics-form-label">{t('category.designer.tableName')}</label>
         <input
           type="text"
@@ -422,7 +424,6 @@ function TableDesigner({
           value={tableName}
           placeholder="TABLE_NAME"
           onInput={(e: Event) => onTableNameChange((e.target as HTMLInputElement).value.toUpperCase())}
-          style={{ maxWidth: '300px' }}
         />
       </div>
 
@@ -571,12 +572,12 @@ function TableDesignerModal({
 
         <div class="ics-modal__body" style={{ overflowY: 'auto', flex: 1 }}>
           {/* カテゴリ基本情報 */}
-          <div class="ics-card ics-card--flat" style={{ marginBottom: '16px' }}>
+          <div class="ics-card ics-card--flat">
             <div class="ics-card-header">
               <span class="oj-typography-heading-xs">{t('category.designer.categoryInfo')}</span>
             </div>
             <div class="ics-card-body">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                 <div class="ics-form-group">
                   <label class="ics-form-label">{t('category.col.name')} *</label>
                   <input

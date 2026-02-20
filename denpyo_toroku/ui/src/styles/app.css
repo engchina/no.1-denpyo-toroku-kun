@@ -5225,10 +5225,10 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .ics-modal__body {
-    padding: 20px;
+    padding: 16px 20px 20px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
 }
 
 .ics-modal__footer {
@@ -5875,27 +5875,54 @@ html[dir="rtl"] .oracle-icon {
 
 /* table designer */
 .ics-table-designer {
-    background: #fafafa;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 16px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 16px 20px 12px;
     margin-bottom: 12px;
 }
 .ics-table-designer__header {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e2e8f0;
     font-size: 0.9rem;
-    color: #374151;
+    font-weight: 600;
+    color: #1e3a5f;
+}
+.ics-table-designer__table-name-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+.ics-table-designer__table-name-row .ics-form-label {
+    white-space: nowrap;
+    margin-bottom: 0;
+    font-size: 0.84rem;
+}
+.ics-table-designer__table-name-row .ics-form-input {
+    max-width: 220px;
+    text-align: center;
+    font-weight: 600;
+    font-size: 0.9rem;
 }
 .ics-table-designer__grid-wrap {
     overflow-x: auto;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 7px;
+}
+.ics-table-designer__grid-wrap .ics-table {
+    margin-bottom: 0;
 }
 .ics-table-designer__actions {
     display: flex;
     gap: 8px;
+    margin-top: 4px;
     margin-bottom: 8px;
 }
 .ics-table-designer__sql-preview {
@@ -5916,6 +5943,24 @@ html[dir="rtl"] .oracle-icon {
 /* compact table for designer */
 .ics-table--compact th,
 .ics-table--compact td {
-    padding: 5px 8px !important;
-    font-size: 0.82rem;
+    padding: 7px 10px !important;
+    font-size: 0.83rem;
+}
+.ics-table--compact thead tr {
+    background-color: #f1f5f9;
+}
+.ics-table--compact thead th {
+    color: #475569;
+    font-weight: 600;
+    border-bottom: 1px solid #cbd5e1;
+}
+.ics-table--compact tbody tr:nth-child(even) {
+    background-color: #fafbfc;
+}
+/* min-width for editable column cells */
+.ics-table--compact td:nth-child(2) {
+    min-width: 140px;
+}
+.ics-table--compact td:nth-child(3) {
+    min-width: 100px;
 }

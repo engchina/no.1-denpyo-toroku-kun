@@ -132,14 +132,15 @@ class AIService:
         if not client:
             return {"success": False, "message": "AI クライアントが初期化されていません"}
 
-        prompt = """この画像は伝票（ビジネス文書）です。以下の形式で分類してください。
+        prompt = """あなたは伝票・ビジネス文書の分析専門家です。
+この画像に写っている伝票（ビジネス文書）を分類してください。
 
-JSON形式で回答してください:
+JSON形式のみで回答してください:
 {
-  "category": "伝票の種類（例: 請求書, 納品書, 領収書, 注文書, 見積書, その他）",
+  "category": "伝票の種類（例: 請求書, 納品書, 領収書, 注文書, 見積書, 発注書, 仕入伝票, 売上伝票, 出荷伝票, 入荷伝票, 支払伝票, 入金伝票, 振替伝票, 経費精算書, 検収書, 工事請負契約書, その他）",
   "confidence": 0.0〜1.0の確信度,
-  "description": "この伝票の簡単な説明",
-  "has_line_items": true/false（明細行があるかどうか）
+  "description": "この伝票の内容・用途の説明（40字以内）",
+  "has_line_items": true/false（品目・明細行を示すテーブルや繰り返し行があるかどうか）
 }
 
 JSONのみを出力し、他のテキストは含めないでください。"""
@@ -214,29 +215,54 @@ JSONのみを出力し、他のテキストは含めないでください。"""
 
         category_hint = f"この伝票は「{category}」です。" if category else ""
 
-        prompt = f"""この画像は伝票（ビジネス文書）です。{category_hint}
-画像から全てのフィールド情報を抽出してください。
+        prompt = f"""あなたは伝票データ登録の専門家です。
+この画像は伝票（ビジネス文書）です。{category_hint}
 
-以下のJSON形式で回答してください:
+【目的】
+この伝票をデータベースに登録するため、画像に含まれる全ての入力・印字項目をフィールドとして抽出し、Oracle Database のテーブル定義を設計してください。
+
+【抽出ルール】
+- 印字済みの値・手書きの記入欄・空欄のラベルも含めて、全ての項目を漏れなく抽出すること
+- 合計・小計・消費税・税率などの集計項目も含めること
+- 承認欄・担当者印・受領印などの管理項目も含めること（VARCHAR2で）
+- 備考・摘要・メモ欄も含めること
+
+【データ型の選択基準】
+- VARCHAR2: 文字列全般（コード、名称、住所、電話番号、メモ、承認印など）
+- NUMBER: 純粋な数値（金額、数量、単価、税率、個数など）
+- DATE: 日付のみ（伝票日付、納品日、支払期限、有効期限など）
+
+【VARCHAR2のmax_length目安】
+- 伝票番号・コード・型番: 50
+- 担当者名・氏名: 100
+- 会社名・取引先名・部署名: 200
+- 住所: 300
+- 品名・商品名・件名: 200
+- 電話番号・FAX番号: 20
+- メールアドレス: 200
+- 備考・摘要・メモ: 500
+- その他一般的な文字列: 100
+
+【is_required の判定基準】
+- true: その伝票の種類として必ず記入・印字される必須項目（伝票番号・日付・取引先名・合計金額など）
+- false: 任意記入・状況によって空欄になりうる項目
+
+以下のJSON形式のみで回答してください:
 {{
   "header_fields": [
-    {{"field_name": "フィールド名", "field_name_en": "英語名（スネークケース）", "value": "読み取った値", "data_type": "VARCHAR2|NUMBER|DATE", "max_length": 推定最大長}}
+    {{"field_name": "フィールド名（日本語）", "field_name_en": "英語名（snake_case）", "value": "読み取った値（空欄は空文字）", "data_type": "VARCHAR2|NUMBER|DATE", "max_length": 推定最大長（VARCHAR2の場合のみ、他はnull）, "is_required": true/false}}
   ],
   "line_fields": [
-    {{"field_name": "フィールド名", "field_name_en": "英語名（スネークケース）", "value": "読み取った値（1行目）", "data_type": "VARCHAR2|NUMBER|DATE", "max_length": 推定最大長}}
+    {{"field_name": "フィールド名（日本語）", "field_name_en": "英語名（snake_case）", "value": "1行目の値", "data_type": "VARCHAR2|NUMBER|DATE", "max_length": 推定最大長（VARCHAR2の場合のみ、他はnull）, "is_required": true/false}}
   ],
-  "line_count": 明細行の数,
-  "raw_lines": [
-    {{"行番号": 1, "各フィールド名": "値"}}
-  ]
+  "line_count": 明細行の数（明細なしは0）
 }}
 
 注意:
-- header_fields: 伝票ヘッダー情報（伝票番号、日付、取引先名など）
-- line_fields: 明細行のフィールド定義（品名、数量、単価、金額など）
-- raw_lines: 明細行の実データ
-- data_type は Oracle Database の型に合わせてください
-- JSONのみを出力し、他のテキストは含めないでください"""
+- header_fields: 伝票ヘッダー部分の全項目（番号・日付・取引先・金額・税額・備考など）
+- line_fields: 明細行の各カラム定義（品名・数量・単価・金額など）。明細がない場合は空配列
+- field_name_en はスネークケースで統一（例: invoice_date, customer_name, total_amount）
+- JSONのみを出力し、前後に説明文やコードブロックを含めないでください"""
 
         try:
             import oci

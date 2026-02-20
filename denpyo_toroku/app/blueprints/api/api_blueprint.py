@@ -2240,6 +2240,7 @@ def analyze_slips_for_category():
     all_header_fields: List[Dict] = []
     all_line_fields: List[Dict] = []
     category_guesses: List[str] = []
+    total_processed = 0
 
     for rec in file_records:
         try:
@@ -2270,6 +2271,7 @@ def analyze_slips_for_category():
                 all_header_fields.extend(extraction.get("header_fields", []))
                 if analysis_mode == "header_line":
                     all_line_fields.extend(extraction.get("line_fields", []))
+                total_processed += 1
 
         except Exception as e:
             logging.error("ファイル分析エラー (id=%s): %s", rec.get("id"), e, exc_info=True)
@@ -2280,35 +2282,59 @@ def analyze_slips_for_category():
         return jsonify(g.response.get_result()), 500
 
     # フィールドをマージ（同名のものは代表1件に集約、大文字英語名で統一）
+    # is_required が全出現で true かつ全ファイルで登場した場合は NOT NULL とする
     def _merge_fields(fields_list: List[Dict]) -> List[Dict]:
         seen: Dict[str, Dict] = {}
+        required_count: Dict[str, int] = {}  # is_required=true の出現数
+        appear_count: Dict[str, int] = {}    # 総出現数
         for f in fields_list:
-            key = (f.get("field_name_en") or "").strip().upper()
-            if not key:
+            raw_key = (f.get("field_name_en") or "").strip()
+            if not raw_key:
                 continue
+            # snake_case を大文字に統一（スペースはアンダースコアへ）
+            key = raw_key.upper().replace(" ", "_").replace("-", "_")
+            dt = (f.get("data_type") or "VARCHAR2").upper()
+            if dt not in ("VARCHAR2", "NUMBER", "DATE", "TIMESTAMP", "CLOB"):
+                dt = "VARCHAR2"
+
             if key not in seen:
                 seen[key] = {
                     "column_name": key,
-                    "column_name_jp": f.get("field_name") or f.get("field_name_en") or key,
-                    "data_type": (f.get("data_type") or "VARCHAR2").upper(),
-                    "max_length": f.get("max_length") or 500,
+                    "column_name_jp": f.get("field_name") or raw_key,
+                    "data_type": dt,
+                    "max_length": f.get("max_length") or 100,
                     "precision": None,
                     "scale": None,
                     "is_nullable": True,
                     "is_primary_key": False,
                 }
+                appear_count[key] = 1
+                required_count[key] = 1 if f.get("is_required") else 0
             else:
                 # 最大長は大きい方を採用
-                existing_len = seen[key].get("max_length") or 500
-                new_len = f.get("max_length") or 500
+                existing_len = seen[key].get("max_length") or 100
+                new_len = f.get("max_length") or 100
                 seen[key]["max_length"] = max(existing_len, new_len)
+                appear_count[key] += 1
+                if f.get("is_required"):
+                    required_count[key] += 1
+
+        # 全ファイルで is_required=true だった列は NOT NULL に設定
+        for key in seen:
+            if total_processed > 0 and required_count.get(key, 0) == appear_count.get(key, 0) and appear_count.get(key, 0) >= total_processed:
+                seen[key]["is_nullable"] = False
+
         return list(seen.values())
 
     header_columns = _merge_fields(all_header_fields)
     line_columns = _merge_fields(all_line_fields) if analysis_mode == "header_line" else []
 
-    # カテゴリ名推定
-    category_guess = category_guesses[0] if category_guesses else "伝票"
+    # カテゴリ名推定（多数決で最頻出カテゴリを採用）
+    if category_guesses:
+        from collections import Counter
+        category_guess = Counter(category_guesses).most_common(1)[0][0]
+    else:
+        category_guess = "伝票"
     # 英語名の推定（簡易変換）
     category_map = {
         "請求書": "invoice", "領収書": "receipt", "納品書": "delivery_note",
