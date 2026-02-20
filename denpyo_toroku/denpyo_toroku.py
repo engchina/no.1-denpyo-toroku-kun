@@ -18,6 +18,9 @@ app.secret_key = AppConfig.FLASK_APP_STRING or "denpyo-toroku-default-secret-key
 app.session_interface = SecureCookieSessionInterface()
 app.config.from_object("denpyo_toroku.auth_config")
 
+# 最大リクエストサイズ: 単ファイル上限 × 最大ファイル数（10）
+app.config["MAX_CONTENT_LENGTH"] = AppConfig.UPLOAD_MAX_SIZE_MB * 10 * 1024 * 1024
+
 # Debug mode
 app.debug = AppConfig.DENPYO_TOROKU_DEBUG_MODE.lower() == "true" if AppConfig.DENPYO_TOROKU_DEBUG_MODE else False
 

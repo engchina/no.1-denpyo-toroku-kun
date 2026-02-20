@@ -4646,12 +4646,16 @@ html[dir="rtl"] .oracle-icon {
 }
 .ics-upload-fileItem {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     padding: 8px 12px;
     border-radius: 6px;
     background: #f9fafb;
     border: 1px solid #e5e7eb;
+}
+.ics-upload-fileItem__main {
+    min-width: 0;
+    flex: 1;
 }
 .ics-upload-fileItem--error {
     background: #fef2f2;
@@ -4680,6 +4684,42 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     align-items: center;
     gap: 8px;
+    margin-left: 12px;
+}
+.ics-upload-fileItem__progressBarWrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    max-width: 480px;
+}
+.ics-upload-fileItem__progressBar {
+    position: relative;
+    flex: 1;
+    height: 6px;
+    border-radius: 999px;
+    background: #dbeafe;
+    overflow: hidden;
+}
+.ics-upload-fileItem__progressFill {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: #3b82f6;
+    transition: width 160ms ease-in-out;
+}
+.ics-upload-fileItem__progressFill--done {
+    background: #16a34a;
+}
+.ics-upload-fileItem__progressFill--error {
+    background: #dc2626;
+}
+.ics-upload-fileItem__progressText {
+    min-width: 40px;
+    text-align: right;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #6b7280;
 }
 .ics-upload-fileItem__errorMsg {
     display: flex;
@@ -4758,6 +4798,34 @@ html[dir="rtl"] .oracle-icon {
     font-size: 0.85rem;
     color: #3b82f6;
     font-weight: 500;
+}
+.ics-upload-overallProgress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.ics-upload-overallProgress__bar {
+    position: relative;
+    flex: 1;
+    height: 8px;
+    border-radius: 999px;
+    background: #dbeafe;
+    overflow: hidden;
+}
+.ics-upload-overallProgress__fill {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #3b82f6 0%, #2563eb 100%);
+    transition: width 180ms ease-in-out;
+}
+.ics-upload-overallProgress__text {
+    min-width: 42px;
+    text-align: right;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #1d4ed8;
 }
 
 /* ==================== Badge extensions ==================== */

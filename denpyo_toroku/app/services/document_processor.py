@@ -17,16 +17,19 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # 対応ファイル形式
-ALLOWED_EXTENSIONS = {"pdf", "jpeg", "jpg", "png"}
+ALLOWED_EXTENSION_LIST = ("pdf", "jpeg", "jpg", "png", "tif", "tiff")
+ALLOWED_EXTENSIONS = set(ALLOWED_EXTENSION_LIST)
 ALLOWED_CONTENT_TYPES = {
     "application/pdf",
     "image/jpeg",
     "image/jpg",
     "image/png",
+    "image/tiff",
+    "image/tif",
 }
 
 # デフォルト最大サイズ（MB）
-DEFAULT_MAX_SIZE_MB = 20
+DEFAULT_MAX_SIZE_MB = 50
 
 
 class DocumentProcessor:
@@ -48,7 +51,7 @@ class DocumentProcessor:
         if ext not in ALLOWED_EXTENSIONS:
             return {
                 "valid": False,
-                "message": f"対応していないファイル形式です: .{ext} (対応: {', '.join(ALLOWED_EXTENSIONS)})"
+                "message": f"対応していないファイル形式です: .{ext} (対応: {', '.join(ALLOWED_EXTENSION_LIST)})"
             }
 
         if len(file_data) > self._max_size_bytes:
@@ -75,6 +78,8 @@ class DocumentProcessor:
                 return "image/jpeg"
             if file_data[:8] == b'\x89PNG\r\n\x1a\n':
                 return "image/png"
+            if file_data[:4] in (b'II*\x00', b'MM\x00*'):
+                return "image/tiff"
 
         # 拡張子による判定
         ext_map = {
@@ -82,6 +87,8 @@ class DocumentProcessor:
             "jpeg": "image/jpeg",
             "jpg": "image/jpeg",
             "png": "image/png",
+            "tif": "image/tiff",
+            "tiff": "image/tiff",
         }
         return ext_map.get(ext, "application/octet-stream")
 

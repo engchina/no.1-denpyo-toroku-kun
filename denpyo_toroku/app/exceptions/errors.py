@@ -84,7 +84,7 @@ ERR_MESSAGES = {
     ERR_AI_INVALID_INPUT: {
         "message": "AI 分析の入力が不正です: {error}",
         "cause": "入力ファイルが不正、または対応していない形式です。",
-        "action": "対応ファイル形式（PDF, JPEG, PNG）を確認してください。",
+        "action": "対応ファイル形式（PDF, JPEG, PNG, TIFF）を確認してください。",
         "exit_code": 1
     },
     ERR_AI_MODEL_NOT_AVAILABLE: {
@@ -120,7 +120,7 @@ ERR_MESSAGES = {
     ERR_DENPYO_INVALID_FILE: {
         "message": "無効なファイルです: {error}",
         "cause": "アップロードされたファイルが処理できません。",
-        "action": "対応ファイル形式（PDF, JPEG, PNG）と最大サイズを確認してください。",
+        "action": "対応ファイル形式（PDF, JPEG, PNG, TIFF）と最大サイズを確認してください。",
         "exit_code": 1
     },
     ERR_DENPYO_CLASSIFICATION_FAILED: {

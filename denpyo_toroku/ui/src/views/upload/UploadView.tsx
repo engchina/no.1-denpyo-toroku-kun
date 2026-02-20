@@ -3,13 +3,12 @@
  * Drag & Drop + ファイル選択 + バリデーション + アップロード
  * ファイルごとの逐次アップロードと進捗ステータス表示
  */
-import { h } from 'preact';
 import { useState, useCallback, useRef } from 'preact/hooks';
-import { useAppDispatch, useAppSelector } from '../../redux/store';
+import { useAppDispatch } from '../../redux/store';
 import { clearUploadResult, setUploadResult } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
-import { apiUpload } from '../../utils/apiUtils';
-import { FileUploadResponse } from '../../types/denpyoTypes';
+import { apiUploadWithProgress } from '../../utils/apiUtils';
+import type { FileUploadResponse } from '../../types/denpyoTypes';
 import { t } from '../../i18n';
 import {
   Upload,
@@ -22,16 +21,8 @@ import {
   File as FileIcon
 } from 'lucide-react';
 
-const ALLOWED_TYPES = [
-  'application/pdf',
-  'image/jpeg',
-  'image/png',
-  'image/tiff',
-  'image/bmp'
-];
-
-const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp'];
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif'];
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const MAX_FILES = 10;
 
 type UploadFileStatus = 'pending' | 'uploading' | 'done' | 'error';
@@ -41,6 +32,7 @@ interface SelectedFile {
   error: string | null;
   uploadStatus?: UploadFileStatus;
   uploadError?: string;
+  uploadProgress?: number;
 }
 
 function formatFileSize(bytes: number): string {
@@ -64,7 +56,6 @@ function validateFile(file: File): string | null {
 
 export function UploadView() {
   const dispatch = useAppDispatch();
-  const uploadResult = useAppSelector(state => state.denpyo.uploadResult);
 
   const [uploadKind, setUploadKind] = useState<'raw' | 'category'>('raw');
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
@@ -75,7 +66,8 @@ export function UploadView() {
   const addFiles = useCallback((files: FileList | File[]) => {
     const newFiles: SelectedFile[] = Array.from(files).map(file => ({
       file,
-      error: validateFile(file)
+      error: validateFile(file),
+      uploadProgress: 0
     }));
 
     setSelectedFiles(prev => {
@@ -134,7 +126,11 @@ export function UploadView() {
 
     // Mark all valid files as pending
     setSelectedFiles(prev =>
-      prev.map(sf => sf.error ? sf : { ...sf, uploadStatus: 'pending' as UploadFileStatus, uploadError: undefined })
+      prev.map(sf => (
+        sf.error
+          ? sf
+          : { ...sf, uploadStatus: 'pending' as UploadFileStatus, uploadError: undefined, uploadProgress: 0 }
+      ))
     );
 
     const allUploadedFiles: any[] = [];
@@ -145,32 +141,69 @@ export function UploadView() {
 
       // Mark current file as uploading
       setSelectedFiles(prev =>
-        prev.map(s => s.file === fileRef ? { ...s, uploadStatus: 'uploading' as UploadFileStatus } : s)
+        prev.map(s => (
+          s.file === fileRef
+            ? { ...s, uploadStatus: 'uploading' as UploadFileStatus, uploadProgress: Math.max(s.uploadProgress || 0, 1) }
+            : s
+        ))
       );
 
       try {
         const formData = new FormData();
         formData.append('files', fileRef);
         formData.append('upload_kind', uploadKind);
-        const result = await apiUpload<FileUploadResponse>('/api/v1/files/upload', formData);
+        const result = await apiUploadWithProgress<FileUploadResponse>(
+          '/api/v1/files/upload',
+          formData,
+          (progressPercent) => {
+            setSelectedFiles(prev =>
+              prev.map(s => (
+                s.file === fileRef
+                  ? {
+                    ...s,
+                    uploadStatus: 'uploading' as UploadFileStatus,
+                    uploadProgress: Math.max(s.uploadProgress || 0, progressPercent)
+                  }
+                  : s
+              ))
+            );
+          }
+        );
 
         if (result.uploaded_files && result.uploaded_files.length > 0) {
           allUploadedFiles.push(...result.uploaded_files);
           setSelectedFiles(prev =>
-            prev.map(s => s.file === fileRef ? { ...s, uploadStatus: 'done' as UploadFileStatus } : s)
+            prev.map(s => (
+              s.file === fileRef
+                ? { ...s, uploadStatus: 'done' as UploadFileStatus, uploadProgress: 100 }
+                : s
+            ))
           );
         } else {
           const errMsg = (result.errors && result.errors[0]) || t('upload.notify.failed');
           allErrors.push(`${fileRef.name}: ${errMsg}`);
           setSelectedFiles(prev =>
-            prev.map(s => s.file === fileRef ? { ...s, uploadStatus: 'error' as UploadFileStatus, uploadError: errMsg } : s)
+            prev.map(s => (
+              s.file === fileRef
+                ? {
+                  ...s,
+                  uploadStatus: 'error' as UploadFileStatus,
+                  uploadError: errMsg,
+                  uploadProgress: Math.max(s.uploadProgress || 0, 100)
+                }
+                : s
+            ))
           );
         }
       } catch (e: any) {
         const errMsg = e?.message || t('upload.notify.failed');
         allErrors.push(`${fileRef.name}: ${errMsg}`);
         setSelectedFiles(prev =>
-          prev.map(s => s.file === fileRef ? { ...s, uploadStatus: 'error' as UploadFileStatus, uploadError: errMsg } : s)
+          prev.map(s => (
+            s.file === fileRef
+              ? { ...s, uploadStatus: 'error' as UploadFileStatus, uploadError: errMsg }
+              : s
+          ))
         );
       }
     }
@@ -194,17 +227,19 @@ export function UploadView() {
     }));
   }, [selectedFiles, uploadKind, dispatch]);
 
-  const handleClearResult = useCallback(() => {
-    dispatch(clearUploadResult());
-    setSelectedFiles([]);
-  }, [dispatch]);
-
   const validCount = selectedFiles.filter(sf => !sf.error).length;
   const errorCount = selectedFiles.filter(sf => sf.error).length;
 
   // Progress counts for display during upload
   const doneCount = selectedFiles.filter(sf => sf.uploadStatus === 'done' || sf.uploadStatus === 'error').length;
   const totalUploadingCount = selectedFiles.filter(sf => sf.uploadStatus !== undefined && !sf.error).length;
+  const overallProgressPercent = totalUploadingCount > 0
+    ? Math.round(
+      selectedFiles
+        .filter(sf => sf.uploadStatus !== undefined && !sf.error)
+        .reduce((sum, sf) => sum + (sf.uploadProgress || 0), 0) / totalUploadingCount
+    )
+    : 0;
 
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
@@ -287,7 +322,7 @@ export function UploadView() {
                 {/* アップロード中の進捗カウンター */}
                 {isUploadingLocal && totalUploadingCount > 0 && (
                   <span class="ics-upload-progress">
-                    {t('upload.progress', { current: doneCount, total: totalUploadingCount })}
+                    {t('upload.progress', { current: doneCount, total: totalUploadingCount })} ({overallProgressPercent}%)
                   </span>
                 )}
                 {errorCount > 0 && !isUploadingLocal && (
@@ -315,6 +350,17 @@ export function UploadView() {
               </div>
             </div>
             <div class="ics-card-body">
+              {(isUploadingLocal || totalUploadingCount > 0) && (
+                <div class="ics-upload-overallProgress">
+                  <div class="ics-upload-overallProgress__bar">
+                    <div
+                      class="ics-upload-overallProgress__fill"
+                      style={{ width: `${overallProgressPercent}%` }}
+                    />
+                  </div>
+                  <span class="ics-upload-overallProgress__text">{overallProgressPercent}%</span>
+                </div>
+              )}
               <div class="ics-upload-fileList">
                 {selectedFiles.map((sf, index) => {
                   const itemClass = [
@@ -326,10 +372,27 @@ export function UploadView() {
 
                   return (
                     <div key={`${sf.file.name}-${index}`} class={itemClass}>
-                      <div class="ics-upload-fileItem__info">
-                        <FileIcon size={16} />
-                        <span class="ics-upload-fileItem__name">{sf.file.name}</span>
-                        <span class="ics-upload-fileItem__size">{formatFileSize(sf.file.size)}</span>
+                      <div class="ics-upload-fileItem__main">
+                        <div class="ics-upload-fileItem__info">
+                          <FileIcon size={16} />
+                          <span class="ics-upload-fileItem__name">{sf.file.name}</span>
+                          <span class="ics-upload-fileItem__size">{formatFileSize(sf.file.size)}</span>
+                        </div>
+                        {(sf.uploadStatus === 'uploading' || sf.uploadStatus === 'done' || sf.uploadStatus === 'error') && (
+                          <div class="ics-upload-fileItem__progressBarWrap">
+                            <div class="ics-upload-fileItem__progressBar">
+                              <div
+                                class={[
+                                  'ics-upload-fileItem__progressFill',
+                                  sf.uploadStatus === 'error' ? 'ics-upload-fileItem__progressFill--error' : '',
+                                  sf.uploadStatus === 'done' ? 'ics-upload-fileItem__progressFill--done' : ''
+                                ].filter(Boolean).join(' ')}
+                                style={{ width: `${sf.uploadProgress || 0}%` }}
+                              />
+                            </div>
+                            <span class="ics-upload-fileItem__progressText">{sf.uploadProgress || 0}%</span>
+                          </div>
+                        )}
                       </div>
                       <div class="ics-upload-fileItem__actions">
                         {/* バリデーションエラー（アップロード前） */}
@@ -372,54 +435,6 @@ export function UploadView() {
         </section>
       )}
 
-      {/* アップロード結果 */}
-      {uploadResult && (
-        <section class="ics-ops-grid ics-ops-grid--one">
-          <div class="ics-card ics-ops-panel">
-            <div class="ics-card-header oj-flex oj-sm-align-items-center oj-sm-justify-content-space-between">
-              <span class="oj-typography-heading-xs">
-                <CheckCircle size={18} class="ics-icon-success oj-sm-margin-2x-end" />
-                {t('upload.result.title')}
-              </span>
-              <button
-                type="button"
-                class="ics-ops-btn ics-ops-btn--ghost"
-                onClick={handleClearResult}
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <div class="ics-card-body">
-              {uploadResult.uploaded_files.length > 0 && (
-                <div class="ics-upload-resultGroup">
-                  <p class="ics-upload-resultGroup__label">
-                    {t('upload.result.success', { count: uploadResult.uploaded_files.length })}
-                  </p>
-                  {uploadResult.uploaded_files.map(f => (
-                    <div key={f.file_id} class="ics-upload-resultItem ics-upload-resultItem--success">
-                      <CheckCircle size={14} />
-                      <span>{f.file_name}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {uploadResult.errors.length > 0 && (
-                <div class="ics-upload-resultGroup">
-                  <p class="ics-upload-resultGroup__label">
-                    {t('upload.result.errors', { count: uploadResult.errors.length })}
-                  </p>
-                  {uploadResult.errors.map((err, i) => (
-                    <div key={i} class="ics-upload-resultItem ics-upload-resultItem--error">
-                      <AlertCircle size={14} />
-                      <span>{err}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-      )}
     </div>
   );
 }

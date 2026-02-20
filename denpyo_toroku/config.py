@@ -59,11 +59,11 @@ class AppConfig:
     # Storage limits
     UPLOAD_MAX_SIZE_MB = int(os.environ.get(
         "UPLOAD_MAX_SIZE_MB",
-        config.get("storage", "upload_max_size_mb", fallback="20")
+        config.get("storage", "upload_max_size_mb", fallback="50")
     ))
     ALLOWED_EXTENSIONS = os.environ.get(
         "ALLOWED_EXTENSIONS",
-        config.get("storage", "allowed_extensions", fallback="pdf,jpeg,jpg,png")
+        config.get("storage", "allowed_extensions", fallback="pdf,jpeg,jpg,png,tif,tiff")
     ).split(",")
 
     # Base directory (denpyo_toroku/)

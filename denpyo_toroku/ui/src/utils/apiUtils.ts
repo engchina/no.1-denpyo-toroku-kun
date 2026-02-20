@@ -123,6 +123,51 @@ export const apiUpload = async <T>(endpoint: string, formData: FormData): Promis
   return body.data !== undefined ? body.data : body;
 };
 
+export type UploadProgressHandler = (progressPercent: number) => void;
+
+export const apiUploadWithProgress = async <T>(
+  endpoint: string,
+  formData: FormData,
+  onProgress?: UploadProgressHandler
+): Promise<T> => {
+  return await new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE_URL}${endpoint}`, true);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('Accept', 'application/json');
+
+    xhr.upload.onprogress = (event: ProgressEvent<EventTarget>) => {
+      if (!onProgress || !event.lengthComputable) return;
+      const percent = Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100)));
+      onProgress(percent);
+    };
+
+    xhr.onerror = () => {
+      reject(new Error('ネットワークエラーが発生しました'));
+    };
+
+    xhr.onload = () => {
+      let body: any;
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        reject(new Error(`サーバーが JSON ではない応答を返しました（HTTP ${xhr.status}）`));
+        return;
+      }
+
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const errMsg = (body?.errorMessages && body.errorMessages[0]) || `HTTP ${xhr.status}`;
+        reject(new Error(errMsg));
+        return;
+      }
+
+      resolve(body?.data !== undefined ? body.data : body);
+    };
+
+    xhr.send(formData);
+  });
+};
+
 export const apiDelete = async <T>(endpoint: string): Promise<T> => {
   const response = await fetch(`${BASE_URL}${endpoint}`, {
     method: 'DELETE',
