@@ -5644,6 +5644,19 @@ html[dir="rtl"] .oracle-icon {
     background: transparent;
 }
 
+/* Align Search bulk-delete button style with File List view (ghost priority over danger) */
+.ics-search-view .ics-ops-btn--ghost.ics-ops-btn--danger {
+    background: #fff;
+    color: #275a91;
+    border-color: #c6d8ea;
+}
+
+.ics-search-view .ics-ops-btn--ghost.ics-ops-btn--danger:hover:not(:disabled) {
+    background: #f3f8ff;
+    border-color: #b6c9de;
+    color: #275a91;
+}
+
 /* Search content */
 .ics-search-content {
     width: 100%;
@@ -6003,6 +6016,68 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.ics-card-header--table-toolbar {
+    align-items: stretch;
+}
+
+.ics-unified-table-header {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+}
+
+.ics-unified-table-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    width: 100%;
+    border-top: 1px solid #e8edf4;
+    padding-top: 8px;
+}
+
+.ics-unified-table-toolbar__group {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 30px;
+}
+
+.ics-unified-table-toolbar__group:empty {
+    display: none;
+}
+
+.ics-unified-table-toolbar__group--secondary {
+    margin-left: auto;
+    justify-content: flex-end;
+}
+
+.ics-unified-table-toolbar__meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid #d6e2ef;
+    border-radius: 999px;
+    background: #f7fbff;
+    color: #456788;
+    padding: 3px 10px;
+    font-size: 0.77rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+@media (max-width: 960px) {
+    .ics-unified-table-toolbar__group,
+    .ics-unified-table-toolbar__group--secondary {
+        width: 100%;
+        justify-content: flex-start;
+        margin-left: 0;
+    }
 }
 
 /* table row selected */

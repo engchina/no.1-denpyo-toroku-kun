@@ -24,7 +24,6 @@ import type { FileStatus } from '../../types/denpyoTypes';
 import {
   RefreshCw,
   Trash2,
-  Filter,
   Sparkles,
   Loader2,
   Eye,
@@ -67,32 +66,8 @@ const FILE_LIST_QUERY_SCOPE = 'fl';
 
 type SortKey = 'file_name' | 'file_size' | 'status' | 'uploaded_at';
 type SortDirection = 'asc' | 'desc';
-const FILE_LIST_SORT_STORAGE_KEY = 'denpyo.fileList.sort.v1';
-
-const SORT_LABEL_KEYS: Record<SortKey, Parameters<typeof t>[0]> = {
-  file_name: 'fileList.col.name',
-  file_size: 'fileList.col.size',
-  status: 'fileList.col.status',
-  uploaded_at: 'fileList.col.uploadedAt'
-};
-
-function loadSortPreference(): { sortKey: SortKey; sortDirection: SortDirection } | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(FILE_LIST_SORT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { sortKey?: SortKey; sortDirection?: SortDirection };
-    if (!parsed.sortKey || !parsed.sortDirection) return null;
-    if (!Object.keys(SORT_LABEL_KEYS).includes(parsed.sortKey)) return null;
-    if (parsed.sortDirection !== 'asc' && parsed.sortDirection !== 'desc') return null;
-    return {
-      sortKey: parsed.sortKey,
-      sortDirection: parsed.sortDirection
-    };
-  } catch {
-    return null;
-  }
-}
+const DEFAULT_FILE_LIST_SORT_KEY: SortKey = 'uploaded_at';
+const DEFAULT_FILE_LIST_SORT_DIRECTION: SortDirection = 'desc';
 
 function StatusBadge({ status }: { status: FileStatus }) {
   const classMap: Record<FileStatus, string> = {
@@ -130,8 +105,8 @@ export function ListView() {
   const isCategoriesLoading = useAppSelector(state => state.denpyo.isCategoriesLoading);
   const [goToPageInput, setGoToPageInput] = useState('');
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
-  const [sortKey, setSortKey] = useState<SortKey>('uploaded_at');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [sortKey, setSortKey] = useState<SortKey>(DEFAULT_FILE_LIST_SORT_KEY);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(DEFAULT_FILE_LIST_SORT_DIRECTION);
   const [previewTarget, setPreviewTarget] = useState<{ fileId: string; fileName: string } | null>(null);
   const [analyzeTarget, setAnalyzeTarget] = useState<{ fileId: string; fileName: string } | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
@@ -191,22 +166,6 @@ export function ListView() {
     const currentIds = new Set(files.map(f => String(f.file_id)));
     setSelectedFileIds(prev => prev.filter(id => currentIds.has(id)));
   }, [files]);
-
-  useEffect(() => {
-    const pref = loadSortPreference();
-    if (!pref) return;
-    setSortKey(pref.sortKey);
-    setSortDirection(pref.sortDirection);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(FILE_LIST_SORT_STORAGE_KEY, JSON.stringify({ sortKey, sortDirection }));
-    } catch {
-      // ignore storage errors
-    }
-  }, [sortKey, sortDirection]);
 
   useEffect(() => {
     if (!analyzeTarget || selectedCategoryId) return;
@@ -350,7 +309,6 @@ export function ListView() {
       return nextKey;
     });
   }, []);
-
   const toggleFileSelection = useCallback((fileId: string) => {
     setSelectedFileIds(prev => (
       prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
@@ -449,7 +407,6 @@ export function ListView() {
     if (sortKey !== key) return <ArrowUpDown size={13} />;
     return sortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
   };
-  const currentSortDirectionLabel = sortDirection === 'asc' ? t('fileList.sort.asc') : t('fileList.sort.desc');
   const rangeStart = total === 0 ? 0 : ((page - 1) * pageSize) + 1;
   const rangeEnd = total === 0 ? 0 : Math.min(page * pageSize, total);
 
@@ -492,40 +449,38 @@ export function ListView() {
       {/* フィルタ + テーブル */}
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header oj-flex oj-sm-align-items-center oj-sm-justify-content-space-between">
-            <span class="oj-typography-heading-xs">{t('fileList.tableTitle')}</span>
-            <div class="ics-fileListView__toolbar">
-              <div class="ics-fileListView__toolbarPrimary">
-                <button
-                  type="button"
-                  class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                  onClick={handleBulkDelete}
-                  disabled={isDeleting || isLoading || selectedFileIds.length === 0}
-                  title={t('fileList.bulkDelete')}
-                >
-                  <Trash2 size={14} />
-                  <span>{t('fileList.bulkDelete')}</span>
-                </button>
-              </div>
-              <div class="ics-fileListView__toolbarSecondary">
-                <span class="ics-fileListView__filterIcon"><Filter size={14} /></span>
-                <select
-                  class="ics-select"
-                  value={statusFilter || ''}
-                  onChange={handleStatusChange}
-                  disabled={isLoading || isDeleting}
-                >
-                  {STATUS_OPTIONS.map(opt => (
-                    <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
-                  ))}
-                </select>
-                <span class="ics-fileListView__sortIndicator">
-                  {sortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
-                  {t('fileList.sort.current', {
-                    field: t(SORT_LABEL_KEYS[sortKey]),
-                    direction: currentSortDirectionLabel
-                  })}
-                </span>
+          <div class="ics-card-header ics-card-header--table-toolbar">
+            <div class="ics-unified-table-header">
+              <span class="oj-typography-heading-xs">{t('fileList.tableTitle')}</span>
+              <div class="ics-unified-table-toolbar">
+                <div class="ics-unified-table-toolbar__group">
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                    onClick={handleBulkDelete}
+                    disabled={isDeleting || isLoading || selectedFileIds.length === 0}
+                    title={t('fileList.bulkDelete')}
+                  >
+                    <Trash2 size={14} />
+                    <span>{t('fileList.bulkDelete')}</span>
+                  </button>
+                  <span class="ics-unified-table-toolbar__meta">
+                    {t('fileList.selectedCount', { count: selectedFileIds.length })}
+                  </span>
+                </div>
+                <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                  <select
+                    class="ics-select"
+                    value={statusFilter || ''}
+                    onChange={handleStatusChange}
+                    disabled={isLoading || isDeleting}
+                    aria-label={t('fileList.filter.all')}
+                  >
+                    {STATUS_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
           </div>

@@ -4,7 +4,7 @@
  * - テーブルブラウザ (直接閲覧)
  */
 import type { ComponentChildren } from 'preact';
-import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
 import { useAppSelector, useAppDispatch } from '../../redux/store';
 import {
   fetchSearchableTables,
@@ -24,12 +24,45 @@ import { t } from '../../i18n';
 import { apiPost } from '../../utils/apiUtils';
 import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
 import type { NLSearchResponse, SearchableTable, TableBrowseResult, TableBrowserTable } from '../../types/denpyoTypes';
-import { Search, Database, Copy, Check, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { Search, Database, Copy, Check, Loader2, RefreshCw, Trash2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 type TabType = 'nlSearch' | 'tableBrowser';
 const SEARCH_PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
 const SEARCH_TABLE_LIST_QUERY_SCOPE = 'sbtl';
 const SEARCH_DATA_PREVIEW_QUERY_SCOPE = 'sbdp';
+type SortDirection = 'asc' | 'desc';
+type TableListSortKey = 'table_name' | 'category_name' | 'table_type' | 'row_count' | 'column_count' | 'created_at';
+
+function compareValues(a: unknown, b: unknown): number {
+  if (a === b) return 0;
+  if (a === null || a === undefined) return -1;
+  if (b === null || b === undefined) return 1;
+
+  if (typeof a === 'number' && typeof b === 'number') {
+    return a - b;
+  }
+
+  const aDate = new Date(String(a)).getTime();
+  const bDate = new Date(String(b)).getTime();
+  if (!Number.isNaN(aDate) && !Number.isNaN(bDate)) {
+    return aDate - bDate;
+  }
+
+  const aNum = Number(a);
+  const bNum = Number(b);
+  if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) {
+    return aNum - bNum;
+  }
+
+  return String(a).localeCompare(String(b), 'ja');
+}
+
+function getDefaultDataSortColumn(columns: string[]): string {
+  if (!columns.length) return '';
+  const target = new Set(['created_at', 'uploaded_at', 'create_time', 'upload_time', 'created_date', 'uploaded_date']);
+  const matched = columns.find((col) => target.has(col.trim().toLowerCase()));
+  return matched || columns[0];
+}
 
 export function SearchView() {
   const dispatch = useAppDispatch();
@@ -320,10 +353,47 @@ function TableBrowserTab({
   });
   const [goToPageInput, setGoToPageInput] = useState('');
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
+  const [isBulkDeletingRows, setIsBulkDeletingRows] = useState(false);
+  const [tableListSortKey, setTableListSortKey] = useState<TableListSortKey>('created_at');
+  const [tableListSortDirection, setTableListSortDirection] = useState<SortDirection>('desc');
+  const [dataSortColumn, setDataSortColumn] = useState('');
+  const [dataSortDirection, setDataSortDirection] = useState<SortDirection>('desc');
   const isTableListPageSizeInitRef = useRef(true);
 
+  const sortedTableBrowserTables = useMemo(() => {
+    const factor = tableListSortDirection === 'asc' ? 1 : -1;
+    return [...tableBrowserTables].sort((a, b) => {
+      if (tableListSortKey === 'table_name') {
+        return factor * a.table_name.localeCompare(b.table_name, 'ja');
+      }
+      if (tableListSortKey === 'category_name') {
+        return factor * a.category_name.localeCompare(b.category_name, 'ja');
+      }
+      if (tableListSortKey === 'table_type') {
+        return factor * a.table_type.localeCompare(b.table_type, 'en');
+      }
+      if (tableListSortKey === 'row_count') {
+        return factor * ((a.row_count || 0) - (b.row_count || 0));
+      }
+      if (tableListSortKey === 'column_count') {
+        return factor * ((a.column_count || 0) - (b.column_count || 0));
+      }
+      const aTime = new Date(a.created_at || '').getTime() || 0;
+      const bTime = new Date(b.created_at || '').getTime() || 0;
+      return factor * (aTime - bTime);
+    });
+  }, [tableBrowserTables, tableListSortDirection, tableListSortKey]);
+
+  const sortedDataRows = useMemo(() => {
+    if (!result?.rows || result.rows.length === 0 || !dataSortColumn) {
+      return result?.rows || [];
+    }
+    const factor = dataSortDirection === 'asc' ? 1 : -1;
+    return [...result.rows].sort((a, b) => factor * compareValues(a[dataSortColumn], b[dataSortColumn]));
+  }, [result?.rows, dataSortColumn, dataSortDirection]);
+
   // テーブル一覧ページネーション (client-side via usePagination hook)
-  const tableListPagination = usePagination(tableBrowserTables, {
+  const tableListPagination = usePagination(sortedTableBrowserTables, {
     pageSize: tableListPageSize,
     initialPage: tableListInitialPage
   });
@@ -360,6 +430,11 @@ function TableBrowserTab({
   }, [tableListPageSize]);
 
   useEffect(() => {
+    tableListPagination.reset();
+    tableListSelection.deselectAll();
+  }, [tableListSortKey, tableListSortDirection]);
+
+  useEffect(() => {
     const params = getCurrentSearchParams();
     setScopedValue(params, SEARCH_TABLE_LIST_QUERY_SCOPE, 'p', tableListPagination.currentPage);
     setScopedValue(params, SEARCH_TABLE_LIST_QUERY_SCOPE, 'ps', tableListPageSize);
@@ -374,23 +449,34 @@ function TableBrowserTab({
   }, [page, dataPageSize]);
 
   useEffect(() => {
-    if (!selectedTable && tableBrowserTables.length > 0) {
-      setSelectedTable(tableBrowserTables[0]);
+    if (!selectedTable && sortedTableBrowserTables.length > 0) {
+      setSelectedTable(sortedTableBrowserTables[0]);
       return;
     }
     if (selectedTable) {
-      const stillExists = tableBrowserTables.some(table =>
+      const stillExists = sortedTableBrowserTables.some(table =>
         table.table_name === selectedTable.table_name &&
         table.table_type === selectedTable.table_type &&
         table.category_id === selectedTable.category_id
       );
       if (!stillExists) {
-        setSelectedTable(tableBrowserTables[0] || null);
+        setSelectedTable(sortedTableBrowserTables[0] || null);
         setPage(1);
         tableListPagination.reset();
       }
     }
-  }, [tableBrowserTables, selectedTable]);
+  }, [sortedTableBrowserTables, selectedTable]);
+
+  useEffect(() => {
+    if (!result?.columns || result.columns.length === 0) {
+      setDataSortColumn('');
+      return;
+    }
+    if (!dataSortColumn || !result.columns.includes(dataSortColumn)) {
+      setDataSortColumn(getDefaultDataSortColumn(result.columns));
+      setDataSortDirection('desc');
+    }
+  }, [result?.columns, dataSortColumn]);
 
   // Load data when selected table or page changes
   useEffect(() => {
@@ -406,20 +492,40 @@ function TableBrowserTab({
 
   const noTables = !isTablesLoading && searchableTables.length === 0;
   const totalPages = result?.total_pages || 1;
-  const tableListStatusLabel = isTableListLoading
-    ? t('search.browser.tableListStatus.loading')
-    : tableBrowserTables.length > 0
-      ? t('search.browser.tableListStatus.loaded')
-      : t('search.browser.tableListStatus.empty');
-  const tableListStatusClass = isTableListLoading
-    ? 'ics-browser-status-badge ics-browser-status-badge--loading'
-    : tableBrowserTables.length > 0
-      ? 'ics-browser-status-badge ics-browser-status-badge--success'
-      : 'ics-browser-status-badge';
 
   const handleRefreshTables = useCallback(() => {
     dispatch(fetchTableBrowserTables());
   }, [dispatch]);
+  const handleRefreshData = useCallback(() => {
+    if (!selectedTable?.table_name) return;
+    dispatch(fetchTableDataByName({
+      tableName: selectedTable.table_name,
+      tableType: selectedTable.table_type,
+      page,
+      pageSize: dataPageSize,
+    }));
+  }, [dispatch, selectedTable, page, dataPageSize]);
+  const handleTableListSort = useCallback((nextKey: TableListSortKey) => {
+    setTableListSortKey(prevKey => {
+      if (prevKey === nextKey) {
+        setTableListSortDirection(prevDir => (prevDir === 'asc' ? 'desc' : 'asc'));
+        return prevKey;
+      }
+      setTableListSortDirection('asc');
+      return nextKey;
+    });
+  }, []);
+  const handleDataSort = useCallback((nextColumn: string) => {
+    if (!nextColumn) return;
+    setDataSortColumn(prevColumn => {
+      if (prevColumn === nextColumn) {
+        setDataSortDirection(prevDir => (prevDir === 'asc' ? 'desc' : 'asc'));
+        return prevColumn;
+      }
+      setDataSortDirection('asc');
+      return nextColumn;
+    });
+  }, []);
 
   const handleTableSelect = useCallback((table: TableBrowserTable) => {
     setSelectedTable(table);
@@ -491,6 +597,58 @@ function TableBrowserTab({
     });
   }, [dispatch, getRowId, selectedTable, page, dataPageSize, requestConfirm]);
 
+  const handleBulkDeleteRows = useCallback(() => {
+    if (!selectedTable || dataRowSelection.selectedCount === 0) return;
+    const targetRowIds = Array.from(dataRowSelection.selectedIds);
+    requestConfirm({
+      message: t('search.browser.confirmBulkDelete', { count: targetRowIds.length }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        setIsBulkDeletingRows(true);
+        let deletedCount = 0;
+        let failedCount = 0;
+        for (const rowId of targetRowIds) {
+          try {
+            await apiPost<{ success: boolean }>('/api/v1/search/table-browser/delete-row', {
+              table_name: selectedTable.table_name,
+              row_id: rowId,
+            });
+            deletedCount += 1;
+          } catch {
+            failedCount += 1;
+          }
+        }
+        dataRowSelection.deselectAll();
+        dispatch(fetchTableBrowserTables());
+        dispatch(fetchTableDataByName({
+          tableName: selectedTable.table_name,
+          tableType: selectedTable.table_type,
+          page,
+          pageSize: dataPageSize,
+        }));
+        if (deletedCount > 0 && failedCount === 0) {
+          dispatch(addNotification({
+            type: 'success',
+            message: t('search.browser.bulkDeleteSuccess', { count: deletedCount }),
+          }));
+        } else if (deletedCount > 0) {
+          dispatch(addNotification({
+            type: 'warning',
+            message: t('search.browser.bulkDeletePartial', { deleted: deletedCount, errors: failedCount }),
+          }));
+        } else {
+          dispatch(addNotification({
+            type: 'error',
+            message: t('search.browser.bulkDeleteFailed'),
+          }));
+        }
+        setIsBulkDeletingRows(false);
+      },
+    });
+  }, [selectedTable, dataRowSelection.selectedCount, dataRowSelection.selectedIds, requestConfirm, dispatch, page, dataPageSize]);
+
   const handleDataPageSizeChange = useCallback((nextPageSize: number) => {
     if (!SEARCH_PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize)) return;
     setDataPageSize(nextPageSize);
@@ -502,23 +660,44 @@ function TableBrowserTab({
   const tableListRangeEnd = tableListPagination.totalItems === 0 ? 0 : tableListPagination.endIndex;
   const dataRangeStart = (result?.total || 0) === 0 ? 0 : ((page - 1) * dataPageSize) + 1;
   const dataRangeEnd = (result?.total || 0) === 0 ? 0 : Math.min(page * dataPageSize, result?.total || 0);
+  const renderTableListSortIcon = (key: TableListSortKey) => {
+    if (tableListSortKey !== key) return <ArrowUpDown size={13} />;
+    return tableListSortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
+  };
 
   return (
     <div class="ics-table-browser">
       <div class="ics-browser-panel">
-        <div class="ics-browser-panel__header">
-          <span class="ics-browser-panel__title">{t('search.browser.tableListTitle')}</span>
-          <div class="ics-browser-panel__actions">
-            <button
-              type="button"
-              class="ics-copy-btn"
-              onClick={handleRefreshTables}
-              disabled={isTableListLoading}
-            >
-              {isTableListLoading ? <Loader2 size={14} class="ics-spinner" /> : <RefreshCw size={14} />}
-              <span>{t('search.browser.refresh')}</span>
-            </button>
-            <span class={tableListStatusClass}>{tableListStatusLabel}</span>
+        <div class="ics-browser-panel__header ics-card-header ics-card-header--table-toolbar">
+          <div class="ics-unified-table-header">
+            <span class="ics-browser-panel__title">{t('search.browser.tableListTitle')}</span>
+              <div class="ics-unified-table-toolbar">
+                <div class="ics-unified-table-toolbar__group">
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                    onClick={handleBulkDeleteRows}
+                    disabled={dataRowSelection.selectedCount === 0 || isBulkDeletingRows || isLoading}
+                  >
+                    <Trash2 size={14} />
+                    <span>{t('fileList.bulkDelete')}</span>
+                  </button>
+                  <span class="ics-unified-table-toolbar__meta">
+                    {t('search.browser.selectedTables', { count: tableListSelection.selectedCount })}
+                  </span>
+                </div>
+              <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                <button
+                  type="button"
+                  class="ics-ops-btn ics-ops-btn--ghost"
+                  onClick={handleRefreshTables}
+                  disabled={isTableListLoading}
+                >
+                  {isTableListLoading ? <Loader2 size={14} class="ics-spinner" /> : <RefreshCw size={14} />}
+                  <span>{t('search.browser.refresh')}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -551,12 +730,42 @@ function TableBrowserTab({
                         aria-label={t('common.selectAll')}
                       />
                     </th>
-                    <th>{t('search.browser.col.tableName')}</th>
-                    <th>{t('search.browser.col.category')}</th>
-                    <th>{t('search.browser.col.type')}</th>
-                    <th>{t('search.browser.col.rows')}</th>
-                    <th>{t('search.browser.col.columns')}</th>
-                    <th>{t('search.browser.col.createdAt')}</th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_name')}>
+                        {t('search.browser.col.tableName')}
+                        {renderTableListSortIcon('table_name')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('category_name')}>
+                        {t('search.browser.col.category')}
+                        {renderTableListSortIcon('category_name')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_type')}>
+                        {t('search.browser.col.type')}
+                        {renderTableListSortIcon('table_type')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('row_count')}>
+                        {t('search.browser.col.rows')}
+                        {renderTableListSortIcon('row_count')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('column_count')}>
+                        {t('search.browser.col.columns')}
+                        {renderTableListSortIcon('column_count')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('created_at')}>
+                        {t('search.browser.col.createdAt')}
+                        {renderTableListSortIcon('created_at')}
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -625,20 +834,41 @@ function TableBrowserTab({
 
       {selectedTable && (
         <div class="ics-browser-panel oj-sm-margin-4x-top">
-          <div class="ics-browser-panel__header">
-            <div class="ics-browser-title-wrap">
-              <span class="ics-browser-panel__title">
-                {t('search.browser.previewTitle')}
-              </span>
-              <span class="ics-browser-table-chip">{selectedTable.table_name}</span>
-            </div>
-            <div class="ics-results-header">
-              <span class="oj-typography-body-sm">
-                {t('search.browser.totalRows').replace('{count}', String(result?.total || 0))}
-              </span>
-              <span class="oj-typography-body-sm">
-                {t('search.browser.lastAnalyzed').replace('{value}', formatDateTime(selectedTable.last_analyzed))}
-              </span>
+          <div class="ics-browser-panel__header ics-card-header ics-card-header--table-toolbar">
+            <div class="ics-unified-table-header">
+              <div class="ics-browser-title-wrap">
+                <span class="ics-browser-panel__title">
+                  {t('search.browser.previewTitle')}
+                </span>
+                <span class="ics-browser-table-chip">{selectedTable.table_name}</span>
+              </div>
+              <div class="ics-unified-table-toolbar">
+                <div class="ics-unified-table-toolbar__group">
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                    onClick={handleBulkDeleteRows}
+                    disabled={dataRowSelection.selectedCount === 0 || isBulkDeletingRows || isLoading}
+                  >
+                    <Trash2 size={14} />
+                    <span>{t('fileList.bulkDelete')}</span>
+                  </button>
+                  <span class="ics-unified-table-toolbar__meta">
+                    {t('search.browser.selectedRows', { count: dataRowSelection.selectedCount })}
+                  </span>
+                </div>
+                <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={handleRefreshData}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? <Loader2 size={14} class="ics-spinner" /> : <RefreshCw size={14} />}
+                    <span>{t('search.browser.refresh')}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -655,7 +885,10 @@ function TableBrowserTab({
                 <>
                   <ResultsTable
                     columns={result.columns}
-                    rows={result.rows}
+                    rows={sortedDataRows}
+                    sortColumn={dataSortColumn}
+                    sortDirection={dataSortDirection}
+                    onSortColumn={handleDataSort}
                     actionColumnLabel={t('search.browser.col.actions')}
                     renderRowActions={(row) => {
                       const rowId = getRowId(row);
@@ -722,13 +955,25 @@ function TableBrowserTab({
 interface ResultsTableProps {
   columns: string[];
   rows: Record<string, any>[];
+  sortColumn?: string;
+  sortDirection?: SortDirection;
+  onSortColumn?: (column: string) => void;
   actionColumnLabel?: string;
   renderRowActions?: (row: Record<string, any>) => ComponentChildren;
   /** Optional selection support via useSelection hook */
   selection?: UseSelectionResult<Record<string, any>>;
 }
 
-function ResultsTable({ columns, rows, actionColumnLabel, renderRowActions, selection }: ResultsTableProps) {
+function ResultsTable({
+  columns,
+  rows,
+  sortColumn,
+  sortDirection,
+  onSortColumn,
+  actionColumnLabel,
+  renderRowActions,
+  selection
+}: ResultsTableProps) {
   if (!columns || columns.length === 0) return null;
 
   return (
@@ -763,7 +1008,21 @@ function ResultsTable({ columns, rows, actionColumnLabel, renderRowActions, sele
               </th>
             )}
             {columns.map(col => (
-              <th key={col}>{col}</th>
+              <th key={col}>
+                {onSortColumn ? (
+                  <button type="button" class="ics-fileListView__sortBtn" onClick={() => onSortColumn(col)}>
+                    {col}
+                    {sortColumn !== col
+                      ? <ArrowUpDown size={13} />
+                      : sortDirection === 'asc'
+                        ? <ArrowUp size={13} />
+                        : <ArrowDown size={13} />
+                    }
+                  </button>
+                ) : (
+                  col
+                )}
+              </th>
             ))}
             {renderRowActions && <th>{actionColumnLabel || ''}</th>}
           </tr>

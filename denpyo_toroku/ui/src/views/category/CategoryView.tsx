@@ -9,13 +9,14 @@
  *     4. テーブル作成 → カテゴリ登録
  *  B. カテゴリ一覧 CRUD (参照・編集・削除・有効/無効)
  */
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import {
   fetchCategories,
   updateCategory,
   toggleCategoryActive,
   deleteCategory,
+  bulkDeleteFiles,
   fetchSlipsCategoryFiles,
   analyzeSlipsForCategory,
   createCategoryWithTables,
@@ -55,6 +56,9 @@ import {
   FileText,
   Table2,
   ImageIcon,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 
 // ─── Utils ───────────────────────────────────────────────────────────────────
@@ -109,6 +113,15 @@ const DATA_TYPES = ['VARCHAR2', 'NUMBER', 'DATE', 'TIMESTAMP'] as const;
 const PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
 const CATEGORY_SAMPLES_QUERY_SCOPE = 'cs';
 const CATEGORY_MANAGEMENT_QUERY_SCOPE = 'cm';
+type SortDirection = 'asc' | 'desc';
+type SlipsSortKey = 'file_name' | 'file_type' | 'file_size' | 'uploaded_at';
+type CategorySortKey =
+  | 'category_name'
+  | 'category_name_en'
+  | 'header_table_name'
+  | 'registration_count'
+  | 'is_active'
+  | 'created_at';
 
 // ─── Category Edit Modal (existing CRUD) ─────────────────────────────────────
 
@@ -830,7 +843,13 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const [editTarget, setEditTarget] = useState<DenpyoCategory | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
+  const [isBulkDeletingSlips, setIsBulkDeletingSlips] = useState(false);
+  const [isBulkDeletingCategories, setIsBulkDeletingCategories] = useState(false);
   const [slipsGoToPageInput, setSlipsGoToPageInput] = useState('');
+  const [slipsSortKey, setSlipsSortKey] = useState<SlipsSortKey>('uploaded_at');
+  const [slipsSortDirection, setSlipsSortDirection] = useState<SortDirection>('desc');
+  const [categorySortKey, setCategorySortKey] = useState<CategorySortKey>('created_at');
+  const [categorySortDirection, setCategorySortDirection] = useState<SortDirection>('desc');
   const [categoryPageSize, setCategoryPageSize] = useState(() => {
     if (mode !== 'management') return 20;
     const nextPageSize = readScopedNumber(initialSearchParams, CATEGORY_MANAGEMENT_QUERY_SCOPE, 'ps', 20);
@@ -844,8 +863,50 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const [isSamplesQueryReady, setIsSamplesQueryReady] = useState(mode !== 'samples');
   const isCategoryPageSizeInitRef = useRef(true);
 
+  const sortedSlipsCategoryFiles = useMemo(() => {
+    const factor = slipsSortDirection === 'asc' ? 1 : -1;
+    return [...slipsCategoryFiles].sort((a, b) => {
+      if (slipsSortKey === 'file_name') {
+        return factor * a.file_name.localeCompare(b.file_name, 'ja');
+      }
+      if (slipsSortKey === 'file_type') {
+        return factor * (a.file_type || '').localeCompare(b.file_type || '', 'ja');
+      }
+      if (slipsSortKey === 'file_size') {
+        return factor * ((a.file_size || 0) - (b.file_size || 0));
+      }
+      const aTime = new Date(a.uploaded_at || '').getTime() || 0;
+      const bTime = new Date(b.uploaded_at || '').getTime() || 0;
+      return factor * (aTime - bTime);
+    });
+  }, [slipsCategoryFiles, slipsSortDirection, slipsSortKey]);
+
+  const sortedCategories = useMemo(() => {
+    const factor = categorySortDirection === 'asc' ? 1 : -1;
+    return [...categories].sort((a, b) => {
+      if (categorySortKey === 'category_name') {
+        return factor * a.category_name.localeCompare(b.category_name, 'ja');
+      }
+      if (categorySortKey === 'category_name_en') {
+        return factor * (a.category_name_en || '').localeCompare(b.category_name_en || '', 'en');
+      }
+      if (categorySortKey === 'header_table_name') {
+        return factor * (a.header_table_name || '').localeCompare(b.header_table_name || '', 'en');
+      }
+      if (categorySortKey === 'registration_count') {
+        return factor * ((a.registration_count || 0) - (b.registration_count || 0));
+      }
+      if (categorySortKey === 'is_active') {
+        return factor * (Number(a.is_active) - Number(b.is_active));
+      }
+      const aTime = new Date(a.created_at || '').getTime() || 0;
+      const bTime = new Date(b.created_at || '').getTime() || 0;
+      return factor * (aTime - bTime);
+    });
+  }, [categories, categorySortDirection, categorySortKey]);
+
   // カテゴリ一覧ページネーション (client-side)
-  const categoryPagination = usePagination(categories, { pageSize: categoryPageSize, initialPage: categoryInitialPage });
+  const categoryPagination = usePagination(sortedCategories, { pageSize: categoryPageSize, initialPage: categoryInitialPage });
 
   // カテゴリ一覧選択 (useSelection)
   const categorySelection = useSelection<DenpyoCategory>({
@@ -920,6 +981,27 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     }
   }, [dispatch, slipsGoToPageInput, slipsCategoryTotalPages]);
 
+  const handleSlipsSort = useCallback((nextKey: SlipsSortKey) => {
+    setSlipsSortKey(prevKey => {
+      if (prevKey === nextKey) {
+        setSlipsSortDirection(prevDir => (prevDir === 'asc' ? 'desc' : 'asc'));
+        return prevKey;
+      }
+      setSlipsSortDirection('asc');
+      return nextKey;
+    });
+  }, []);
+  const handleCategorySort = useCallback((nextKey: CategorySortKey) => {
+    setCategorySortKey(prevKey => {
+      if (prevKey === nextKey) {
+        setCategorySortDirection(prevDir => (prevDir === 'asc' ? 'desc' : 'asc'));
+        return prevKey;
+      }
+      setCategorySortDirection('asc');
+      return nextKey;
+    });
+  }, []);
+
   // 分析結果が届いたらパネルへスクロール
   useEffect(() => {
     if (categoryAnalysisResult && analysisPanelRef.current) {
@@ -942,7 +1024,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   }, []);
 
   const toggleSelectAll = useCallback(() => {
-    const targetIds = slipsCategoryFiles.slice(0, 5).map(f => String(f.file_id));
+    const targetIds = sortedSlipsCategoryFiles.slice(0, 5).map(f => String(f.file_id));
     const areAllTargetSelected =
       targetIds.length > 0 &&
       targetIds.every(id => selectedFileIds.has(id));
@@ -952,7 +1034,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     } else {
       setSelectedFileIds(new Set(targetIds));
     }
-  }, [selectedFileIds, slipsCategoryFiles]);
+  }, [selectedFileIds, sortedSlipsCategoryFiles]);
 
   // Reset file selection when page changes
   useEffect(() => {
@@ -968,6 +1050,12 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     categoryPagination.reset();
     categorySelection.deselectAll();
   }, [categoryPageSize]);
+
+  useEffect(() => {
+    if (mode !== 'management') return;
+    categoryPagination.reset();
+    categorySelection.deselectAll();
+  }, [mode, categorySortKey, categorySortDirection]);
 
   // ── AI Analysis flow ────────────────────────────────────────────────────────
 
@@ -1023,6 +1111,112 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       );
     }
   };
+
+  const handleBulkDeleteSlips = useCallback(() => {
+    const targetIds = Array.from(selectedFileIds);
+    if (targetIds.length === 0) return;
+
+    requestConfirm({
+      message: t('fileList.confirmBulkDelete', { count: targetIds.length }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        setIsBulkDeletingSlips(true);
+        try {
+          const result = await dispatch(bulkDeleteFiles(targetIds)).unwrap();
+          setSelectedFileIds(new Set());
+          if (result.errors.length > 0) {
+            dispatch(
+              addNotification({
+                type: 'warning',
+                message: t('fileList.notify.bulkDeletedWithErrors', {
+                  deleted: result.deleted_file_ids.length,
+                  errors: result.errors.length,
+                }),
+                autoClose: true,
+              })
+            );
+          } else {
+            dispatch(
+              addNotification({
+                type: 'success',
+                message: t('fileList.notify.bulkDeleted', { count: result.deleted_file_ids.length }),
+                autoClose: true,
+              })
+            );
+          }
+          loadSlipsFiles();
+        } catch {
+          dispatch(
+            addNotification({
+              type: 'error',
+              message: t('fileList.notify.bulkDeleteFailed'),
+              autoClose: true,
+            })
+          );
+        } finally {
+          setIsBulkDeletingSlips(false);
+        }
+      },
+    });
+  }, [dispatch, loadSlipsFiles, requestConfirm, selectedFileIds]);
+
+  const handleBulkDeleteCategories = useCallback(() => {
+    const selectedIds = Array.from(categorySelection.selectedIds);
+    const targetCategories = categories.filter(cat => selectedIds.includes(String(cat.id)) && cat.registration_count === 0);
+    if (targetCategories.length === 0) return;
+
+    requestConfirm({
+      message: t('category.confirmBulkDelete', { count: targetCategories.length }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        setIsBulkDeletingCategories(true);
+        let successCount = 0;
+        let failedCount = 0;
+        for (const cat of targetCategories) {
+          try {
+            await dispatch(deleteCategory(cat.id)).unwrap();
+            successCount += 1;
+          } catch {
+            failedCount += 1;
+          }
+        }
+        categorySelection.deselectAll();
+        if (successCount > 0 && failedCount === 0) {
+          dispatch(
+            addNotification({
+              type: 'success',
+              message: t('category.notify.bulkDeleted', { count: successCount }),
+              autoClose: true,
+            })
+          );
+        } else if (successCount > 0 && failedCount > 0) {
+          dispatch(
+            addNotification({
+              type: 'warning',
+              message: t('category.notify.bulkDeletedWithErrors', {
+                deleted: successCount,
+                errors: failedCount,
+              }),
+              autoClose: true,
+            })
+          );
+        } else {
+          dispatch(
+            addNotification({
+              type: 'error',
+              message: t('category.notify.bulkDeleteFailed'),
+              autoClose: true,
+            })
+          );
+        }
+        setIsBulkDeletingCategories(false);
+      },
+    });
+  }, [categories, categorySelection, dispatch, requestConfirm]);
 
   // ── Category CRUD ───────────────────────────────────────────────────────────
 
@@ -1113,7 +1307,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
-  const selectableOnPageIds = slipsCategoryFiles.map(file => String(file.file_id)).slice(0, 5);
+  const selectableOnPageIds = sortedSlipsCategoryFiles.map(file => String(file.file_id)).slice(0, 5);
   const allSelectedOnPage =
     selectableOnPageIds.length > 0 &&
     selectableOnPageIds.every(id => selectedFileIds.has(id));
@@ -1121,6 +1315,14 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const slipsRangeEnd = slipsCategoryTotal === 0 ? 0 : Math.min(slipsCategoryPage * slipsCategoryPageSize, slipsCategoryTotal);
   const categoryRangeStart = categoryPagination.totalItems === 0 ? 0 : categoryPagination.startIndex;
   const categoryRangeEnd = categoryPagination.totalItems === 0 ? 0 : categoryPagination.endIndex;
+  const renderSlipsSortIcon = (key: SlipsSortKey) => {
+    if (slipsSortKey !== key) return <ArrowUpDown size={13} />;
+    return slipsSortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
+  };
+  const renderCategorySortIcon = (key: CategorySortKey) => {
+    if (categorySortKey !== key) return <ArrowUpDown size={13} />;
+    return categorySortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
+  };
 
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
@@ -1139,36 +1341,50 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       {/* ═══ Section A: SLIPS_CATEGORY ファイル一覧 ═══ */}
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header">
-            <span class="oj-typography-heading-xs">{t('category.slipsFiles.title')}</span>
-            <div class="ics-card-header__actions">
-              <span class="ics-badge ics-badge-info">
-                {t('category.slipsFiles.selected', { count: selectedFileIds.size })}
-              </span>
-              <button
-                class="ics-ops-btn ics-ops-btn--primary"
-                onClick={handleAnalyzeClick}
-                disabled={selectedFileIds.size === 0 || isCategoryAnalyzing || !!categoryAnalysisResult}
-              >
-                {isCategoryAnalyzing ? (
-                  <Loader2 size={14} class="ics-spin" />
-                ) : (
-                  <Sparkles size={14} />
-                )}
-                <span>
-                  {isCategoryAnalyzing
-                    ? t('category.analyze.analyzing')
-                    : t('category.analyze.button')}
-                </span>
-              </button>
-              <button
-                class="ics-ops-btn ics-ops-btn--ghost"
-                onClick={loadSlipsFiles}
-                disabled={isSlipsCategoryLoading}
-              >
-                <RefreshCw size={14} class={isSlipsCategoryLoading ? 'ics-spin' : ''} />
-                <span>{t('category.refresh')}</span>
-              </button>
+          <div class="ics-card-header ics-card-header--table-toolbar">
+            <div class="ics-unified-table-header">
+              <span class="oj-typography-heading-xs">{t('category.slipsFiles.title')}</span>
+              <div class="ics-unified-table-toolbar">
+                <div class="ics-unified-table-toolbar__group">
+                  <button
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                    onClick={handleBulkDeleteSlips}
+                    disabled={selectedFileIds.size === 0 || isBulkDeletingSlips || isSlipsCategoryLoading}
+                  >
+                    <Trash2 size={14} />
+                    <span>{t('fileList.bulkDelete')}</span>
+                  </button>
+                  <button
+                    class="ics-ops-btn ics-ops-btn--primary"
+                    onClick={handleAnalyzeClick}
+                    disabled={selectedFileIds.size === 0 || isCategoryAnalyzing || !!categoryAnalysisResult}
+                  >
+                    {isCategoryAnalyzing ? (
+                      <Loader2 size={14} class="ics-spin" />
+                    ) : (
+                      <Sparkles size={14} />
+                    )}
+                    <span>
+                      {isCategoryAnalyzing
+                        ? t('category.analyze.analyzing')
+                        : t('category.analyze.button')}
+                    </span>
+                  </button>
+                  <span class="ics-unified-table-toolbar__meta">
+                    {t('category.slipsFiles.selected', { count: selectedFileIds.size })}
+                  </span>
+                </div>
+                <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                  <button
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={loadSlipsFiles}
+                    disabled={isSlipsCategoryLoading}
+                  >
+                    <RefreshCw size={14} class={isSlipsCategoryLoading ? 'ics-spin' : ''} />
+                    <span>{t('category.refresh')}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="ics-card-body">
@@ -1194,14 +1410,34 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                         title={t('category.slipsFiles.selectAll')}
                       />
                     </th>
-                    <th>{t('category.slipsFiles.colFileName')}</th>
-                    <th>{t('category.slipsFiles.colType')}</th>
-                    <th>{t('category.slipsFiles.colSize')}</th>
-                    <th>{t('category.slipsFiles.colUploadedAt')}</th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('file_name')}>
+                        {t('category.slipsFiles.colFileName')}
+                        {renderSlipsSortIcon('file_name')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('file_type')}>
+                        {t('category.slipsFiles.colType')}
+                        {renderSlipsSortIcon('file_type')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('file_size')}>
+                        {t('category.slipsFiles.colSize')}
+                        {renderSlipsSortIcon('file_size')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('uploaded_at')}>
+                        {t('category.slipsFiles.colUploadedAt')}
+                        {renderSlipsSortIcon('uploaded_at')}
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {slipsCategoryFiles.map((file: DenpyoFile) => {
+                  {sortedSlipsCategoryFiles.map((file: DenpyoFile) => {
                     const fileId = String(file.file_id);
                     const selected = selectedFileIds.has(fileId);
                     const disabledByMax = !selected && selectedFileIds.size >= 5;
@@ -1291,18 +1527,35 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       {mode === 'management' && (
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header">
-            <span class="oj-typography-heading-xs">{t('category.tableTitle')}</span>
-            <div class="ics-card-header__actions">
-              <span class="ics-text-muted">{t('category.totalCategories', { count: categoryPagination.totalItems })}</span>
-              <button
-                class="ics-ops-btn ics-ops-btn--ghost"
-                onClick={loadCategories}
-                disabled={isCategoriesLoading}
-              >
-                <RefreshCw size={14} class={isCategoriesLoading ? 'ics-spin' : ''} />
-                <span>{t('category.refresh')}</span>
-              </button>
+          <div class="ics-card-header ics-card-header--table-toolbar">
+            <div class="ics-unified-table-header">
+              <span class="oj-typography-heading-xs">{t('category.tableTitle')}</span>
+              <div class="ics-unified-table-toolbar">
+                <div class="ics-unified-table-toolbar__group">
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                    onClick={handleBulkDeleteCategories}
+                    disabled={categorySelection.selectedCount === 0 || isBulkDeletingCategories || isCategoriesLoading}
+                  >
+                    <Trash2 size={14} />
+                    <span>{t('fileList.bulkDelete')}</span>
+                  </button>
+                  <span class="ics-unified-table-toolbar__meta">
+                    {t('category.slipsFiles.selected', { count: categorySelection.selectedCount })}
+                  </span>
+                </div>
+                <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                  <button
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={loadCategories}
+                    disabled={isCategoriesLoading}
+                  >
+                    <RefreshCw size={14} class={isCategoriesLoading ? 'ics-spin' : ''} />
+                    <span>{t('category.refresh')}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="ics-card-body">
@@ -1332,13 +1585,43 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                         aria-label={t('common.selectAll')}
                       />
                     </th>
-                    <th>{t('category.col.name')}</th>
-                    <th>{t('category.col.nameEn')}</th>
-                    <th>{t('category.col.headerTable')}</th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('category_name')}>
+                        {t('category.col.name')}
+                        {renderCategorySortIcon('category_name')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('category_name_en')}>
+                        {t('category.col.nameEn')}
+                        {renderCategorySortIcon('category_name_en')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('header_table_name')}>
+                        {t('category.col.headerTable')}
+                        {renderCategorySortIcon('header_table_name')}
+                      </button>
+                    </th>
                     <th>{t('category.col.lineTable')}</th>
-                    <th>{t('category.col.registrations')}</th>
-                    <th>{t('category.col.status')}</th>
-                    <th>{t('category.col.createdAt')}</th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('registration_count')}>
+                        {t('category.col.registrations')}
+                        {renderCategorySortIcon('registration_count')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('is_active')}>
+                        {t('category.col.status')}
+                        {renderCategorySortIcon('is_active')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('created_at')}>
+                        {t('category.col.createdAt')}
+                        {renderCategorySortIcon('created_at')}
+                      </button>
+                    </th>
                     <th>{t('category.col.actions')}</th>
                   </tr>
                 </thead>
