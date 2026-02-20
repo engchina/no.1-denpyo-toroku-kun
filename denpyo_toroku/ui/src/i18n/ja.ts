@@ -215,9 +215,9 @@ export const ja = {
   // アップロード画面 (SCR-001)
   'upload.title': '伝票アップロード',
   'upload.subtitle': 'PDF・画像ファイルをドラッグ＆ドロップまたは選択してアップロードします。',
-  'upload.kind.label': 'アップロード種別',
-  'upload.kind.raw': '原始伝票',
-  'upload.kind.category': '分類伝票',
+  'upload.kind.label': 'アップロード用途',
+  'upload.kind.raw': '本登録用伝票',
+  'upload.kind.category': '分類用サンプル伝票',
   'upload.dropzone.text': 'ファイルをドラッグ＆ドロップ、またはクリックして選択',
   'upload.dropzone.hint': 'PDF, JPEG, PNG, TIFF（最大50MB、10ファイルまで）',
   'upload.selectedFiles': '選択中のファイル（{count}件）',
@@ -391,7 +391,7 @@ export const ja = {
   'category.slipsFiles.colType': '種別',
   'category.slipsFiles.colSize': 'サイズ',
   'category.slipsFiles.colUploadedAt': 'アップロード日時',
-  'category.slipsFiles.noData': 'ファイルがありません。アップロード画面から「分類伝票」としてアップロードしてください。',
+  'category.slipsFiles.noData': 'ファイルがありません。アップロード画面から「分類用サンプル伝票」としてアップロードしてください。',
   'category.slipsFiles.showingOf': '表示中: {shown}件 / 合計: {total}件',
 
   // AI 分析モード選択
