@@ -812,6 +812,25 @@ class DatabaseService:
             logger.error("SLIPS_CATEGORY ファイル取得エラー (ids=%s): %s", ids, e, exc_info=True)
             return []
 
+    def delete_slips_category_file_record(self, file_id: int) -> Dict[str, Any]:
+        """SLIPS_CATEGORY のファイルレコードを削除"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "DELETE FROM SLIPS_CATEGORY WHERE ID = :1",
+                        [file_id]
+                    )
+                    deleted = cursor.rowcount
+                conn.commit()
+
+            if deleted > 0:
+                return {"success": True, "message": "SLIPS_CATEGORY ファイルを削除しました"}
+            return {"success": False, "message": "ファイルが見つかりません"}
+        except Exception as e:
+            logger.error("SLIPS_CATEGORY ファイル削除エラー (id=%s): %s", file_id, e, exc_info=True)
+            return {"success": False, "message": str(e)}
+
     @staticmethod
     def _build_ddl_from_columns(table_name: str, columns: List[Dict[str, Any]]) -> str:
         """カラム定義リストからCREATE TABLE DDLを生成"""

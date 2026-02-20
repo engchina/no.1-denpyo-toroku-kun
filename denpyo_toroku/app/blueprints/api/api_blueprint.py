@@ -1810,12 +1810,46 @@ def bulk_delete_files():
 
         try:
             file_record = db_service.get_file_by_id(file_id)
-            if not file_record:
+            if file_record:
+                # ステップ1: Object Storage から削除
+                storage_path = file_record.get("object_storage_path", "")
+                if storage_path and storage_service.is_configured:
+                    storage_result = storage_service.delete_file(storage_path)
+                    if not storage_result.get("success"):
+                        errors.append(
+                            f"{file_id}: Object Storage 削除失敗 - {storage_result.get('message')}"
+                        )
+                        continue
+                    logging.info("Object Storage からファイルを削除しました: %s", storage_path)
+
+                # ステップ2: DB レコード削除
+                delete_result = db_service.delete_file_record(file_id)
+                if not delete_result.get("success"):
+                    # DB削除失敗（Object Storageは既に削除済み）
+                    logging.warning(
+                        "DB削除失敗（Object Storageは削除済み） file_id=%s: %s",
+                        file_id,
+                        delete_result.get("message")
+                    )
+                    errors.append(f"{file_id}: {delete_result.get('message', '削除失敗')}")
+                    continue
+
+                db_service.log_activity(
+                    activity_type="DELETE",
+                    description=f"ファイル '{file_record.get('original_file_name', '')}' を削除しました",
+                    user_name=user,
+                )
+                deleted_ids.append(str(file_id))
+                continue
+
+            # Fallback: SLIPS_CATEGORY の ID で削除リクエストされたケース
+            slips_category_records = db_service.get_slips_category_files_by_ids([file_id])
+            if not slips_category_records:
                 errors.append(f"{file_id}: ファイルが見つかりません")
                 continue
 
-            # ステップ1: Object Storage から削除
-            storage_path = file_record.get("object_storage_path", "")
+            slips_category_record = slips_category_records[0]
+            storage_path = slips_category_record.get("object_name", "")
             if storage_path and storage_service.is_configured:
                 storage_result = storage_service.delete_file(storage_path)
                 if not storage_result.get("success"):
@@ -1823,23 +1857,16 @@ def bulk_delete_files():
                         f"{file_id}: Object Storage 削除失敗 - {storage_result.get('message')}"
                     )
                     continue
-                logging.info("Object Storage からファイルを削除しました: %s", storage_path)
+                logging.info("Object Storage から SLIPS_CATEGORY ファイルを削除しました: %s", storage_path)
 
-            # ステップ2: DB レコード削除
-            delete_result = db_service.delete_file_record(file_id)
+            delete_result = db_service.delete_slips_category_file_record(file_id)
             if not delete_result.get("success"):
-                # DB削除失敗（Object Storageは既に削除済み）
-                logging.warning(
-                    "DB削除失敗（Object Storageは削除済み） file_id=%s: %s",
-                    file_id,
-                    delete_result.get("message")
-                )
                 errors.append(f"{file_id}: {delete_result.get('message', '削除失敗')}")
                 continue
 
             db_service.log_activity(
                 activity_type="DELETE",
-                description=f"ファイル '{file_record.get('original_file_name', '')}' を削除しました",
+                description=f"SLIPS_CATEGORY ファイル '{slips_category_record.get('file_name', '')}' を削除しました",
                 user_name=user,
             )
             deleted_ids.append(str(file_id))

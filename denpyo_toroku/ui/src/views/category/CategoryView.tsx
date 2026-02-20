@@ -43,6 +43,7 @@ import {
   RefreshCw,
   Pencil,
   Trash2,
+  Eye,
   ToggleLeft,
   ToggleRight,
   X,
@@ -845,6 +846,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [isBulkDeletingSlips, setIsBulkDeletingSlips] = useState(false);
   const [isBulkDeletingCategories, setIsBulkDeletingCategories] = useState(false);
+  const [previewTarget, setPreviewTarget] = useState<{ fileId: string; fileName: string } | null>(null);
   const [slipsGoToPageInput, setSlipsGoToPageInput] = useState('');
   const [slipsSortKey, setSlipsSortKey] = useState<SlipsSortKey>('uploaded_at');
   const [slipsSortDirection, setSlipsSortDirection] = useState<SortDirection>('desc');
@@ -1063,6 +1065,57 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     if (selectedFileIds.size === 0) return;
     setShowAnalysisModeModal(true);
   };
+
+  const handleAnalyzeSingleFile = useCallback((fileId: string) => {
+    setSelectedFileIds(new Set([fileId]));
+    setShowAnalysisModeModal(true);
+  }, []);
+
+  const handleDeleteSlipFile = useCallback((fileId: string, fileName: string) => {
+    requestConfirm({
+      message: t('fileList.confirmDelete', { name: fileName }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      onConfirm: async () => {
+        try {
+          const result = await dispatch(bulkDeleteFiles([fileId])).unwrap();
+          const deletedCount = result.deleted_file_ids.length;
+          if (deletedCount > 0) {
+            dispatch(
+              addNotification({
+                type: 'success',
+                message: t('fileList.notify.deleted', { name: fileName }),
+                autoClose: true,
+              })
+            );
+            setSelectedFileIds(prev => {
+              const next = new Set(prev);
+              next.delete(fileId);
+              return next;
+            });
+            loadSlipsFiles();
+          } else {
+            dispatch(
+              addNotification({
+                type: 'error',
+                message: t('fileList.notify.deleteFailed', { name: fileName }),
+                autoClose: true,
+              })
+            );
+          }
+        } catch {
+          dispatch(
+            addNotification({
+              type: 'error',
+              message: t('fileList.notify.deleteFailed', { name: fileName }),
+              autoClose: true,
+            })
+          );
+        }
+      },
+    });
+  }, [dispatch, loadSlipsFiles, requestConfirm]);
 
   const handleAnalysisModeConfirm = async (mode: 'header_only' | 'header_line') => {
     setShowAnalysisModeModal(false);
@@ -1434,6 +1487,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                         {renderSlipsSortIcon('uploaded_at')}
                       </button>
                     </th>
+                    <th>{t('category.col.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1472,6 +1526,37 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                         </td>
                         <td>{formatFileSize(file.file_size)}</td>
                         <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
+                        <td class="ics-fileListView__actions" onClick={(e: Event) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            class="ics-ops-btn ics-ops-btn--ghost"
+                            onClick={() => setPreviewTarget({ fileId, fileName: file.file_name })}
+                            title={t('fileList.previewFile')}
+                          >
+                            <Eye size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
+                            onClick={() => handleAnalyzeSingleFile(fileId)}
+                            disabled={isCategoryAnalyzing || !!categoryAnalysisResult}
+                            title={t('fileList.analyzeFile')}
+                          >
+                            {isCategoryAnalyzing
+                              ? <Loader2 size={14} class="ics-spin" />
+                              : <Sparkles size={14} />
+                            }
+                          </button>
+                          <button
+                            type="button"
+                            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                            onClick={() => handleDeleteSlipFile(fileId, file.file_name)}
+                            disabled={isBulkDeletingSlips || isSlipsCategoryLoading}
+                            title={t('fileList.deleteFile')}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1508,6 +1593,30 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
           </div>
         </div>
       </section>
+      {previewTarget && (
+        <div class="ics-modal-overlay" onClick={() => setPreviewTarget(null)}>
+          <div class="ics-modal ics-modal--xl ics-fileListView__previewModal" onClick={(e: Event) => e.stopPropagation()}>
+            <div class="ics-modal__header">
+              <h3>{previewTarget.fileName || t('fileList.previewFile')}</h3>
+              <button
+                type="button"
+                class="ics-ops-btn ics-ops-btn--ghost"
+                onClick={() => setPreviewTarget(null)}
+                title={t('common.close')}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div class="ics-modal__body ics-fileListView__previewBody">
+              <iframe
+                src={`/studio/api/v1/files/${previewTarget.fileId}/preview`}
+                title={previewTarget.fileName || t('fileList.previewFile')}
+                class="ics-fileListView__previewFrame"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ Section: AI分析結果 テーブルデザイナー（インラインパネル） ═══ */}
       {categoryAnalysisResult && (
