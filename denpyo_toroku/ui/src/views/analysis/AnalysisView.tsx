@@ -205,33 +205,35 @@ export function AnalysisView() {
             <FileText size={18} class="oj-sm-margin-2x-end" />
             <span class="oj-typography-heading-xs">{t('analysis.headerFields.title')}</span>
           </div>
-          <div class="ics-card-body">
-            {extraction.header_fields.length > 0 ? (
-              <table class="ics-table">
-                <thead>
-                  <tr>
-                    <th>{t('analysis.table.fieldName')}</th>
-                    <th>{t('analysis.table.fieldNameEn')}</th>
-                    <th>{t('analysis.table.dataType')}</th>
-                    <th>{t('analysis.table.maxLength')}</th>
-                    <th>{t('analysis.table.sampleValue')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {extraction.header_fields.map((f, i) => (
-                    <tr key={i}>
-                      <td>{f.field_name}</td>
-                      <td class="oj-text-color-secondary">{f.field_name_en}</td>
-                      <td><span class="ics-badge ics-badge-info">{f.data_type}</span></td>
-                      <td>{f.max_length ?? '--'}</td>
-                      <td class="ics-table__cell--name">{f.value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div class="ics-empty-text">{t('analysis.noResult')}</div>
-            )}
+            <div class="ics-card-body">
+              {extraction.header_fields.length > 0 ? (
+                <div class="ics-table-wrapper">
+                  <table class="ics-table">
+                    <thead>
+                      <tr>
+                        <th>{t('analysis.table.fieldName')}</th>
+                        <th>{t('analysis.table.fieldNameEn')}</th>
+                        <th>{t('analysis.table.dataType')}</th>
+                        <th>{t('analysis.table.maxLength')}</th>
+                        <th>{t('analysis.table.sampleValue')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {extraction.header_fields.map((f, i) => (
+                        <tr key={i}>
+                          <td>{f.field_name}</td>
+                          <td class="oj-text-color-secondary">{f.field_name_en}</td>
+                          <td><span class="ics-badge ics-badge-info">{f.data_type}</span></td>
+                          <td>{f.max_length ?? '--'}</td>
+                          <td class="ics-table__cell--name">{f.value}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div class="ics-empty-text">{t('analysis.noResult')}</div>
+              )}
           </div>
         </div>
       </section>
@@ -245,28 +247,30 @@ export function AnalysisView() {
               <span class="oj-typography-heading-xs">{t('analysis.lineFields.title')}</span>
             </div>
             <div class="ics-card-body">
-              <table class="ics-table">
-                <thead>
-                  <tr>
-                    <th>{t('analysis.table.fieldName')}</th>
-                    <th>{t('analysis.table.fieldNameEn')}</th>
-                    <th>{t('analysis.table.dataType')}</th>
-                    <th>{t('analysis.table.maxLength')}</th>
-                    <th>{t('analysis.table.sampleValue')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {extraction.line_fields.map((f, i) => (
-                    <tr key={i}>
-                      <td>{f.field_name}</td>
-                      <td class="oj-text-color-secondary">{f.field_name_en}</td>
-                      <td><span class="ics-badge ics-badge-info">{f.data_type}</span></td>
-                      <td>{f.max_length ?? '--'}</td>
-                      <td class="ics-table__cell--name">{f.value}</td>
+              <div class="ics-table-wrapper">
+                <table class="ics-table">
+                  <thead>
+                    <tr>
+                      <th>{t('analysis.table.fieldName')}</th>
+                      <th>{t('analysis.table.fieldNameEn')}</th>
+                      <th>{t('analysis.table.dataType')}</th>
+                      <th>{t('analysis.table.maxLength')}</th>
+                      <th>{t('analysis.table.sampleValue')}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {extraction.line_fields.map((f, i) => (
+                      <tr key={i}>
+                        <td>{f.field_name}</td>
+                        <td class="oj-text-color-secondary">{f.field_name_en}</td>
+                        <td><span class="ics-badge ics-badge-info">{f.data_type}</span></td>
+                        <td>{f.max_length ?? '--'}</td>
+                        <td class="ics-table__cell--name">{f.value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </section>
@@ -282,25 +286,27 @@ export function AnalysisView() {
                 {t('analysis.rawData.title', { count: extraction.line_count })}
               </span>
             </div>
-            <div class="ics-card-body" style={{ overflowX: 'auto' }}>
-              <table class="ics-table">
-                <thead>
-                  <tr>
-                    {Object.keys(extraction.raw_lines[0]).map(key => (
-                      <th key={key}>{key}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {extraction.raw_lines.map((row, i) => (
-                    <tr key={i}>
-                      {Object.values(row).map((val, j) => (
-                        <td key={j}>{String(val ?? '')}</td>
+            <div class="ics-card-body">
+              <div class="ics-table-wrapper">
+                <table class="ics-table">
+                  <thead>
+                    <tr>
+                      {Object.keys(extraction.raw_lines[0]).map(key => (
+                        <th key={key}>{key}</th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {extraction.raw_lines.map((row, i) => (
+                      <tr key={i}>
+                        {Object.values(row).map((val, j) => (
+                          <td key={j}>{String(val ?? '')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </section>

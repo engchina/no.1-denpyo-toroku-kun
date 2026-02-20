@@ -2,7 +2,6 @@
  * ListView - 伝票ファイル一覧画面 (SCR-002)
  * テーブル + ステータスフィルタ + ページング + 削除
  */
-import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import {
@@ -12,6 +11,7 @@ import {
   analyzeFile,
   fetchCategories,
   setFileListPage,
+  setFileListPageSize,
   setFileListStatusFilter
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -19,7 +19,8 @@ import { setCurrentView } from '../../redux/slices/applicationSlice';
 import Pagination from '../../components/Pagination';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
-import { FileStatus } from '../../types/denpyoTypes';
+import { clearLegacyFileListParams, getCurrentSearchParams, readScopedNumber, readScopedString, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
+import type { FileStatus } from '../../types/denpyoTypes';
 import {
   RefreshCw,
   Trash2,
@@ -61,6 +62,8 @@ const STATUS_OPTIONS: { value: FileStatus | ''; labelKey: Parameters<typeof t>[0
   { value: 'REGISTERED', labelKey: 'fileList.status.registered' },
   { value: 'ERROR', labelKey: 'fileList.status.error' }
 ];
+const FILE_LIST_PAGE_SIZE_OPTIONS = [20, 50, 100];
+const FILE_LIST_QUERY_SCOPE = 'fl';
 
 type SortKey = 'file_name' | 'file_size' | 'status' | 'uploaded_at';
 type SortDirection = 'asc' | 'desc';
@@ -132,14 +135,57 @@ export function ListView() {
   const [previewTarget, setPreviewTarget] = useState<{ fileId: string; fileName: string } | null>(null);
   const [analyzeTarget, setAnalyzeTarget] = useState<{ fileId: string; fileName: string } | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [isQueryReady, setIsQueryReady] = useState(false);
 
   const loadFiles = useCallback(() => {
     dispatch(fetchFileList({ page, pageSize, status: statusFilter, uploadKind: 'raw' }));
   }, [dispatch, page, pageSize, statusFilter]);
 
   useEffect(() => {
+    if (!isQueryReady) return;
     loadFiles();
-  }, [loadFiles]);
+  }, [isQueryReady, loadFiles]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = getCurrentSearchParams();
+    const rawStatus = readScopedString(params, FILE_LIST_QUERY_SCOPE, 'status') || params.get('file_status');
+    const rawPage = readScopedNumber(params, FILE_LIST_QUERY_SCOPE, 'p', parseInt(params.get('file_page') || '1', 10));
+    const rawPageSize = readScopedNumber(params, FILE_LIST_QUERY_SCOPE, 'ps', parseInt(params.get('file_page_size') || '20', 10));
+    const nextStatus = STATUS_OPTIONS.some(opt => opt.value === rawStatus && rawStatus !== '') ? rawStatus as FileStatus : null;
+    const nextPage = Number.isNaN(rawPage) ? null : rawPage;
+    const nextPageSize = Number.isNaN(rawPageSize) ? null : rawPageSize;
+
+    if (nextStatus !== null) {
+      dispatch(setFileListStatusFilter(nextStatus));
+    }
+    if (typeof nextPageSize === 'number' && FILE_LIST_PAGE_SIZE_OPTIONS.includes(nextPageSize)) {
+      dispatch(setFileListPageSize(nextPageSize));
+    }
+    if (typeof nextPage === 'number' && !Number.isNaN(nextPage) && nextPage >= 1) {
+      dispatch(setFileListPage(nextPage));
+    }
+    clearLegacyFileListParams(params);
+    setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'p', Math.max(1, nextPage || 1));
+    if (typeof nextPageSize === 'number' && FILE_LIST_PAGE_SIZE_OPTIONS.includes(nextPageSize)) {
+      setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'ps', nextPageSize);
+    }
+    if (nextStatus) {
+      setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'status', nextStatus);
+    }
+    replaceSearchParams(params);
+    setIsQueryReady(true);
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (!isQueryReady || typeof window === 'undefined') return;
+    const params = getCurrentSearchParams();
+    setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'p', page);
+    setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'ps', pageSize);
+    setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'status', statusFilter || null);
+    clearLegacyFileListParams(params);
+    replaceSearchParams(params);
+  }, [isQueryReady, page, pageSize, statusFilter]);
 
   useEffect(() => {
     const currentIds = new Set(files.map(f => String(f.file_id)));
@@ -259,6 +305,12 @@ export function ListView() {
 
   const handlePageChange = useCallback((newPage: number) => {
     dispatch(setFileListPage(newPage));
+  }, [dispatch]);
+
+  const handlePageSizeChange = useCallback((nextPageSize: number) => {
+    if (!FILE_LIST_PAGE_SIZE_OPTIONS.includes(nextPageSize)) return;
+    setSelectedFileIds([]);
+    dispatch(setFileListPageSize(nextPageSize));
   }, [dispatch]);
 
   const handleGoToPage = useCallback(() => {
@@ -398,6 +450,8 @@ export function ListView() {
     return sortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
   };
   const currentSortDirectionLabel = sortDirection === 'asc' ? t('fileList.sort.asc') : t('fileList.sort.desc');
+  const rangeStart = total === 0 ? 0 : ((page - 1) * pageSize) + 1;
+  const rangeEnd = total === 0 ? 0 : Math.min(page * pageSize, total);
 
   return (
     <div class="ics-dashboard ics-dashboard--enhanced ics-fileListView">
@@ -432,12 +486,6 @@ export function ListView() {
             <span class="ics-fileListView__heroStatLabel"><AlertTriangle size={13} /> {t('fileList.kpi.error')}</span>
             <strong class="ics-fileListView__heroStatValue">{errorCount}</strong>
           </div>
-        </div>
-        <div class="ics-ops-hero__meta">
-          <span>{t('fileList.totalFiles', { count: total })}</span>
-          {selectedFileIds.length > 0 && (
-            <span class="oj-sm-margin-4x-start">{t('fileList.selectedCount', { count: selectedFileIds.length })}</span>
-          )}
         </div>
       </section>
 
@@ -596,17 +644,20 @@ export function ListView() {
                 )}
               </div>
             )}
-          </div>
-
-          <div class="ics-card-footer">
             <Pagination
               currentPage={page}
               totalPages={totalPages}
               totalItems={total}
+              pageSize={pageSize}
+              pageSizeOptions={FILE_LIST_PAGE_SIZE_OPTIONS}
+              onPageSizeChange={handlePageSizeChange}
               goToPageInput={goToPageInput}
               onPageChange={handlePageChange}
               onGoToPageInputChange={setGoToPageInput}
               onGoToPage={handleGoToPage}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              showGoToPage={false}
               isFirstPage={page <= 1 || isLoading}
               isLastPage={page >= totalPages || isLoading}
               position="bottom"

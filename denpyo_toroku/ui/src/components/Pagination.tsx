@@ -2,7 +2,6 @@
  * 共通ページネーション（ページ移動 UI）
  * ページングが必要な画面で再利用可能
  */
-import { h } from 'preact';
 import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
 import { t } from '../i18n';
 
@@ -10,12 +9,18 @@ export interface PaginationProps {
   currentPage: number;
   totalPages: number;
   totalItems: number;
+  pageSize?: number;
+  pageSizeOptions?: number[];
+  onPageSizeChange?: (size: number) => void;
   goToPageInput: string;
   onPageChange: (page: number) => void;
   onGoToPageInputChange: (value: string) => void;
   onGoToPage: () => void;
   isFirstPage: boolean;
   isLastPage: boolean;
+  rangeStart?: number;
+  rangeEnd?: number;
+  showGoToPage?: boolean;
   /** Position: 'top' adds bottom border, 'bottom' adds top border */
   position?: 'top' | 'bottom';
   /** Whether to show the component (typically based on totalPages > 1) */
@@ -51,12 +56,18 @@ export function Pagination({
   currentPage,
   totalPages,
   totalItems,
+  pageSize,
+  pageSizeOptions = [20, 50, 100],
+  onPageSizeChange,
   goToPageInput,
   onPageChange,
   onGoToPageInputChange,
   onGoToPage,
   isFirstPage,
   isLastPage,
+  rangeStart,
+  rangeEnd,
+  showGoToPage = true,
   position = 'top',
   show = true,
   summaryPlacement = 'left',
@@ -76,14 +87,21 @@ export function Pagination({
     || targetPage < 1
     || targetPage > totalPages;
 
-  const summaryText = t('common.paginationSummary', {
-    current: currentPage,
-    total: totalPages,
-    totalItems
-  });
+  const summaryText = typeof rangeStart === 'number' && typeof rangeEnd === 'number'
+    ? t('common.paginationRange', {
+      start: rangeStart,
+      end: rangeEnd,
+      totalItems
+    })
+    : t('common.paginationSummary', {
+      current: currentPage,
+      total: totalPages,
+      totalItems
+    });
 
   return (
-    <div
+    <nav
+      aria-label={t('common.paginationNavAria')}
       class={`oj-flex oj-sm-justify-content-space-between oj-sm-align-items-center ics-pagination ics-pagination--${position}`}
     >
       {/* 左側: サマリー */}
@@ -97,6 +115,23 @@ export function Pagination({
 
       {/* 右側: ページ移動コントロール */}
       <div class="oj-flex oj-sm-align-items-center ics-pagination__controls">
+        {typeof pageSize === 'number' && onPageSizeChange && (
+          <label class="ics-pagination__pageSize">
+            <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__pageSizeLabel">
+              {t('common.rowsPerPage')}
+            </span>
+            <select
+              class="ics-select"
+              value={String(pageSize)}
+              aria-label={t('common.pageSizeAria')}
+              onChange={(e: any) => onPageSizeChange(parseInt(e.target.value, 10))}
+            >
+              {pageSizeOptions.map(size => (
+                <option key={size} value={String(size)}>{size}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {summaryPlacement === 'controls' && (
           <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__summary ics-pagination__summary--controls">
             {summaryText}
@@ -109,28 +144,30 @@ export function Pagination({
           onAction={() => onPageChange(currentPage - 1)}
           isDisabled={isFirstPage}
         />
-        <div class="oj-flex oj-sm-align-items-center ics-pagination__goto">
-          <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__gotoLabel">
-            {t('common.page')}
-          </span>
-          <input
-            type="number"
-            class="ics-input ics-pagination__input"
-            min="1"
-            max={String(totalPages)}
-            value={goToPageInput || currentPage.toString()}
-            aria-label={t('common.pageInputAria', { current: currentPage })}
-            onInput={(e: any) => onGoToPageInputChange(e.target.value)}
-            onKeyDown={handleKeyDown as any}
-          />
-          <Button
-            label={t('common.go')}
-            variant="outlined"
-            size="sm"
-            onAction={onGoToPage}
-            isDisabled={isGoToDisabled}
-          />
-        </div>
+        {showGoToPage && (
+          <div class="oj-flex oj-sm-align-items-center ics-pagination__goto">
+            <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__gotoLabel">
+              {t('common.page')}
+            </span>
+            <input
+              type="number"
+              class="ics-input ics-pagination__input"
+              min="1"
+              max={String(totalPages)}
+              value={goToPageInput || currentPage.toString()}
+              aria-label={t('common.pageInputAria', { current: currentPage })}
+              onInput={(e: any) => onGoToPageInputChange(e.target.value)}
+              onKeyDown={handleKeyDown as any}
+            />
+            <Button
+              label={t('common.go')}
+              variant="outlined"
+              size="sm"
+              onAction={onGoToPage}
+              isDisabled={isGoToDisabled}
+            />
+          </div>
+        )}
         <Button
           label={t('common.next')}
           variant="outlined"
@@ -139,7 +176,7 @@ export function Pagination({
           isDisabled={isLastPage}
         />
       </div>
-    </div>
+    </nav>
   );
 }
 

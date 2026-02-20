@@ -7,7 +7,7 @@
  * Phase 5: カテゴリ管理
  */
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import {
+import type {
   DenpyoSliceState,
   HealthData,
   DashboardStats,
@@ -289,6 +289,10 @@ const denpyoSlice = createSlice({
     setFileListPage(state, action) {
       state.fileList.page = action.payload;
     },
+    setFileListPageSize(state, action) {
+      state.fileList.pageSize = action.payload;
+      state.fileList.page = 1;
+    },
     setFileListStatusFilter(state, action) {
       state.fileList.statusFilter = action.payload;
       state.fileList.page = 1;
@@ -307,6 +311,10 @@ const denpyoSlice = createSlice({
     },
     setSlipsCategoryPage(state, action) {
       state.slipsCategoryPage = action.payload;
+    },
+    setSlipsCategoryPageSize(state, action) {
+      state.slipsCategoryPageSize = action.payload;
+      state.slipsCategoryPage = 1;
     }
   },
   extraReducers: (builder) => {
@@ -625,6 +633,6 @@ const denpyoSlice = createSlice({
   }
 });
 
-export const { clearError, clearUploadResult, setUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis, setSlipsCategoryPage } = denpyoSlice.actions;
+export const { clearError, clearUploadResult, setUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListPageSize, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis, setSlipsCategoryPage, setSlipsCategoryPageSize } = denpyoSlice.actions;
 
 export default denpyoSlice.reducer;

@@ -21,6 +21,7 @@ import {
   createCategoryWithTables,
   clearCategoryAnalysis,
   setSlipsCategoryPage,
+  setSlipsCategoryPageSize,
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import Pagination from '../../components/Pagination';
@@ -28,6 +29,7 @@ import { usePagination } from '../../hooks/usePagination';
 import { useSelection } from '../../hooks/useSelection';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
+import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
 import type {
   DenpyoCategory,
   DenpyoFile,
@@ -104,6 +106,9 @@ function buildDDLPreview(tableName: string, columns: TableColumnDef[]): string {
 }
 
 const DATA_TYPES = ['VARCHAR2', 'NUMBER', 'DATE', 'TIMESTAMP'] as const;
+const PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
+const CATEGORY_SAMPLES_QUERY_SCOPE = 'cs';
+const CATEGORY_MANAGEMENT_QUERY_SCOPE = 'cm';
 
 // ─── Category Edit Modal (existing CRUD) ─────────────────────────────────────
 
@@ -805,6 +810,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const dispatch = useAppDispatch();
   const { requestConfirm, confirmToast } = useToastConfirm();
   const analysisPanelRef = useRef<HTMLDivElement>(null);
+  const initialSearchParams = getCurrentSearchParams();
 
   // Redux state
   const categories = useAppSelector(state => state.denpyo.categories);
@@ -825,9 +831,21 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const [isSaving, setIsSaving] = useState(false);
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [slipsGoToPageInput, setSlipsGoToPageInput] = useState('');
+  const [categoryPageSize, setCategoryPageSize] = useState(() => {
+    if (mode !== 'management') return 20;
+    const nextPageSize = readScopedNumber(initialSearchParams, CATEGORY_MANAGEMENT_QUERY_SCOPE, 'ps', 20);
+    return PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize) ? nextPageSize : 20;
+  });
+  const [categoryInitialPage] = useState(() => {
+    if (mode !== 'management') return 1;
+    const nextPage = readScopedNumber(initialSearchParams, CATEGORY_MANAGEMENT_QUERY_SCOPE, 'p', 1);
+    return nextPage >= 1 ? nextPage : 1;
+  });
+  const [isSamplesQueryReady, setIsSamplesQueryReady] = useState(mode !== 'samples');
+  const isCategoryPageSizeInitRef = useRef(true);
 
   // カテゴリ一覧ページネーション (client-side)
-  const categoryPagination = usePagination(categories, { pageSize: 20 });
+  const categoryPagination = usePagination(categories, { pageSize: categoryPageSize, initialPage: categoryInitialPage });
 
   // カテゴリ一覧選択 (useSelection)
   const categorySelection = useSelection<DenpyoCategory>({
@@ -845,16 +863,53 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   }, [dispatch]);
 
   useEffect(() => {
+    if (mode !== 'samples') return;
+    const params = getCurrentSearchParams();
+    const nextPage = readScopedNumber(params, CATEGORY_SAMPLES_QUERY_SCOPE, 'p', 1);
+    const nextPageSize = readScopedNumber(params, CATEGORY_SAMPLES_QUERY_SCOPE, 'ps', 20);
+    if (nextPage >= 1) {
+      dispatch(setSlipsCategoryPage(nextPage));
+    }
+    if (PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize)) {
+      dispatch(setSlipsCategoryPageSize(nextPageSize));
+    }
+    setIsSamplesQueryReady(true);
+  }, [mode, dispatch]);
+
+  useEffect(() => {
     if (mode === 'samples') {
+      if (!isSamplesQueryReady) return;
       loadSlipsFiles();
       return;
     }
     loadCategories();
-  }, [mode, loadSlipsFiles, loadCategories]);
+  }, [mode, isSamplesQueryReady, loadSlipsFiles, loadCategories]);
+
+  useEffect(() => {
+    if (mode !== 'samples' || !isSamplesQueryReady) return;
+    const params = getCurrentSearchParams();
+    setScopedValue(params, CATEGORY_SAMPLES_QUERY_SCOPE, 'p', slipsCategoryPage);
+    setScopedValue(params, CATEGORY_SAMPLES_QUERY_SCOPE, 'ps', slipsCategoryPageSize);
+    replaceSearchParams(params);
+  }, [mode, isSamplesQueryReady, slipsCategoryPage, slipsCategoryPageSize]);
+
+  useEffect(() => {
+    if (mode !== 'management') return;
+    const params = getCurrentSearchParams();
+    setScopedValue(params, CATEGORY_MANAGEMENT_QUERY_SCOPE, 'p', categoryPagination.currentPage);
+    setScopedValue(params, CATEGORY_MANAGEMENT_QUERY_SCOPE, 'ps', categoryPageSize);
+    replaceSearchParams(params);
+  }, [mode, categoryPagination.currentPage, categoryPageSize]);
 
   // ── Slips file list pagination ────────────────────────────────────────────
   const handleSlipsPageChange = useCallback((newPage: number) => {
     dispatch(setSlipsCategoryPage(newPage));
+  }, [dispatch]);
+
+  const handleSlipsPageSizeChange = useCallback((nextPageSize: number) => {
+    if (!PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize)) return;
+    setSelectedFileIds(new Set());
+    dispatch(setSlipsCategoryPageSize(nextPageSize));
   }, [dispatch]);
 
   const handleSlipsGoToPage = useCallback(() => {
@@ -903,6 +958,16 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   useEffect(() => {
     setSelectedFileIds(new Set());
   }, [slipsCategoryPage]);
+
+  // Client-side category list: reset page on page size change
+  useEffect(() => {
+    if (isCategoryPageSizeInitRef.current) {
+      isCategoryPageSizeInitRef.current = false;
+      return;
+    }
+    categoryPagination.reset();
+    categorySelection.deselectAll();
+  }, [categoryPageSize]);
 
   // ── AI Analysis flow ────────────────────────────────────────────────────────
 
@@ -1052,6 +1117,10 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const allSelectedOnPage =
     selectableOnPageIds.length > 0 &&
     selectableOnPageIds.every(id => selectedFileIds.has(id));
+  const slipsRangeStart = slipsCategoryTotal === 0 ? 0 : ((slipsCategoryPage - 1) * slipsCategoryPageSize) + 1;
+  const slipsRangeEnd = slipsCategoryTotal === 0 ? 0 : Math.min(slipsCategoryPage * slipsCategoryPageSize, slipsCategoryTotal);
+  const categoryRangeStart = categoryPagination.totalItems === 0 ? 0 : categoryPagination.startIndex;
+  const categoryRangeEnd = categoryPagination.totalItems === 0 ? 0 : categoryPagination.endIndex;
 
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
@@ -1107,7 +1176,8 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
               {t('category.slipsFiles.hint')}
             </p>
             {slipsCategoryFiles.length > 0 ? (
-              <table class="ics-table">
+              <div class="ics-table-wrapper">
+                <table class="ics-table">
                 <thead>
                   <tr>
                     <th style={{ width: '40px' }}>
@@ -1170,7 +1240,8 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                     );
                   })}
                 </tbody>
-              </table>
+                </table>
+              </div>
             ) : (
               <div class="ics-empty-text">
                 {isSlipsCategoryLoading
@@ -1182,14 +1253,21 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
               currentPage={slipsCategoryPage}
               totalPages={slipsCategoryTotalPages}
               totalItems={slipsCategoryTotal}
+              pageSize={slipsCategoryPageSize}
+              pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
+              onPageSizeChange={handleSlipsPageSizeChange}
               goToPageInput={slipsGoToPageInput}
               onPageChange={handleSlipsPageChange}
               onGoToPageInputChange={setSlipsGoToPageInput}
               onGoToPage={handleSlipsGoToPage}
+              rangeStart={slipsRangeStart}
+              rangeEnd={slipsRangeEnd}
+              showGoToPage={false}
               isFirstPage={slipsCategoryPage <= 1 || isSlipsCategoryLoading}
               isLastPage={slipsCategoryPage >= slipsCategoryTotalPages || isSlipsCategoryLoading}
               position="bottom"
               show
+              summaryPlacement="controls"
             />
           </div>
         </div>
@@ -1229,7 +1307,8 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
           </div>
           <div class="ics-card-body">
             {categories.length > 0 ? (
-              <table class="ics-table">
+              <div class="ics-table-wrapper">
+                <table class="ics-table">
                 <thead>
                   <tr>
                     <th style={{ width: '40px' }}>
@@ -1336,7 +1415,8 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
             ) : (
               <div class="ics-empty-text">
                 {isCategoriesLoading ? t('common.loading') : t('category.noData')}
@@ -1346,14 +1426,21 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
               currentPage={categoryPagination.currentPage}
               totalPages={categoryPagination.totalPages}
               totalItems={categoryPagination.totalItems}
+              pageSize={categoryPageSize}
+              pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
+              onPageSizeChange={setCategoryPageSize}
               goToPageInput={categoryPagination.goToPageInput}
               onPageChange={categoryPagination.goToPage}
               onGoToPageInputChange={categoryPagination.setGoToPageInput}
               onGoToPage={categoryPagination.handleGoToPage}
+              rangeStart={categoryRangeStart}
+              rangeEnd={categoryRangeEnd}
+              showGoToPage={false}
               isFirstPage={categoryPagination.isFirstPage}
               isLastPage={categoryPagination.isLastPage}
               position="bottom"
               show
+              summaryPlacement="controls"
             />
           </div>
         </div>

@@ -2894,6 +2894,18 @@ html[dir="rtl"] .oracle-icon {
     justify-content: flex-end;
 }
 
+.ics-pagination__pageSize {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ics-pagination__pageSizeLabel {
+    color: #5f6b7a;
+    font-size: 0.86rem;
+    white-space: nowrap;
+}
+
 .ics-pagination__goto {
     display: inline-flex;
     align-items: center;
@@ -5069,6 +5081,14 @@ html[dir="rtl"] .oracle-icon {
     border: 1px solid #e3ecf6;
 }
 
+.ics-table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-radius: 8px;
+    border: 1px solid #e3ecf6;
+}
+
 .ics-fileListView__row--selected {
     background: #f2f8ff;
 }
@@ -5141,6 +5161,52 @@ html[dir="rtl"] .oracle-icon {
     background: #f8fafc;
 }
 
+/* Shared operation buttons */
+.ics-ops-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 30px;
+    min-width: 30px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #374151;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    line-height: 1;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.ics-ops-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.ics-ops-btn--primary {
+    background: linear-gradient(135deg, #206ab7 0%, #1a4f8e 100%);
+    border-color: #194f8e;
+    color: #fff;
+}
+
+.ics-ops-btn--ghost {
+    background: #fff;
+    border-color: #d3deea;
+    color: #2a5586;
+}
+
+.ics-ops-btn--ghost:hover:not(:disabled) {
+    background: #f3f8ff;
+    border-color: #b6c9de;
+}
+
+.ics-ops-btn--accent {
+    color: #175ea8;
+}
+
 /* Danger ghost button variant */
 .ics-ops-btn--danger {
     color: #dc3545;
@@ -5159,6 +5225,10 @@ html[dir="rtl"] .oracle-icon {
 /* Card footer */
 .ics-card-footer {
     padding: 0;
+}
+
+.ics-fileListView .ics-card-footer .ics-pagination {
+    padding-right: 12px;
 }
 
 @media (max-width: 960px) {

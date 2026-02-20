@@ -4,7 +4,7 @@
  * - テーブルブラウザ (直接閲覧)
  */
 import type { ComponentChildren } from 'preact';
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import { useAppSelector, useAppDispatch } from '../../redux/store';
 import {
   fetchSearchableTables,
@@ -18,13 +18,18 @@ import { addNotification } from '../../redux/slices/notificationsSlice';
 import Pagination from '../../components/Pagination';
 import { usePagination } from '../../hooks/usePagination';
 import { useSelection } from '../../hooks/useSelection';
+import type { UseSelectionResult } from '../../hooks/useSelection';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
 import { apiPost } from '../../utils/apiUtils';
+import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
 import type { NLSearchResponse, SearchableTable, TableBrowseResult, TableBrowserTable } from '../../types/denpyoTypes';
 import { Search, Database, Copy, Check, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 
 type TabType = 'nlSearch' | 'tableBrowser';
+const SEARCH_PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
+const SEARCH_TABLE_LIST_QUERY_SCOPE = 'sbtl';
+const SEARCH_DATA_PREVIEW_QUERY_SCOPE = 'sbdp';
 
 export function SearchView() {
   const dispatch = useAppDispatch();
@@ -295,14 +300,33 @@ function TableBrowserTab({
 }: TableBrowserTabProps) {
   const dispatch = useAppDispatch();
   const { requestConfirm, confirmToast } = useToastConfirm();
+  const initialSearchParams = getCurrentSearchParams();
+  const [tableListPageSize, setTableListPageSize] = useState(() => {
+    const next = readScopedNumber(initialSearchParams, SEARCH_TABLE_LIST_QUERY_SCOPE, 'ps', 20);
+    return SEARCH_PAGINATION_PAGE_SIZE_OPTIONS.includes(next) ? next : 20;
+  });
+  const [tableListInitialPage] = useState(() => {
+    const next = readScopedNumber(initialSearchParams, SEARCH_TABLE_LIST_QUERY_SCOPE, 'p', 1);
+    return next >= 1 ? next : 1;
+  });
+  const [dataPageSize, setDataPageSize] = useState(() => {
+    const next = readScopedNumber(initialSearchParams, SEARCH_DATA_PREVIEW_QUERY_SCOPE, 'ps', 20);
+    return SEARCH_PAGINATION_PAGE_SIZE_OPTIONS.includes(next) ? next : 20;
+  });
   const [selectedTable, setSelectedTable] = useState<TableBrowserTable | null>(null);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => {
+    const next = readScopedNumber(initialSearchParams, SEARCH_DATA_PREVIEW_QUERY_SCOPE, 'p', 1);
+    return next >= 1 ? next : 1;
+  });
   const [goToPageInput, setGoToPageInput] = useState('');
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
-  const pageSize = 20;
+  const isTableListPageSizeInitRef = useRef(true);
 
   // テーブル一覧ページネーション (client-side via usePagination hook)
-  const tableListPagination = usePagination(tableBrowserTables, { pageSize: 20 });
+  const tableListPagination = usePagination(tableBrowserTables, {
+    pageSize: tableListPageSize,
+    initialPage: tableListInitialPage
+  });
 
   // テーブル一覧選択
   const tableListSelection = useSelection<TableBrowserTable>({
@@ -325,6 +349,29 @@ function TableBrowserTab({
   useEffect(() => {
     dataRowSelection.reset();
   }, [selectedTable, page]);
+
+  useEffect(() => {
+    if (isTableListPageSizeInitRef.current) {
+      isTableListPageSizeInitRef.current = false;
+      return;
+    }
+    tableListPagination.reset();
+    tableListSelection.deselectAll();
+  }, [tableListPageSize]);
+
+  useEffect(() => {
+    const params = getCurrentSearchParams();
+    setScopedValue(params, SEARCH_TABLE_LIST_QUERY_SCOPE, 'p', tableListPagination.currentPage);
+    setScopedValue(params, SEARCH_TABLE_LIST_QUERY_SCOPE, 'ps', tableListPageSize);
+    replaceSearchParams(params);
+  }, [tableListPagination.currentPage, tableListPageSize]);
+
+  useEffect(() => {
+    const params = getCurrentSearchParams();
+    setScopedValue(params, SEARCH_DATA_PREVIEW_QUERY_SCOPE, 'p', page);
+    setScopedValue(params, SEARCH_DATA_PREVIEW_QUERY_SCOPE, 'ps', dataPageSize);
+    replaceSearchParams(params);
+  }, [page, dataPageSize]);
 
   useEffect(() => {
     if (!selectedTable && tableBrowserTables.length > 0) {
@@ -352,10 +399,10 @@ function TableBrowserTab({
         tableName: selectedTable.table_name,
         tableType: selectedTable.table_type,
         page,
-        pageSize
+        pageSize: dataPageSize
       }));
     }
-  }, [dispatch, selectedTable, page]);
+  }, [dispatch, selectedTable, page, dataPageSize]);
 
   const noTables = !isTablesLoading && searchableTables.length === 0;
   const totalPages = result?.total_pages || 1;
@@ -430,7 +477,7 @@ function TableBrowserTab({
             tableName: selectedTable.table_name,
             tableType: selectedTable.table_type,
             page,
-            pageSize
+            pageSize: dataPageSize
           }));
         } catch {
           dispatch(addNotification({
@@ -442,7 +489,19 @@ function TableBrowserTab({
         }
       }
     });
-  }, [dispatch, getRowId, selectedTable, page, pageSize, requestConfirm]);
+  }, [dispatch, getRowId, selectedTable, page, dataPageSize, requestConfirm]);
+
+  const handleDataPageSizeChange = useCallback((nextPageSize: number) => {
+    if (!SEARCH_PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize)) return;
+    setDataPageSize(nextPageSize);
+    setPage(1);
+    setGoToPageInput('');
+  }, []);
+
+  const tableListRangeStart = tableListPagination.totalItems === 0 ? 0 : tableListPagination.startIndex;
+  const tableListRangeEnd = tableListPagination.totalItems === 0 ? 0 : tableListPagination.endIndex;
+  const dataRangeStart = (result?.total || 0) === 0 ? 0 : ((page - 1) * dataPageSize) + 1;
+  const dataRangeEnd = (result?.total || 0) === 0 ? 0 : Math.min(page * dataPageSize, result?.total || 0);
 
   return (
     <div class="ics-table-browser">
@@ -464,92 +523,101 @@ function TableBrowserTab({
         </div>
 
         {tableBrowserTables.length > 0 ? (
-          <div class="ics-table-list-wrapper">
-            <table class="ics-table">
-              <thead>
-                <tr>
-                  <th style={{ width: '40px' }}>
-                    <input
-                      type="checkbox"
-                      checked={tableListSelection.isAllSelected(tableListPagination.paginatedItems)}
-                      ref={(el) => {
-                        if (!el) return;
-                        const pageItems = tableListPagination.paginatedItems;
-                        const allSelected = tableListSelection.isAllSelected(pageItems);
-                        const hasSelectedOnPage = pageItems.some(item =>
-                          tableListSelection.isSelected(`${item.category_id}-${item.table_type}-${item.table_name}`)
-                        );
-                        el.indeterminate = !allSelected && hasSelectedOnPage;
-                      }}
-                      onChange={() => {
-                        if (tableListSelection.isAllSelected(tableListPagination.paginatedItems)) {
-                          tableListSelection.deselectAll();
-                        } else {
-                          tableListSelection.selectAll(tableListPagination.paginatedItems);
-                        }
-                      }}
-                      aria-label={t('common.selectAll')}
-                    />
-                  </th>
-                  <th>{t('search.browser.col.tableName')}</th>
-                  <th>{t('search.browser.col.category')}</th>
-                  <th>{t('search.browser.col.type')}</th>
-                  <th>{t('search.browser.col.rows')}</th>
-                  <th>{t('search.browser.col.columns')}</th>
-                  <th>{t('search.browser.col.createdAt')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tableListPagination.paginatedItems.map(table => {
-                  const tableKey = `${table.category_id}-${table.table_type}-${table.table_name}`;
-                  return (
-                  <tr
-                    key={tableKey}
-                    role="button"
-                    tabIndex={0}
-                    class={
-                      selectedTable &&
-                      selectedTable.table_name === table.table_name &&
-                      selectedTable.table_type === table.table_type &&
-                      selectedTable.category_id === table.category_id
-                        ? 'ics-table-row--selected'
-                        : ''
-                    }
-                    onClick={() => handleTableSelect(table)}
-                    onKeyDown={(e) => handleTableRowKeyDown(e, table)}
-                  >
-                    <td class="ics-table__cell--center" onClick={(e: Event) => e.stopPropagation()}>
+          <>
+            <div class="ics-table-list-wrapper">
+              <table class="ics-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: '40px' }}>
                       <input
                         type="checkbox"
-                        checked={tableListSelection.isSelected(tableKey)}
-                        onChange={() => tableListSelection.toggle(tableKey)}
+                        checked={tableListSelection.isAllSelected(tableListPagination.paginatedItems)}
+                        ref={(el) => {
+                          if (!el) return;
+                          const pageItems = tableListPagination.paginatedItems;
+                          const allSelected = tableListSelection.isAllSelected(pageItems);
+                          const hasSelectedOnPage = pageItems.some(item =>
+                            tableListSelection.isSelected(`${item.category_id}-${item.table_type}-${item.table_name}`)
+                          );
+                          el.indeterminate = !allSelected && hasSelectedOnPage;
+                        }}
+                        onChange={() => {
+                          if (tableListSelection.isAllSelected(tableListPagination.paginatedItems)) {
+                            tableListSelection.deselectAll();
+                          } else {
+                            tableListSelection.selectAll(tableListPagination.paginatedItems);
+                          }
+                        }}
+                        aria-label={t('common.selectAll')}
                       />
-                    </td>
-                    <td>{table.table_name}</td>
-                    <td>{table.category_name}</td>
-                    <td>{table.table_type === 'header' ? t('search.browser.header') : t('search.browser.line')}</td>
-                    <td>{table.row_count.toLocaleString()}</td>
-                    <td>{table.column_count}</td>
-                    <td>{formatDateTime(table.created_at)}</td>
+                    </th>
+                    <th>{t('search.browser.col.tableName')}</th>
+                    <th>{t('search.browser.col.category')}</th>
+                    <th>{t('search.browser.col.type')}</th>
+                    <th>{t('search.browser.col.rows')}</th>
+                    <th>{t('search.browser.col.columns')}</th>
+                    <th>{t('search.browser.col.createdAt')}</th>
                   </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {tableListPagination.paginatedItems.map(table => {
+                    const tableKey = `${table.category_id}-${table.table_type}-${table.table_name}`;
+                    return (
+                    <tr
+                      key={tableKey}
+                      role="button"
+                      tabIndex={0}
+                      class={
+                        selectedTable &&
+                        selectedTable.table_name === table.table_name &&
+                        selectedTable.table_type === table.table_type &&
+                        selectedTable.category_id === table.category_id
+                          ? 'ics-table-row--selected'
+                          : ''
+                      }
+                      onClick={() => handleTableSelect(table)}
+                      onKeyDown={(e) => handleTableRowKeyDown(e, table)}
+                    >
+                      <td class="ics-table__cell--center" onClick={(e: Event) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={tableListSelection.isSelected(tableKey)}
+                          onChange={() => tableListSelection.toggle(tableKey)}
+                        />
+                      </td>
+                      <td>{table.table_name}</td>
+                      <td>{table.category_name}</td>
+                      <td>{table.table_type === 'header' ? t('search.browser.header') : t('search.browser.line')}</td>
+                      <td>{table.row_count.toLocaleString()}</td>
+                      <td>{table.column_count}</td>
+                      <td>{formatDateTime(table.created_at)}</td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
             <Pagination
               currentPage={tableListPagination.currentPage}
               totalPages={tableListPagination.totalPages}
               totalItems={tableListPagination.totalItems}
+              pageSize={tableListPageSize}
+              pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
+              onPageSizeChange={setTableListPageSize}
               goToPageInput={tableListPagination.goToPageInput}
               onPageChange={tableListPagination.goToPage}
               onGoToPageInputChange={tableListPagination.setGoToPageInput}
               onGoToPage={tableListPagination.handleGoToPage}
+              rangeStart={tableListRangeStart}
+              rangeEnd={tableListRangeEnd}
+              showGoToPage={false}
               isFirstPage={tableListPagination.isFirstPage}
               isLastPage={tableListPagination.isLastPage}
               position="bottom"
               show
+              summaryPlacement="controls"
             />
-          </div>
+          </>
         ) : (
           <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noTableList')}</p>
         )}
@@ -595,7 +663,7 @@ function TableBrowserTab({
                       return (
                         <button
                           type="button"
-                          class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                          class="ics-ops-btn ics-ops-btn--ghost"
                           onClick={() => handleDeleteRow(row)}
                           disabled={deletingRowId === rowId}
                           title={t('common.delete')}
@@ -614,14 +682,21 @@ function TableBrowserTab({
                     currentPage={page}
                     totalPages={totalPages}
                     totalItems={result.total || 0}
+                    pageSize={dataPageSize}
+                    pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
+                    onPageSizeChange={handleDataPageSizeChange}
                     goToPageInput={goToPageInput}
                     onPageChange={handlePageChange}
                     onGoToPageInputChange={setGoToPageInput}
                     onGoToPage={handleGoToPage}
+                    rangeStart={dataRangeStart}
+                    rangeEnd={dataRangeEnd}
+                    showGoToPage={false}
                     isFirstPage={page <= 1 || isLoading}
                     isLastPage={page >= totalPages || isLoading}
                     position="bottom"
                     show
+                    summaryPlacement="controls"
                   />
                 </>
               ) : (
@@ -650,7 +725,7 @@ interface ResultsTableProps {
   actionColumnLabel?: string;
   renderRowActions?: (row: Record<string, any>) => ComponentChildren;
   /** Optional selection support via useSelection hook */
-  selection?: import('../../hooks/useSelection').UseSelectionResult<Record<string, any>>;
+  selection?: UseSelectionResult<Record<string, any>>;
 }
 
 function ResultsTable({ columns, rows, actionColumnLabel, renderRowActions, selection }: ResultsTableProps) {

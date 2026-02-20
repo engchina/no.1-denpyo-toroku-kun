@@ -27,6 +27,7 @@ import { NotificationContainer } from './NotificationContainer';
 import { LoginView } from '../views/login/LoginView';
 import { setAuthenticated, setUserName } from '../redux/slices/applicationSlice';
 import { apiGet } from '../utils/apiUtils';
+import { clearPaginationParamsOutsideView } from '../utils/queryScope';
 import { t } from '../i18n';
 import '../styles/app.css';
 
@@ -69,6 +70,7 @@ function AppLayout() {
   const dispatch = useAppDispatch();
   const isAuthenticated = useAppSelector(state => state.application.isAuthenticated);
   const isSidebarCollapsed = useAppSelector(state => state.application.isSidebarCollapsed);
+  const currentView = useAppSelector(state => state.application.currentView);
 
   const layoutClass = isSidebarCollapsed
     ? 'aaiLayout--asideLess__expanded'
@@ -86,6 +88,10 @@ function AppLayout() {
     };
     loadSession();
   }, [dispatch]);
+
+  useEffect(() => {
+    clearPaginationParamsOutsideView(currentView);
+  }, [currentView]);
 
   if (!isAuthenticated) {
     return (
