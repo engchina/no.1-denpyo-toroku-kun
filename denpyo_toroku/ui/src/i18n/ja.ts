@@ -219,7 +219,7 @@ export const ja = {
   'upload.kind.raw': '本登録用伝票',
   'upload.kind.category': '分類用サンプル伝票',
   'upload.dropzone.text': 'ファイルをドラッグ＆ドロップ、またはクリックして選択',
-  'upload.dropzone.hint': 'PDF, JPEG, PNG, TIFF（最大50MB、10ファイルまで）',
+  'upload.dropzone.hint': 'PDF, JPEG, PNG, TIFF（1ファイルあたり最大50MB、10ファイルまで）',
   'upload.selectedFiles': '選択中のファイル（{count}件）',
   'upload.errorCount': '{count}件エラー',
   'upload.action': '{count}件アップロード',

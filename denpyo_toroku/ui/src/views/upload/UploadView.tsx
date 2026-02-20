@@ -117,6 +117,12 @@ export function UploadView() {
     setSelectedFiles(prev => prev.filter((_, i) => i !== index));
   }, []);
 
+  const handleCloseSelectedFiles = useCallback(() => {
+    if (isUploadingLocal) return;
+    setSelectedFiles([]);
+    dispatch(clearUploadResult());
+  }, [dispatch, isUploadingLocal]);
+
   const handleUpload = useCallback(async () => {
     const validFiles = selectedFiles.filter(sf => !sf.error);
     if (validFiles.length === 0) return;
@@ -229,6 +235,7 @@ export function UploadView() {
 
   const validCount = selectedFiles.filter(sf => !sf.error).length;
   const errorCount = selectedFiles.filter(sf => sf.error).length;
+  const pendingCount = selectedFiles.filter(sf => !sf.error && !sf.uploadStatus).length;
 
   // Progress counts for display during upload
   const doneCount = selectedFiles.filter(sf => sf.uploadStatus === 'done' || sf.uploadStatus === 'error').length;
@@ -313,23 +320,41 @@ export function UploadView() {
       {/* 選択ファイル一覧 */}
       {selectedFiles.length > 0 && (
         <section class="ics-ops-grid ics-ops-grid--one">
-          <div class="ics-card ics-ops-panel">
-            <div class="ics-card-header oj-flex oj-sm-align-items-center oj-sm-justify-content-space-between">
-              <span class="oj-typography-heading-xs">
-                {t('upload.selectedFiles', { count: selectedFiles.length })}
-              </span>
-              <div class="oj-flex oj-sm-align-items-center oj-sm-gap-2">
-                {/* アップロード中の進捗カウンター */}
-                {isUploadingLocal && totalUploadingCount > 0 && (
-                  <span class="ics-upload-progress">
-                    {t('upload.progress', { current: doneCount, total: totalUploadingCount })} ({overallProgressPercent}%)
+          <div class="ics-card ics-ops-panel ics-upload-selectedPanel">
+            <div class="ics-card-header ics-upload-selectedHeader">
+              <div class="ics-upload-selectedHeader__main">
+                <span class="oj-typography-heading-xs">
+                  {t('upload.selectedFiles', { count: selectedFiles.length })}
+                </span>
+                <div class="ics-upload-summaryChips">
+                  <span class="ics-upload-summaryChip ics-upload-summaryChip--neutral">
+                    {t('upload.status.pending')} {pendingCount}件
                   </span>
-                )}
-                {errorCount > 0 && !isUploadingLocal && (
-                  <span class="ics-badge ics-badge-error">
-                    {t('upload.errorCount', { count: errorCount })}
+                  <span class="ics-upload-summaryChip ics-upload-summaryChip--info">
+                    {t('upload.action', { count: validCount })}
                   </span>
-                )}
+                  {errorCount > 0 && (
+                    <span class="ics-upload-summaryChip ics-upload-summaryChip--error">
+                      {t('upload.errorCount', { count: errorCount })}
+                    </span>
+                  )}
+                  {totalUploadingCount > 0 && (
+                    <span class="ics-upload-summaryChip ics-upload-summaryChip--progress">
+                      {t('upload.progress', { current: doneCount, total: totalUploadingCount })} ({overallProgressPercent}%)
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div class="ics-upload-selectedHeader__actions">
+                <button
+                  type="button"
+                  class="ics-ops-btn ics-ops-btn--ghost"
+                  onClick={handleCloseSelectedFiles}
+                  disabled={isUploadingLocal}
+                >
+                  <X size={14} />
+                  <span>{t('common.close')}</span>
+                </button>
                 <button
                   class="ics-ops-btn ics-ops-btn--primary"
                   onClick={handleUpload}
