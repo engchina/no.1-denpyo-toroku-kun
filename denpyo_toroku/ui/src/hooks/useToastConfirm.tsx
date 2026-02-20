@@ -1,8 +1,5 @@
-import { h } from 'preact';
-import { useCallback, useMemo, useRef, useState } from 'preact/hooks';
-import { MessageToast } from '@oracle/oraclejet-preact/UNSAFE_MessageToast';
-import type { Item } from '@oracle/oraclejet-preact/utils/UNSAFE_dataProvider';
-import type { MessageToastItem } from '@oracle/oraclejet-preact/UNSAFE_MessageToast';
+import { useCallback, useRef, useState } from 'preact/hooks';
+import { AlertTriangle, AlertCircle, CheckCircle, Info, X } from 'lucide-react';
 
 type ConfirmSeverity = 'error' | 'warning' | 'confirmation' | 'info' | 'none';
 
@@ -18,6 +15,76 @@ type PendingConfirmRequest = ToastConfirmRequest & {
   id: string;
 };
 
+const SEVERITY_ACCENT: Record<ConfirmSeverity, string> = {
+  warning:      '#d97706',
+  error:        '#dc2626',
+  confirmation: '#16a34a',
+  info:         '#2563eb',
+  none:         '#60646c',
+};
+
+function SeverityIcon({ severity }: { severity: ConfirmSeverity }) {
+  switch (severity) {
+    case 'error':        return <AlertCircle size={16} />;
+    case 'confirmation': return <CheckCircle size={16} />;
+    case 'info':         return <Info size={16} />;
+    default:             return <AlertTriangle size={16} />;
+  }
+}
+
+function ToastConfirmPopup({
+  request,
+  onConfirm,
+  onClose,
+}: {
+  request: PendingConfirmRequest;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const sev = request.severity ?? 'warning';
+  const accentColor = SEVERITY_ACCENT[sev];
+
+  return (
+    <div class="ics-toast-confirm" role="alertdialog" aria-label={request.message}>
+      {/* .ics-modal__header と同一構造: justify-content: space-between */}
+      <div class="ics-toast-confirm__header">
+        <div class="ics-toast-confirm__title">
+          <span class="ics-toast-confirm__icon" style={{ color: accentColor }}>
+            <SeverityIcon severity={sev} />
+          </span>
+          <p class="ics-toast-confirm__message">{request.message}</p>
+        </div>
+        {/* .ics-modal__header の X ボタンと同じクラス・サイズ */}
+        <button
+          type="button"
+          class="ics-ops-btn ics-ops-btn--ghost"
+          onClick={onClose}
+          aria-label="閉じる"
+        >
+          <X size={16} />
+        </button>
+      </div>
+      {/* .ics-modal__footer と同一構造: キャンセル（左）→ 実行（右） */}
+      <div class="ics-toast-confirm__footer">
+        <button
+          type="button"
+          class="ics-ops-btn ics-ops-btn--ghost"
+          onClick={onClose}
+        >
+          {request.cancelLabel}
+        </button>
+        <button
+          type="button"
+          class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+          onClick={onConfirm}
+        >
+          {request.confirmLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function useToastConfirm() {
   const [pendingRequest, setPendingRequest] = useState<PendingConfirmRequest | null>(null);
   const nextIdRef = useRef(1);
@@ -28,10 +95,7 @@ export function useToastConfirm() {
 
   const requestConfirm = useCallback((request: ToastConfirmRequest) => {
     const id = `toast-confirm-${nextIdRef.current++}`;
-    setPendingRequest({
-      ...request,
-      id
-    });
+    setPendingRequest({ ...request, id });
   }, []);
 
   const handleConfirm = useCallback(async () => {
@@ -41,52 +105,13 @@ export function useToastConfirm() {
     await onConfirm();
   }, [pendingRequest]);
 
-  const handleToastClose = useCallback((_item: Item<string, MessageToastItem>) => {
-    setPendingRequest(null);
-  }, []);
-
-  const renderers = useMemo(() => {
-    return {
-      confirmActions: () => {
-        if (!pendingRequest) return null;
-        return (
-          <div class="ics-toast-confirm__actions">
-            <button type="button" class="ics-ops-btn ics-ops-btn--danger" onClick={handleConfirm}>
-              {pendingRequest.confirmLabel}
-            </button>
-            <button type="button" class="ics-ops-btn ics-ops-btn--ghost" onClick={closeConfirmToast}>
-              {pendingRequest.cancelLabel}
-            </button>
-          </div>
-        );
-      }
-    };
-  }, [pendingRequest, handleConfirm, closeConfirmToast]);
-
   const confirmToast = pendingRequest ? (
-    <MessageToast
-      data={[
-        {
-          key: pendingRequest.id,
-          data: {
-            summary: pendingRequest.message,
-            severity: pendingRequest.severity || 'warning',
-            autoTimeout: 'off',
-            closeAffordance: 'on'
-          },
-          metadata: { key: pendingRequest.id }
-        }
-      ]}
-      detailRendererKey="confirmActions"
-      renderers={renderers}
-      onClose={handleToastClose}
-      position="top-end"
-      offset={{ horizontal: 16, vertical: 60 }}
+    <ToastConfirmPopup
+      request={pendingRequest}
+      onConfirm={handleConfirm}
+      onClose={closeConfirmToast}
     />
   ) : null;
 
-  return {
-    requestConfirm,
-    confirmToast
-  };
+  return { requestConfirm, confirmToast };
 }

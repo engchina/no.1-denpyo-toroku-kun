@@ -97,6 +97,16 @@ class OCIStorageService:
         jitter = random.uniform(-OCI_API_JITTER, OCI_API_JITTER) * delay
         return max(0.1, delay + jitter)
 
+    def _is_object_not_found_error(self, error: Exception) -> bool:
+        """Object Storage上にオブジェクトが存在しないエラーか判定"""
+        status = getattr(error, "status", None)
+        code = str(getattr(error, "code", "")).lower()
+        if status == 404 and code == "objectnotfound":
+            return True
+
+        error_str = str(error).lower()
+        return "objectnotfound" in error_str and "404" in error_str
+
     def _retry_api_call(self, operation_name: str, func, *args, **kwargs):
         """リトライ付きAPI呼び出し"""
         last_error = None
@@ -111,6 +121,13 @@ class OCIStorageService:
                 return result
             except Exception as e:
                 last_error = e
+                if self._is_object_not_found_error(e):
+                    logger.warning(
+                        "%s: Object Storage 内で対象ファイルは既に存在しません（リトライしません）: %s",
+                        operation_name,
+                        str(e)[:180],
+                    )
+                    raise
                 is_rate_limit = self._is_rate_limit_error(e)
                 elapsed = time.time() - started_at
                 if attempt < OCI_API_MAX_RETRIES - 1:
@@ -271,6 +288,18 @@ class OCIStorageService:
             logger.info("✅ [OCI Storage] ファイルを削除しました: %s", object_name)
             return {"success": True, "message": "削除完了", "object_name": object_name}
         except Exception as e:
+            if self._is_object_not_found_error(e):
+                logger.warning(
+                    "⚠️ [OCI Storage] 削除対象は既に存在しません: %s (%s)",
+                    object_name,
+                    e,
+                )
+                return {
+                    "success": True,
+                    "already_missing": True,
+                    "message": "Object Storage 内でファイルは既に存在しません",
+                    "object_name": object_name,
+                }
             logger.error("❌ [OCI Storage] ファイル削除エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"削除失敗: {str(e)}"}
 

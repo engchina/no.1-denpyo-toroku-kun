@@ -1724,6 +1724,7 @@ def delete_file(file_id: int):
 
         # ステップ2: Object Storage から削除
         storage_path = file_record.get("object_storage_path", "")
+        storage_already_missing = False
         if storage_path:
             logging.info("[STEP 2] Object Storage から削除開始: %s", storage_path)
             storage_service = OCIStorageService()
@@ -1732,6 +1733,7 @@ def delete_file(file_id: int):
                            storage_service._namespace, storage_service._bucket_name)
                 storage_result = storage_service.delete_file(storage_path)
                 logging.info("[STEP 2] Object Storage 削除結果: %s", storage_result)
+                storage_already_missing = bool(storage_result.get("already_missing"))
                 if not storage_result.get("success"):
                     # Object Storage 削除失敗時はエラーを返す
                     logging.error("[STEP 2] Object Storage 削除失敗: %s", storage_result.get('message'))
@@ -1773,7 +1775,10 @@ def delete_file(file_id: int):
         logging.info("[STEP 4] ✅ アクティビティログ記録完了")
 
         logging.info("========== ファイル削除成功 file_id=%s ==========", file_id)
-        g.response.set_data({"success": True, "message": "ファイルを削除しました"})
+        success_message = "ファイルを削除しました"
+        if storage_path and storage_already_missing:
+            success_message = "ファイルを削除しました（Object Storage 内でファイルは既に存在しませんでした）"
+        g.response.set_data({"success": True, "message": success_message})
         return jsonify(g.response.get_result())
 
     except Exception as e:
@@ -1820,6 +1825,11 @@ def bulk_delete_files():
                             f"{file_id}: Object Storage 削除失敗 - {storage_result.get('message')}"
                         )
                         continue
+                    if storage_result.get("already_missing"):
+                        logging.info(
+                            "Object Storage 内でファイルは既に存在しません: %s",
+                            storage_path,
+                        )
                     logging.info("Object Storage からファイルを削除しました: %s", storage_path)
 
                 # ステップ2: DB レコード削除
@@ -1857,6 +1867,11 @@ def bulk_delete_files():
                         f"{file_id}: Object Storage 削除失敗 - {storage_result.get('message')}"
                     )
                     continue
+                if storage_result.get("already_missing"):
+                    logging.info(
+                        "Object Storage 内で SLIPS_CATEGORY ファイルは既に存在しません: %s",
+                        storage_path,
+                    )
                 logging.info("Object Storage から SLIPS_CATEGORY ファイルを削除しました: %s", storage_path)
 
             delete_result = db_service.delete_slips_category_file_record(file_id)

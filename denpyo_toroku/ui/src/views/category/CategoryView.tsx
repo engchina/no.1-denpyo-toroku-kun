@@ -1858,7 +1858,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
         />
       )}
 
-      {mode === 'management' && confirmToast}
+      {confirmToast}
     </div>
   );
 }
