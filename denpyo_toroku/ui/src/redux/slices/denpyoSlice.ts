@@ -58,6 +58,8 @@ const initialState: DenpyoSliceState = {
   slipsCategoryFiles: [],
   slipsCategoryTotal: 0,
   slipsCategoryPage: 1,
+  slipsCategoryPageSize: 20,
+  slipsCategoryTotalPages: 0,
   isSlipsCategoryLoading: false,
   categoryAnalysisResult: null,
   isCategoryAnalyzing: false,
@@ -302,6 +304,9 @@ const denpyoSlice = createSlice({
     clearCategoryAnalysis(state) {
       state.categoryAnalysisResult = null;
       state.categoryCreateResult = null;
+    },
+    setSlipsCategoryPage(state, action) {
+      state.slipsCategoryPage = action.payload;
     }
   },
   extraReducers: (builder) => {
@@ -509,6 +514,8 @@ const denpyoSlice = createSlice({
         state.slipsCategoryFiles = action.payload.files || [];
         state.slipsCategoryTotal = action.payload.total || 0;
         state.slipsCategoryPage = action.payload.page || 1;
+        state.slipsCategoryPageSize = action.payload.page_size || 20;
+        state.slipsCategoryTotalPages = action.payload.total_pages || 0;
       })
       .addCase(fetchSlipsCategoryFiles.rejected, (state, action) => {
         state.isSlipsCategoryLoading = false;
@@ -618,6 +625,6 @@ const denpyoSlice = createSlice({
   }
 });
 
-export const { clearError, clearUploadResult, setUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis } = denpyoSlice.actions;
+export const { clearError, clearUploadResult, setUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis, setSlipsCategoryPage } = denpyoSlice.actions;
 
 export default denpyoSlice.reducer;

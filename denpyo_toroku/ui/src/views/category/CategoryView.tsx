@@ -20,8 +20,12 @@ import {
   analyzeSlipsForCategory,
   createCategoryWithTables,
   clearCategoryAnalysis,
+  setSlipsCategoryPage,
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
+import Pagination from '../../components/Pagination';
+import { usePagination } from '../../hooks/usePagination';
+import { useSelection } from '../../hooks/useSelection';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
 import type {
@@ -805,6 +809,9 @@ export function CategoryView() {
   const isCategoriesLoading = useAppSelector(state => state.denpyo.isCategoriesLoading);
   const slipsCategoryFiles = useAppSelector(state => state.denpyo.slipsCategoryFiles);
   const slipsCategoryTotal = useAppSelector(state => state.denpyo.slipsCategoryTotal);
+  const slipsCategoryPage = useAppSelector(state => state.denpyo.slipsCategoryPage);
+  const slipsCategoryPageSize = useAppSelector(state => state.denpyo.slipsCategoryPageSize);
+  const slipsCategoryTotalPages = useAppSelector(state => state.denpyo.slipsCategoryTotalPages);
   const isSlipsCategoryLoading = useAppSelector(state => state.denpyo.isSlipsCategoryLoading);
   const categoryAnalysisResult = useAppSelector(state => state.denpyo.categoryAnalysisResult);
   const isCategoryAnalyzing = useAppSelector(state => state.denpyo.isCategoryAnalyzing);
@@ -815,11 +822,21 @@ export function CategoryView() {
   const [editTarget, setEditTarget] = useState<DenpyoCategory | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
+  const [slipsGoToPageInput, setSlipsGoToPageInput] = useState('');
+
+  // カテゴリ一覧ページネーション (client-side)
+  const categoryPagination = usePagination(categories, { pageSize: 20 });
+
+  // カテゴリ一覧選択 (useSelection)
+  const categorySelection = useSelection<DenpyoCategory>({
+    getItemId: (cat) => String(cat.id),
+    isSelectable: (cat) => cat.registration_count === 0,
+  });
 
   // Load data on mount
   const loadSlipsFiles = useCallback(() => {
-    dispatch(fetchSlipsCategoryFiles({ page: 1, pageSize: 50 }));
-  }, [dispatch]);
+    dispatch(fetchSlipsCategoryFiles({ page: slipsCategoryPage, pageSize: slipsCategoryPageSize }));
+  }, [dispatch, slipsCategoryPage, slipsCategoryPageSize]);
 
   const loadCategories = useCallback(() => {
     dispatch(fetchCategories());
@@ -829,6 +846,19 @@ export function CategoryView() {
     loadSlipsFiles();
     loadCategories();
   }, [loadSlipsFiles, loadCategories]);
+
+  // ── Slips file list pagination ────────────────────────────────────────────
+  const handleSlipsPageChange = useCallback((newPage: number) => {
+    dispatch(setSlipsCategoryPage(newPage));
+  }, [dispatch]);
+
+  const handleSlipsGoToPage = useCallback(() => {
+    const target = parseInt(slipsGoToPageInput, 10);
+    if (!Number.isNaN(target) && target >= 1 && target <= slipsCategoryTotalPages) {
+      dispatch(setSlipsCategoryPage(target));
+      setSlipsGoToPageInput('');
+    }
+  }, [dispatch, slipsGoToPageInput, slipsCategoryTotalPages]);
 
   // 分析結果が届いたらパネルへスクロール
   useEffect(() => {
@@ -863,6 +893,11 @@ export function CategoryView() {
       setSelectedFileIds(new Set(targetIds));
     }
   }, [selectedFileIds, slipsCategoryFiles]);
+
+  // Reset file selection when page changes
+  useEffect(() => {
+    setSelectedFileIds(new Set());
+  }, [slipsCategoryPage]);
 
   // ── AI Analysis flow ────────────────────────────────────────────────────────
 
@@ -1009,7 +1044,7 @@ export function CategoryView() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
-  const selectableOnPageIds = slipsCategoryFiles.slice(0, 5).map(file => String(file.file_id));
+  const selectableOnPageIds = slipsCategoryFiles.map(file => String(file.file_id)).slice(0, 5);
   const allSelectedOnPage =
     selectableOnPageIds.length > 0 &&
     selectableOnPageIds.every(id => selectedFileIds.has(id));
@@ -1133,14 +1168,22 @@ export function CategoryView() {
                   : t('category.slipsFiles.noData')}
               </div>
             )}
-            {slipsCategoryTotal > slipsCategoryFiles.length && (
-              <p class="ics-form-hint" style={{ marginTop: '8px' }}>
-                {t('category.slipsFiles.showingOf', {
-                  shown: slipsCategoryFiles.length,
-                  total: slipsCategoryTotal,
-                })}
-              </p>
-            )}
+            <Pagination
+              currentPage={slipsCategoryPage}
+              totalPages={slipsCategoryTotalPages}
+              totalItems={slipsCategoryTotal}
+              goToPageInput={slipsGoToPageInput}
+              onPageChange={handleSlipsPageChange}
+              onGoToPageInputChange={setSlipsGoToPageInput}
+              onGoToPage={handleSlipsGoToPage}
+              isFirstPage={slipsCategoryPage <= 1 || isSlipsCategoryLoading}
+              isLastPage={slipsCategoryPage >= slipsCategoryTotalPages || isSlipsCategoryLoading}
+              position="bottom"
+              show
+              selectedCount={selectedFileIds.size}
+              onSelectAll={toggleSelectAll}
+              onDeselectAll={() => setSelectedFileIds(new Set())}
+            />
           </div>
         </div>
       </section>
@@ -1163,7 +1206,7 @@ export function CategoryView() {
           <div class="ics-card-header">
             <span class="oj-typography-heading-xs">{t('category.tableTitle')}</span>
             <div class="ics-card-header__actions">
-              <span class="ics-text-muted">{t('category.totalCategories', { count: categories.length })}</span>
+              <span class="ics-text-muted">{t('category.totalCategories', { count: categoryPagination.totalItems })}</span>
               <button
                 class="ics-ops-btn ics-ops-btn--ghost"
                 onClick={loadCategories}
@@ -1179,6 +1222,20 @@ export function CategoryView() {
               <table class="ics-table">
                 <thead>
                   <tr>
+                    <th style={{ width: '40px' }}>
+                      <input
+                        type="checkbox"
+                        checked={categorySelection.isAllSelected(categoryPagination.paginatedItems)}
+                        onChange={() => {
+                          if (categorySelection.isAllSelected(categoryPagination.paginatedItems)) {
+                            categorySelection.deselectAll();
+                          } else {
+                            categorySelection.selectAll(categoryPagination.paginatedItems);
+                          }
+                        }}
+                        aria-label={t('common.selectAll')}
+                      />
+                    </th>
                     <th>{t('category.col.name')}</th>
                     <th>{t('category.col.nameEn')}</th>
                     <th>{t('category.col.headerTable')}</th>
@@ -1190,8 +1247,17 @@ export function CategoryView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {categories.map(cat => (
-                    <tr key={cat.id} class={cat.is_active ? '' : 'ics-table__row--inactive'}>
+                  {categoryPagination.paginatedItems.map(cat => (
+                    <tr key={cat.id} class={`${cat.is_active ? '' : 'ics-table__row--inactive'} ${categorySelection.isSelected(String(cat.id)) ? 'ics-table__row--selected' : ''}`}>
+                      <td class="ics-table__cell--center">
+                        <input
+                          type="checkbox"
+                          checked={categorySelection.isSelected(String(cat.id))}
+                          onChange={() => categorySelection.toggle(String(cat.id))}
+                          disabled={cat.registration_count > 0}
+                          aria-label={t('common.selectAll')}
+                        />
+                      </td>
                       <td class="ics-table__cell--name">{cat.category_name}</td>
                       <td class="oj-text-color-secondary">{cat.category_name_en || '--'}</td>
                       <td>
@@ -1259,6 +1325,22 @@ export function CategoryView() {
                 {isCategoriesLoading ? t('common.loading') : t('category.noData')}
               </div>
             )}
+            <Pagination
+              currentPage={categoryPagination.currentPage}
+              totalPages={categoryPagination.totalPages}
+              totalItems={categoryPagination.totalItems}
+              goToPageInput={categoryPagination.goToPageInput}
+              onPageChange={categoryPagination.goToPage}
+              onGoToPageInputChange={categoryPagination.setGoToPageInput}
+              onGoToPage={categoryPagination.handleGoToPage}
+              isFirstPage={categoryPagination.isFirstPage}
+              isLastPage={categoryPagination.isLastPage}
+              position="bottom"
+              show
+              selectedCount={categorySelection.selectedCount}
+              onSelectAll={() => categorySelection.selectAll(categoryPagination.paginatedItems)}
+              onDeselectAll={categorySelection.deselectAll}
+            />
           </div>
         </div>
       </section>

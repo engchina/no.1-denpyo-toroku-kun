@@ -2851,6 +2851,22 @@ html[dir="rtl"] .oracle-icon {
     margin-top: 12px;
 }
 
+.ics-pagination__left {
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.ics-pagination__selection {
+    gap: 6px;
+}
+
+.ics-pagination__selectionCount {
+    font-size: 0.86rem;
+    color: var(--aai-action-1, #0572ec);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
 .ics-pagination__summary {
     font-size: 0.92rem;
     line-height: 1.4;

@@ -16,6 +16,8 @@ import {
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import Pagination from '../../components/Pagination';
+import { usePagination } from '../../hooks/usePagination';
+import { useSelection } from '../../hooks/useSelection';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
 import { apiPost } from '../../utils/apiUtils';
@@ -296,11 +298,33 @@ function TableBrowserTab({
   const [selectedTable, setSelectedTable] = useState<TableBrowserTable | null>(null);
   const [page, setPage] = useState(1);
   const [goToPageInput, setGoToPageInput] = useState('');
-  const [tableListPage, setTableListPage] = useState(1);
-  const [tableListGoToPageInput, setTableListGoToPageInput] = useState('');
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
   const pageSize = 20;
-  const tableListPageSize = 20;
+
+  // テーブル一覧ページネーション (client-side via usePagination hook)
+  const tableListPagination = usePagination(tableBrowserTables, { pageSize: 20 });
+
+  // テーブル一覧選択
+  const tableListSelection = useSelection<TableBrowserTable>({
+    getItemId: (table) => `${table.category_id}-${table.table_type}-${table.table_name}`,
+  });
+
+  // テーブルデータプレビュー行選択
+  const dataRowSelection = useSelection<Record<string, any>>({
+    getItemId: (row) => {
+      const raw = row.ROW_ID_META;
+      return (raw === null || raw === undefined || raw === '') ? '' : String(raw);
+    },
+    isSelectable: (row) => {
+      const raw = row.ROW_ID_META;
+      return raw !== null && raw !== undefined && raw !== '';
+    },
+  });
+
+  // データプレビューの行選択をページ/テーブル変更時にリセット
+  useEffect(() => {
+    dataRowSelection.reset();
+  }, [selectedTable, page]);
 
   useEffect(() => {
     if (!selectedTable && tableBrowserTables.length > 0) {
@@ -316,7 +340,7 @@ function TableBrowserTab({
       if (!stillExists) {
         setSelectedTable(tableBrowserTables[0] || null);
         setPage(1);
-        setTableListPage(1);
+        tableListPagination.reset();
       }
     }
   }, [tableBrowserTables, selectedTable]);
@@ -335,11 +359,6 @@ function TableBrowserTab({
 
   const noTables = !isTablesLoading && searchableTables.length === 0;
   const totalPages = result?.total_pages || 1;
-  const tableListTotalPages = Math.max(1, Math.ceil(tableBrowserTables.length / tableListPageSize));
-  const paginatedTableList = tableBrowserTables.slice(
-    (tableListPage - 1) * tableListPageSize,
-    tableListPage * tableListPageSize
-  );
   const tableListStatusLabel = isTableListLoading
     ? t('search.browser.tableListStatus.loading')
     : tableBrowserTables.length > 0
@@ -380,20 +399,6 @@ function TableBrowserTab({
       setGoToPageInput('');
     }
   }, [goToPageInput, totalPages]);
-
-  const handleTableListPageChange = useCallback((nextPage: number) => {
-    if (nextPage >= 1 && nextPage <= tableListTotalPages) {
-      setTableListPage(nextPage);
-    }
-  }, [tableListTotalPages]);
-
-  const handleTableListGoToPage = useCallback(() => {
-    const target = parseInt(tableListGoToPageInput, 10);
-    if (!Number.isNaN(target) && target >= 1 && target <= tableListTotalPages) {
-      setTableListPage(target);
-      setTableListGoToPageInput('');
-    }
-  }, [tableListGoToPageInput, tableListTotalPages]);
 
   const getRowId = useCallback((row: Record<string, any>): string | null => {
     const raw = row.ROW_ID_META;
@@ -463,6 +468,20 @@ function TableBrowserTab({
             <table class="ics-table">
               <thead>
                 <tr>
+                  <th style={{ width: '40px' }}>
+                    <input
+                      type="checkbox"
+                      checked={tableListSelection.isAllSelected(tableListPagination.paginatedItems)}
+                      onChange={() => {
+                        if (tableListSelection.isAllSelected(tableListPagination.paginatedItems)) {
+                          tableListSelection.deselectAll();
+                        } else {
+                          tableListSelection.selectAll(tableListPagination.paginatedItems);
+                        }
+                      }}
+                      aria-label={t('common.selectAll')}
+                    />
+                  </th>
                   <th>{t('search.browser.col.tableName')}</th>
                   <th>{t('search.browser.col.category')}</th>
                   <th>{t('search.browser.col.type')}</th>
@@ -472,9 +491,11 @@ function TableBrowserTab({
                 </tr>
               </thead>
               <tbody>
-                {paginatedTableList.map(table => (
+                {tableListPagination.paginatedItems.map(table => {
+                  const tableKey = `${table.category_id}-${table.table_type}-${table.table_name}`;
+                  return (
                   <tr
-                    key={`${table.category_id}-${table.table_type}-${table.table_name}`}
+                    key={tableKey}
                     role="button"
                     tabIndex={0}
                     class={
@@ -488,6 +509,13 @@ function TableBrowserTab({
                     onClick={() => handleTableSelect(table)}
                     onKeyDown={(e) => handleTableRowKeyDown(e, table)}
                   >
+                    <td class="ics-table__cell--center" onClick={(e: Event) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={tableListSelection.isSelected(tableKey)}
+                        onChange={() => tableListSelection.toggle(tableKey)}
+                      />
+                    </td>
                     <td>{table.table_name}</td>
                     <td>{table.category_name}</td>
                     <td>{table.table_type === 'header' ? t('search.browser.header') : t('search.browser.line')}</td>
@@ -495,21 +523,25 @@ function TableBrowserTab({
                     <td>{table.column_count}</td>
                     <td>{formatDateTime(table.created_at)}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             <Pagination
-              currentPage={tableListPage}
-              totalPages={tableListTotalPages}
-              totalItems={tableBrowserTables.length}
-              goToPageInput={tableListGoToPageInput}
-              onPageChange={handleTableListPageChange}
-              onGoToPageInputChange={setTableListGoToPageInput}
-              onGoToPage={handleTableListGoToPage}
-              isFirstPage={tableListPage <= 1}
-              isLastPage={tableListPage >= tableListTotalPages}
+              currentPage={tableListPagination.currentPage}
+              totalPages={tableListPagination.totalPages}
+              totalItems={tableListPagination.totalItems}
+              goToPageInput={tableListPagination.goToPageInput}
+              onPageChange={tableListPagination.goToPage}
+              onGoToPageInputChange={tableListPagination.setGoToPageInput}
+              onGoToPage={tableListPagination.handleGoToPage}
+              isFirstPage={tableListPagination.isFirstPage}
+              isLastPage={tableListPagination.isLastPage}
               position="bottom"
-              show={tableListTotalPages > 1}
+              show
+              selectedCount={tableListSelection.selectedCount}
+              onSelectAll={() => tableListSelection.selectAll(tableListPagination.paginatedItems)}
+              onDeselectAll={tableListSelection.deselectAll}
             />
           </div>
         ) : (
@@ -569,6 +601,7 @@ function TableBrowserTab({
                         </button>
                       );
                     }}
+                    selection={dataRowSelection}
                   />
 
                   <Pagination
@@ -582,7 +615,10 @@ function TableBrowserTab({
                     isFirstPage={page <= 1 || isLoading}
                     isLastPage={page >= totalPages || isLoading}
                     position="bottom"
-                    show={totalPages > 1}
+                    show
+                    selectedCount={dataRowSelection.selectedCount}
+                    onSelectAll={() => dataRowSelection.selectAll(result.rows)}
+                    onDeselectAll={dataRowSelection.deselectAll}
                   />
                 </>
               ) : (
@@ -610,9 +646,11 @@ interface ResultsTableProps {
   rows: Record<string, any>[];
   actionColumnLabel?: string;
   renderRowActions?: (row: Record<string, any>) => ComponentChildren;
+  /** Optional selection support via useSelection hook */
+  selection?: import('../../hooks/useSelection').UseSelectionResult<Record<string, any>>;
 }
 
-function ResultsTable({ columns, rows, actionColumnLabel, renderRowActions }: ResultsTableProps) {
+function ResultsTable({ columns, rows, actionColumnLabel, renderRowActions, selection }: ResultsTableProps) {
   if (!columns || columns.length === 0) return null;
 
   return (
@@ -620,6 +658,22 @@ function ResultsTable({ columns, rows, actionColumnLabel, renderRowActions }: Re
       <table class="ics-table">
         <thead>
           <tr>
+            {selection && (
+              <th style={{ width: '40px' }}>
+                <input
+                  type="checkbox"
+                  checked={selection.isAllSelected(rows)}
+                  onChange={() => {
+                    if (selection.isAllSelected(rows)) {
+                      selection.deselectAll();
+                    } else {
+                      selection.selectAll(rows);
+                    }
+                  }}
+                  aria-label={t('common.selectAll')}
+                />
+              </th>
+            )}
             {columns.map(col => (
               <th key={col}>{col}</th>
             ))}
@@ -627,14 +681,30 @@ function ResultsTable({ columns, rows, actionColumnLabel, renderRowActions }: Re
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, idx) => (
-            <tr key={idx}>
-              {columns.map(col => (
-                <td key={col}>{formatCellValue(row[col])}</td>
-              ))}
-              {renderRowActions && <td>{renderRowActions(row)}</td>}
-            </tr>
-          ))}
+          {rows.map((row, idx) => {
+            const rowId = selection ? (() => {
+              const raw = row.ROW_ID_META;
+              return (raw === null || raw === undefined || raw === '') ? '' : String(raw);
+            })() : '';
+            return (
+              <tr key={idx} class={selection && rowId && selection.isSelected(rowId) ? 'ics-table__row--selected' : ''}>
+                {selection && (
+                  <td class="ics-table__cell--center">
+                    <input
+                      type="checkbox"
+                      checked={rowId ? selection.isSelected(rowId) : false}
+                      onChange={() => rowId && selection.toggle(rowId)}
+                      disabled={!rowId}
+                    />
+                  </td>
+                )}
+                {columns.map(col => (
+                  <td key={col}>{formatCellValue(row[col])}</td>
+                ))}
+                {renderRowActions && <td>{renderRowActions(row)}</td>}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

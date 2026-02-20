@@ -1,10 +1,13 @@
 /**
- * 共通ページネーション（ページ移動 UI）
- * Training 画面のデータセット用ページネーションの見た目に合わせる
+ * 共通ページネーション（ページ移動 UI）+ 選択操作
  * ページングが必要な画面で再利用可能
+ *
+ * 選択操作（すべて選択 / すべて解除）はオプション。
+ * selectedCount を渡すと選択 UI が表示される。
  */
 import { h } from 'preact';
 import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
+import { t } from '../i18n';
 
 export interface PaginationProps {
   currentPage: number;
@@ -20,14 +23,23 @@ export interface PaginationProps {
   position?: 'top' | 'bottom';
   /** Whether to show the component (typically based on totalPages > 1) */
   show?: boolean;
+
+  // ── 選択操作（オプション）──────────────────────────────────────
+  /** 現在の選択件数。undefined の場合、選択 UI は非表示 */
+  selectedCount?: number;
+  /** 「すべて選択」ハンドラ */
+  onSelectAll?: () => void;
+  /** 「すべて解除」ハンドラ */
+  onDeselectAll?: () => void;
 }
 
 /**
- * 再利用可能なページネーション
+ * 再利用可能なページネーション + 選択操作
  *
  * 使用例:
  * ```tsx
  * const pagination = usePagination(items, { pageSize: 20 });
+ * const selection = useSelection({ getItemId: (item) => item.id });
  *
  * <Pagination
  *   currentPage={pagination.currentPage}
@@ -39,8 +51,11 @@ export interface PaginationProps {
  *   onGoToPage={pagination.handleGoToPage}
  *   isFirstPage={pagination.isFirstPage}
  *   isLastPage={pagination.isLastPage}
- *   position="top"
+ *   position="bottom"
  *   show={pagination.showPagination}
+ *   selectedCount={selection.selectedCount}
+ *   onSelectAll={() => selection.selectAll(pagination.paginatedItems)}
+ *   onDeselectAll={selection.deselectAll}
  * />
  * ```
  */
@@ -55,7 +70,10 @@ export function Pagination({
   isFirstPage,
   isLastPage,
   position = 'top',
-  show = true
+  show = true,
+  selectedCount,
+  onSelectAll,
+  onDeselectAll,
 }: PaginationProps) {
   if (!show) {
     return null;
@@ -72,13 +90,42 @@ export function Pagination({
     || targetPage < 1
     || targetPage > totalPages;
 
+  const showSelection = selectedCount !== undefined && onSelectAll && onDeselectAll;
+
   return (
-    <div 
+    <div
       class={`oj-flex oj-sm-justify-content-space-between oj-sm-align-items-center ics-pagination ics-pagination--${position}`}
     >
-      <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__summary">
-        {currentPage} / {totalPages} ページ（合計 {totalItems} 件）
-      </span>
+      {/* 左側: 選択操作 + サマリー */}
+      <div class="oj-flex oj-sm-align-items-center ics-pagination__left">
+        {showSelection && (
+          <div class="oj-flex oj-sm-align-items-center ics-pagination__selection">
+            <Button
+              label={t('common.selectAll')}
+              variant="outlined"
+              size="sm"
+              onAction={onSelectAll}
+            />
+            <Button
+              label={t('common.deselectAll')}
+              variant="outlined"
+              size="sm"
+              onAction={onDeselectAll}
+              isDisabled={selectedCount === 0}
+            />
+            {selectedCount > 0 && (
+              <span class="oj-typography-body-sm ics-pagination__selectionCount">
+                {t('common.selectedCount', { count: selectedCount })}
+              </span>
+            )}
+          </div>
+        )}
+        <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__summary">
+          {currentPage} / {totalPages} ページ（合計 {totalItems} 件）
+        </span>
+      </div>
+
+      {/* 右側: ページ移動コントロール */}
       <div class="oj-flex oj-sm-align-items-center ics-pagination__controls">
         <Button
           label="前へ"

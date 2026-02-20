@@ -359,6 +359,8 @@ export interface DenpyoSliceState {
   slipsCategoryFiles: DenpyoFile[];
   slipsCategoryTotal: number;
   slipsCategoryPage: number;
+  slipsCategoryPageSize: number;
+  slipsCategoryTotalPages: number;
   isSlipsCategoryLoading: boolean;
   categoryAnalysisResult: CategoryAnalysisResult | null;
   isCategoryAnalyzing: boolean;

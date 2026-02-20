@@ -142,16 +142,22 @@ class OCIStorageService:
         if not self.is_configured:
             return {"success": False, "message": "OCI_BUCKET / OCI_NAMESPACE が未設定です"}
 
-        # メタデータ（日本語ファイル名対応はbase64エンコード）
+        # メタデータ（日本語ファイル名対応: ASCII ならそのまま、非ASCII は base64）
+        # 参考: no.1-semantic-doc-search の OCI メタデータ方式を踏襲
         opc_meta = {
             "uploaded-at": datetime.now().isoformat(),
             "file-size": str(len(file_data)),
             "upload-source": "denpyo-toroku",
         }
-        if original_filename:
-            opc_meta["original-filename-b64"] = base64.b64encode(
-                original_filename.encode("utf-8")
-            ).decode("ascii")
+        if original_filename and original_filename.strip():
+            stripped = original_filename.strip()
+            try:
+                stripped.encode("latin-1")
+                opc_meta["original-filename"] = stripped
+            except UnicodeEncodeError:
+                opc_meta["original-filename-b64"] = base64.b64encode(
+                    stripped.encode("utf-8")
+                ).decode("ascii")
 
         request_id = f"denpyo-upload-{int(time.time() * 1000)}"
         started_at = time.time()
@@ -289,7 +295,8 @@ class OCIStorageService:
                 if k.startswith("opc-meta-")
             }
 
-            # base64エンコードされた元ファイル名をデコード
+            # 元ファイル名を復元（base64 → plain → オブジェクト名のフォールバック）
+            # 参考: no.1-semantic-doc-search の復元ロジックを踏襲
             original_filename = ""
             if "original-filename-b64" in opc_meta:
                 try:
@@ -298,6 +305,10 @@ class OCIStorageService:
                     ).decode("utf-8")
                 except Exception:
                     pass
+            if not original_filename:
+                original_filename = opc_meta.get(
+                    "original-filename", object_name.rsplit("/", 1)[-1]
+                )
 
             return {
                 "object_name": object_name,

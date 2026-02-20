@@ -602,7 +602,10 @@ export function ListView() {
               isFirstPage={page <= 1 || isLoading}
               isLastPage={page >= totalPages || isLoading}
               position="bottom"
-              show={totalPages > 1}
+              show
+              selectedCount={selectedFileIds.length}
+              onSelectAll={handleSelectAllOnPage}
+              onDeselectAll={() => setSelectedFileIds([])}
             />
           </div>
         </div>

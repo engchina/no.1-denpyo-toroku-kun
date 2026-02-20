@@ -159,11 +159,27 @@ class DocumentProcessor:
         return [(file_data, content_type)]
 
     def generate_object_name(self, original_filename: str, prefix: str = "denpyo") -> str:
-        """Object Storage用のオブジェクト名を生成"""
-        import hashlib
-        import time
+        """Object Storage用のオブジェクト名を生成
 
-        ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "bin"
-        timestamp = int(time.time() * 1000)
-        hash_part = hashlib.md5(f"{original_filename}{timestamp}".encode()).hexdigest()[:8]
-        return f"{prefix}/{timestamp}_{hash_part}.{ext}"
+        命名規則: {prefix}/{YYYYMMDD_HHMMSS}_{uuid[:8]}_{sanitized_original_filename}
+        - タイムスタンプで時系列ソート可能
+        - UUID接頭辞で衝突防止
+        - サニタイズ済み元ファイル名で人間が識別可能
+
+        参考: no.1-semantic-doc-search の命名規則を踏襲
+        """
+        import re
+        import uuid
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        short_uuid = str(uuid.uuid4())[:8]
+
+        # 危険な文字をアンダースコアに置換（パストラバーサル対策含む）
+        safe_basename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", original_filename)
+        safe_basename = safe_basename.replace("..", "_")
+        if not safe_basename or safe_basename.strip() == "":
+            safe_basename = "unnamed_file"
+
+        safe_filename = f"{timestamp}_{short_uuid}_{safe_basename}"
+        return f"{prefix}/{safe_filename}"
