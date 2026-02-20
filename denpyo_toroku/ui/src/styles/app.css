@@ -3853,6 +3853,22 @@ html[dir="rtl"] .oracle-icon {
     border-color: #c6d8ea;
 }
 
+/* Keep bulk-delete button style consistent with SearchView in enhanced layouts */
+.ics-dashboard--enhanced .ics-ops-btn--bulk-danger,
+.ics-stats--enhanced .ics-ops-btn--bulk-danger,
+.ics-model-info--enhanced .ics-ops-btn--bulk-danger {
+    background: #fff;
+    color: #dc3545;
+    border-color: #d3deea;
+}
+
+.ics-dashboard--enhanced .ics-ops-btn--bulk-danger:hover:not(:disabled),
+.ics-stats--enhanced .ics-ops-btn--bulk-danger:hover:not(:disabled),
+.ics-model-info--enhanced .ics-ops-btn--bulk-danger:hover:not(:disabled) {
+    background: #fef2f2;
+    border-color: #f3c5cc;
+}
+
 .ics-dashboard--enhanced .ics-ops-kpiGrid,
 .ics-stats--enhanced .ics-ops-kpiGrid,
 .ics-model-info--enhanced .ics-ops-kpiGrid {
@@ -5105,6 +5121,15 @@ html[dir="rtl"] .oracle-icon {
     top: 0;
     z-index: 2;
     background: #f8fbff;
+}
+
+.ics-fileListView__fileNameCell {
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .ics-fileListView__sortBtn {

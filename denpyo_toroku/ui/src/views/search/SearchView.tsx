@@ -673,15 +673,6 @@ function TableBrowserTab({
             <span class="oj-typography-heading-xs">{t('search.browser.tableListTitle')}</span>
             <div class="ics-unified-table-toolbar">
               <div class="ics-unified-table-toolbar__group">
-                <button
-                  type="button"
-                  class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                  onClick={handleBulkDeleteRows}
-                  disabled={dataRowSelection.selectedCount === 0 || isBulkDeletingRows || isLoading}
-                >
-                  <Trash2 size={14} />
-                  <span>{t('fileList.bulkDelete')}</span>
-                </button>
                 <span class="ics-unified-table-toolbar__meta">
                   {t('search.browser.selectedTables', { count: tableListSelection.selectedCount })}
                 </span>

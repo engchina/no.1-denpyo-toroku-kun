@@ -1347,7 +1347,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
               <div class="ics-unified-table-toolbar">
                 <div class="ics-unified-table-toolbar__group">
                   <button
-                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
                     onClick={handleBulkDeleteSlips}
                     disabled={selectedFileIds.size === 0 || isBulkDeletingSlips || isSlipsCategoryLoading}
                   >
@@ -1534,7 +1534,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                 <div class="ics-unified-table-toolbar__group">
                   <button
                     type="button"
-                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
                     onClick={handleBulkDeleteCategories}
                     disabled={categorySelection.selectedCount === 0 || isBulkDeletingCategories || isCategoriesLoading}
                   >

@@ -446,7 +446,7 @@ export function ListView() {
                 <div class="ics-unified-table-toolbar__group">
                   <button
                     type="button"
-                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
                     onClick={handleBulkDelete}
                     disabled={isDeleting || isLoading || selectedFileIds.length === 0}
                     title={t('fileList.bulkDelete')}
@@ -541,7 +541,7 @@ export function ListView() {
                           aria-label={t('fileList.selectFile')}
                         />
                       </td>
-                      <td class="ics-table__cell--name">{file.file_name}</td>
+                      <td class="ics-table__cell--name ics-fileListView__fileNameCell">{file.file_name}</td>
                       <td>{t('upload.kind.raw')}</td>
                       <td>{formatFileSize(file.file_size)}</td>
                       <td><StatusBadge status={file.status} /></td>
