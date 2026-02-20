@@ -419,16 +419,6 @@ export function ListView() {
             <h2>{t('fileList.title')}</h2>
             <p class="ics-ops-hero__subtitle">{t('fileList.subtitle')}</p>
           </div>
-          <div class="ics-ops-hero__controls">
-            <button
-              class="ics-ops-btn ics-ops-btn--primary"
-              onClick={loadFiles}
-              disabled={isLoading}
-            >
-              <RefreshCw size={14} class={isLoading ? 'ics-spin' : ''} />
-              <span>{isLoading ? t('common.loading') : t('fileList.refresh')}</span>
-            </button>
-          </div>
         </div>
         <div class="ics-fileListView__heroStats">
           <div class="ics-fileListView__heroStat">
@@ -480,6 +470,14 @@ export function ListView() {
                       <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
                     ))}
                   </select>
+                  <button
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={loadFiles}
+                    disabled={isLoading}
+                  >
+                    <RefreshCw size={14} class={isLoading ? 'ics-spin' : ''} />
+                    <span>{isLoading ? t('common.loading') : t('fileList.refresh')}</span>
+                  </button>
                 </div>
               </div>
             </div>

@@ -252,7 +252,7 @@ export const ja = {
   // 伝票一覧画面 (SCR-002)
   'fileList.title': '本登録用伝票',
   'fileList.subtitle': 'アップロード済みの本登録用伝票ファイルを管理します。',
-  'fileList.refresh': '更新',
+  'fileList.refresh': '再取得',
   'fileList.kpi.total': '総ファイル',
   'fileList.kpi.ready': '処理可能',
   'fileList.kpi.error': 'エラー',

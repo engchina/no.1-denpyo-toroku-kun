@@ -667,25 +667,25 @@ function TableBrowserTab({
 
   return (
     <div class="ics-table-browser">
-      <div class="ics-browser-panel">
-        <div class="ics-browser-panel__header ics-card-header ics-card-header--table-toolbar">
+      <div class="ics-card ics-ops-panel">
+        <div class="ics-card-header ics-card-header--table-toolbar">
           <div class="ics-unified-table-header">
-            <span class="ics-browser-panel__title">{t('search.browser.tableListTitle')}</span>
-              <div class="ics-unified-table-toolbar">
-                <div class="ics-unified-table-toolbar__group">
-                  <button
-                    type="button"
-                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                    onClick={handleBulkDeleteRows}
-                    disabled={dataRowSelection.selectedCount === 0 || isBulkDeletingRows || isLoading}
-                  >
-                    <Trash2 size={14} />
-                    <span>{t('fileList.bulkDelete')}</span>
-                  </button>
-                  <span class="ics-unified-table-toolbar__meta">
-                    {t('search.browser.selectedTables', { count: tableListSelection.selectedCount })}
-                  </span>
-                </div>
+            <span class="oj-typography-heading-xs">{t('search.browser.tableListTitle')}</span>
+            <div class="ics-unified-table-toolbar">
+              <div class="ics-unified-table-toolbar__group">
+                <button
+                  type="button"
+                  class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                  onClick={handleBulkDeleteRows}
+                  disabled={dataRowSelection.selectedCount === 0 || isBulkDeletingRows || isLoading}
+                >
+                  <Trash2 size={14} />
+                  <span>{t('fileList.bulkDelete')}</span>
+                </button>
+                <span class="ics-unified-table-toolbar__meta">
+                  {t('search.browser.selectedTables', { count: tableListSelection.selectedCount })}
+                </span>
+              </div>
               <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
                 <button
                   type="button"
@@ -701,9 +701,10 @@ function TableBrowserTab({
           </div>
         </div>
 
+        <div class="ics-card-body">
         {tableBrowserTables.length > 0 ? (
           <>
-            <div class="ics-table-list-wrapper">
+            <div class="ics-table-wrapper">
               <table class="ics-table">
                 <thead>
                   <tr>
@@ -830,14 +831,15 @@ function TableBrowserTab({
         ) : (
           <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noTableList')}</p>
         )}
+        </div>
       </div>
 
       {selectedTable && (
-        <div class="ics-browser-panel oj-sm-margin-4x-top">
-          <div class="ics-browser-panel__header ics-card-header ics-card-header--table-toolbar">
+        <div class="ics-card ics-ops-panel oj-sm-margin-4x-top">
+          <div class="ics-card-header ics-card-header--table-toolbar">
             <div class="ics-unified-table-header">
               <div class="ics-browser-title-wrap">
-                <span class="ics-browser-panel__title">
+                <span class="oj-typography-heading-xs">
                   {t('search.browser.previewTitle')}
                 </span>
                 <span class="ics-browser-table-chip">{selectedTable.table_name}</span>
@@ -871,72 +873,73 @@ function TableBrowserTab({
               </div>
             </div>
           </div>
+          <div class="ics-card-body">
+            {isLoading && (
+              <div class="ics-loading oj-sm-margin-4x-top">
+                <Loader2 size={24} class="ics-spinner" />
+                <span>{t('common.loading')}</span>
+              </div>
+            )}
 
-          {isLoading && (
-            <div class="ics-loading oj-sm-margin-4x-top">
-              <Loader2 size={24} class="ics-spinner" />
-              <span>{t('common.loading')}</span>
-            </div>
-          )}
+            {!isLoading && result && (
+              <div class="ics-browser-results oj-sm-margin-4x-top">
+                {result.rows && result.rows.length > 0 ? (
+                  <>
+                    <ResultsTable
+                      columns={result.columns}
+                      rows={sortedDataRows}
+                      sortColumn={dataSortColumn}
+                      sortDirection={dataSortDirection}
+                      onSortColumn={handleDataSort}
+                      actionColumnLabel={t('search.browser.col.actions')}
+                      renderRowActions={(row) => {
+                        const rowId = getRowId(row);
+                        if (!rowId) return null;
+                        return (
+                          <button
+                            type="button"
+                            class="ics-ops-btn ics-ops-btn--ghost"
+                            onClick={() => handleDeleteRow(row)}
+                            disabled={deletingRowId === rowId}
+                            title={t('common.delete')}
+                          >
+                            {deletingRowId === rowId
+                              ? <Loader2 size={14} class="ics-spinner" />
+                              : <Trash2 size={14} />
+                            }
+                          </button>
+                        );
+                      }}
+                      selection={dataRowSelection}
+                    />
 
-          {!isLoading && result && (
-            <div class="ics-browser-results oj-sm-margin-4x-top">
-              {result.rows && result.rows.length > 0 ? (
-                <>
-                  <ResultsTable
-                    columns={result.columns}
-                    rows={sortedDataRows}
-                    sortColumn={dataSortColumn}
-                    sortDirection={dataSortDirection}
-                    onSortColumn={handleDataSort}
-                    actionColumnLabel={t('search.browser.col.actions')}
-                    renderRowActions={(row) => {
-                      const rowId = getRowId(row);
-                      if (!rowId) return null;
-                      return (
-                        <button
-                          type="button"
-                          class="ics-ops-btn ics-ops-btn--ghost"
-                          onClick={() => handleDeleteRow(row)}
-                          disabled={deletingRowId === rowId}
-                          title={t('common.delete')}
-                        >
-                          {deletingRowId === rowId
-                            ? <Loader2 size={14} class="ics-spinner" />
-                            : <Trash2 size={14} />
-                          }
-                        </button>
-                      );
-                    }}
-                    selection={dataRowSelection}
-                  />
-
-                  <Pagination
-                    currentPage={page}
-                    totalPages={totalPages}
-                    totalItems={result.total || 0}
-                    pageSize={dataPageSize}
-                    pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
-                    onPageSizeChange={handleDataPageSizeChange}
-                    goToPageInput={goToPageInput}
-                    onPageChange={handlePageChange}
-                    onGoToPageInputChange={setGoToPageInput}
-                    onGoToPage={handleGoToPage}
-                    rangeStart={dataRangeStart}
-                    rangeEnd={dataRangeEnd}
-                    showGoToPage={false}
-                    isFirstPage={page <= 1 || isLoading}
-                    isLastPage={page >= totalPages || isLoading}
-                    position="bottom"
-                    show
-                    summaryPlacement="controls"
-                  />
-                </>
-              ) : (
-                <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noData')}</p>
-              )}
-            </div>
-          )}
+                    <Pagination
+                      currentPage={page}
+                      totalPages={totalPages}
+                      totalItems={result.total || 0}
+                      pageSize={dataPageSize}
+                      pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
+                      onPageSizeChange={handleDataPageSizeChange}
+                      goToPageInput={goToPageInput}
+                      onPageChange={handlePageChange}
+                      onGoToPageInputChange={setGoToPageInput}
+                      onGoToPage={handleGoToPage}
+                      rangeStart={dataRangeStart}
+                      rangeEnd={dataRangeEnd}
+                      showGoToPage={false}
+                      isFirstPage={page <= 1 || isLoading}
+                      isLastPage={page >= totalPages || isLoading}
+                      position="bottom"
+                      show
+                      summaryPlacement="controls"
+                    />
+                  </>
+                ) : (
+                  <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noData')}</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

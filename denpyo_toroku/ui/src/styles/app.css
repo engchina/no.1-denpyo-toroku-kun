@@ -5644,19 +5644,6 @@ html[dir="rtl"] .oracle-icon {
     background: transparent;
 }
 
-/* Align Search bulk-delete button style with File List view (ghost priority over danger) */
-.ics-search-view .ics-ops-btn--ghost.ics-ops-btn--danger {
-    background: #fff;
-    color: #275a91;
-    border-color: #c6d8ea;
-}
-
-.ics-search-view .ics-ops-btn--ghost.ics-ops-btn--danger:hover:not(:disabled) {
-    background: #f3f8ff;
-    border-color: #b6c9de;
-    color: #275a91;
-}
-
 /* Search content */
 .ics-search-content {
     width: 100%;
@@ -5795,71 +5782,15 @@ html[dir="rtl"] .oracle-icon {
     color: #6b7280;
 }
 
-.ics-browser-panel {
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    background: #fff;
-    padding: 16px;
-}
-
-.ics-browser-panel__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-bottom: 12px;
-}
-
-.ics-browser-panel__title {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #374151;
-}
-
-.ics-browser-panel__actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.ics-browser-status-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 3px 8px;
-    border-radius: 999px;
-    background: #e2e8f0;
-    color: #64748b;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-
-.ics-browser-status-badge--loading {
-    background: #fef3c7;
-    color: #92400e;
-}
-
-.ics-browser-status-badge--success {
-    background: #dcfce7;
-    color: #166534;
-}
-
-.ics-table-list-wrapper {
-    max-height: 280px;
-    overflow: auto;
-    border-radius: 8px;
-    border: 1px solid #edf0f4;
-}
-
 .ics-table-row--selected {
     background-color: #eff6ff;
 }
 
-.ics-table-list-wrapper .ics-table tbody tr {
+.ics-search-view .ics-table-wrapper .ics-table tbody tr {
     cursor: pointer;
 }
 
-.ics-table-list-wrapper .ics-table tbody tr:focus-visible {
+.ics-search-view .ics-table-wrapper .ics-table tbody tr:focus-visible {
     outline: 2px solid var(--aai-primary-lines-2);
     outline-offset: -2px;
 }
@@ -5979,6 +5910,23 @@ html[dir="rtl"] .oracle-icon {
     vertical-align: middle;
 }
 
+/* Table browser: align card styling with ics-dashboard--enhanced .ics-ops-panel */
+.ics-table-browser .ics-ops-panel {
+    border: 1px solid #d1dfed;
+    border-radius: 12px;
+    box-shadow: 0 2px 4px rgba(23, 59, 96, 0.03);
+}
+
+.ics-table-browser .ics-ops-panel .ics-card-header {
+    border-bottom: 1px solid #e4edf7;
+    background: #fbfdff;
+    padding: 13px 15px;
+}
+
+.ics-table-browser .ics-ops-panel .ics-card-body {
+    padding: 14px 15px;
+}
+
 @media (max-width: 840px) {
     .ics-search-workspace {
         padding: 12px 12px 14px;
@@ -5994,10 +5942,6 @@ html[dir="rtl"] .oracle-icon {
         flex: 0 0 auto;
     }
 
-    .ics-browser-panel__actions {
-        width: 100%;
-        justify-content: space-between;
-    }
 }
 
 /* ======================================================
