@@ -1,12 +1,15 @@
 /**
  * UploadView - 伝票ファイルアップロード画面 (SCR-001)
  * Drag & Drop + ファイル選択 + バリデーション + アップロード
+ * ファイルごとの逐次アップロードと進捗ステータス表示
  */
 import { h } from 'preact';
 import { useState, useCallback, useRef } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
-import { uploadFiles, clearUploadResult } from '../../redux/slices/denpyoSlice';
+import { clearUploadResult, setUploadResult } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
+import { apiUpload } from '../../utils/apiUtils';
+import { FileUploadResponse } from '../../types/denpyoTypes';
 import { t } from '../../i18n';
 import {
   Upload,
@@ -15,6 +18,7 @@ import {
   CheckCircle,
   AlertCircle,
   Loader2,
+  Clock,
   File as FileIcon
 } from 'lucide-react';
 
@@ -30,9 +34,13 @@ const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const MAX_FILES = 10;
 
+type UploadFileStatus = 'pending' | 'uploading' | 'done' | 'error';
+
 interface SelectedFile {
   file: File;
   error: string | null;
+  uploadStatus?: UploadFileStatus;
+  uploadError?: string;
 }
 
 function formatFileSize(bytes: number): string {
@@ -56,12 +64,12 @@ function validateFile(file: File): string | null {
 
 export function UploadView() {
   const dispatch = useAppDispatch();
-  const isUploading = useAppSelector(state => state.denpyo.isUploading);
   const uploadResult = useAppSelector(state => state.denpyo.uploadResult);
 
   const [uploadKind, setUploadKind] = useState<'raw' | 'category'>('raw');
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isUploadingLocal, setIsUploadingLocal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = useCallback((files: FileList | File[]) => {
@@ -118,35 +126,85 @@ export function UploadView() {
   }, []);
 
   const handleUpload = useCallback(async () => {
-    const validFiles = selectedFiles.filter(sf => !sf.error).map(sf => sf.file);
+    const validFiles = selectedFiles.filter(sf => !sf.error);
     if (validFiles.length === 0) return;
 
-    try {
-      const result = await dispatch(uploadFiles({ files: validFiles, uploadKind })).unwrap();
-      setSelectedFiles([]);
-      dispatch(addNotification({
-        type: result.errors.length > 0 ? 'warning' : 'success',
-        message: t('upload.notify.complete', {
-          success: result.uploaded_files.length,
-          errors: result.errors.length
-        }),
-        autoClose: true
-      }));
-    } catch {
-      dispatch(addNotification({
-        type: 'error',
-        message: t('upload.notify.failed'),
-        autoClose: true
-      }));
+    setIsUploadingLocal(true);
+    dispatch(clearUploadResult());
+
+    // Mark all valid files as pending
+    setSelectedFiles(prev =>
+      prev.map(sf => sf.error ? sf : { ...sf, uploadStatus: 'pending' as UploadFileStatus, uploadError: undefined })
+    );
+
+    const allUploadedFiles: any[] = [];
+    const allErrors: string[] = [];
+
+    for (const sf of validFiles) {
+      const fileRef = sf.file;
+
+      // Mark current file as uploading
+      setSelectedFiles(prev =>
+        prev.map(s => s.file === fileRef ? { ...s, uploadStatus: 'uploading' as UploadFileStatus } : s)
+      );
+
+      try {
+        const formData = new FormData();
+        formData.append('files', fileRef);
+        formData.append('upload_kind', uploadKind);
+        const result = await apiUpload<FileUploadResponse>('/api/v1/files/upload', formData);
+
+        if (result.uploaded_files && result.uploaded_files.length > 0) {
+          allUploadedFiles.push(...result.uploaded_files);
+          setSelectedFiles(prev =>
+            prev.map(s => s.file === fileRef ? { ...s, uploadStatus: 'done' as UploadFileStatus } : s)
+          );
+        } else {
+          const errMsg = (result.errors && result.errors[0]) || t('upload.notify.failed');
+          allErrors.push(`${fileRef.name}: ${errMsg}`);
+          setSelectedFiles(prev =>
+            prev.map(s => s.file === fileRef ? { ...s, uploadStatus: 'error' as UploadFileStatus, uploadError: errMsg } : s)
+          );
+        }
+      } catch (e: any) {
+        const errMsg = e?.message || t('upload.notify.failed');
+        allErrors.push(`${fileRef.name}: ${errMsg}`);
+        setSelectedFiles(prev =>
+          prev.map(s => s.file === fileRef ? { ...s, uploadStatus: 'error' as UploadFileStatus, uploadError: errMsg } : s)
+        );
+      }
     }
+
+    setIsUploadingLocal(false);
+
+    // Update Redux upload result for the result display section
+    dispatch(setUploadResult({
+      success: allUploadedFiles.length > 0,
+      uploaded_files: allUploadedFiles,
+      errors: allErrors
+    }));
+
+    dispatch(addNotification({
+      type: allErrors.length === 0 ? 'success' : (allUploadedFiles.length > 0 ? 'warning' : 'error'),
+      message: t('upload.notify.complete', {
+        success: allUploadedFiles.length,
+        errors: allErrors.length
+      }),
+      autoClose: true
+    }));
   }, [selectedFiles, uploadKind, dispatch]);
 
   const handleClearResult = useCallback(() => {
     dispatch(clearUploadResult());
+    setSelectedFiles([]);
   }, [dispatch]);
 
   const validCount = selectedFiles.filter(sf => !sf.error).length;
   const errorCount = selectedFiles.filter(sf => sf.error).length;
+
+  // Progress counts for display during upload
+  const doneCount = selectedFiles.filter(sf => sf.uploadStatus === 'done' || sf.uploadStatus === 'error').length;
+  const totalUploadingCount = selectedFiles.filter(sf => sf.uploadStatus !== undefined && !sf.error).length;
 
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
@@ -173,7 +231,7 @@ export function UploadView() {
                   value="raw"
                   checked={uploadKind === 'raw'}
                   onChange={() => setUploadKind('raw')}
-                  disabled={isUploading}
+                  disabled={isUploadingLocal}
                 />
                 <span>{t('upload.kind.raw')}</span>
               </label>
@@ -184,7 +242,7 @@ export function UploadView() {
                   value="category"
                   checked={uploadKind === 'category'}
                   onChange={() => setUploadKind('category')}
-                  disabled={isUploading}
+                  disabled={isUploadingLocal}
                 />
                 <span>{t('upload.kind.category')}</span>
               </label>
@@ -196,11 +254,11 @@ export function UploadView() {
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
           <div
-            class={`predictView__dropZone applicationSettingsView__dropZone${isDragOver ? ' predictView__dropZone--active' : ''}${isUploading ? ' ics-upload-dropzone--disabled' : ''}`}
+            class={`predictView__dropZone applicationSettingsView__dropZone${isDragOver ? ' predictView__dropZone--active' : ''}${isUploadingLocal ? ' ics-upload-dropzone--disabled' : ''}`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            onClick={() => !isUploading && fileInputRef.current?.click()}
+            onClick={() => !isUploadingLocal && fileInputRef.current?.click()}
           >
             <input
               ref={fileInputRef}
@@ -225,8 +283,14 @@ export function UploadView() {
               <span class="oj-typography-heading-xs">
                 {t('upload.selectedFiles', { count: selectedFiles.length })}
               </span>
-              <div class="oj-flex oj-sm-gap-2">
-                {errorCount > 0 && (
+              <div class="oj-flex oj-sm-align-items-center oj-sm-gap-2">
+                {/* アップロード中の進捗カウンター */}
+                {isUploadingLocal && totalUploadingCount > 0 && (
+                  <span class="ics-upload-progress">
+                    {t('upload.progress', { current: doneCount, total: totalUploadingCount })}
+                  </span>
+                )}
+                {errorCount > 0 && !isUploadingLocal && (
                   <span class="ics-badge ics-badge-error">
                     {t('upload.errorCount', { count: errorCount })}
                   </span>
@@ -234,9 +298,9 @@ export function UploadView() {
                 <button
                   class="ics-ops-btn ics-ops-btn--primary"
                   onClick={handleUpload}
-                  disabled={isUploading || validCount === 0}
+                  disabled={isUploadingLocal || validCount === 0}
                 >
-                  {isUploading ? (
+                  {isUploadingLocal ? (
                     <>
                       <Loader2 size={14} class="ics-spin" />
                       <span>{t('upload.uploading')}</span>
@@ -252,32 +316,56 @@ export function UploadView() {
             </div>
             <div class="ics-card-body">
               <div class="ics-upload-fileList">
-                {selectedFiles.map((sf, index) => (
-                  <div key={`${sf.file.name}-${index}`} class={`ics-upload-fileItem${sf.error ? ' ics-upload-fileItem--error' : ''}`}>
-                    <div class="ics-upload-fileItem__info">
-                      <FileIcon size={16} />
-                      <span class="ics-upload-fileItem__name">{sf.file.name}</span>
-                      <span class="ics-upload-fileItem__size">{formatFileSize(sf.file.size)}</span>
+                {selectedFiles.map((sf, index) => {
+                  const itemClass = [
+                    'ics-upload-fileItem',
+                    sf.error ? 'ics-upload-fileItem--error' : '',
+                    sf.uploadStatus === 'uploading' ? 'ics-upload-fileItem--uploading' : '',
+                    sf.uploadStatus === 'done' ? 'ics-upload-fileItem--done' : ''
+                  ].filter(Boolean).join(' ');
+
+                  return (
+                    <div key={`${sf.file.name}-${index}`} class={itemClass}>
+                      <div class="ics-upload-fileItem__info">
+                        <FileIcon size={16} />
+                        <span class="ics-upload-fileItem__name">{sf.file.name}</span>
+                        <span class="ics-upload-fileItem__size">{formatFileSize(sf.file.size)}</span>
+                      </div>
+                      <div class="ics-upload-fileItem__actions">
+                        {/* バリデーションエラー（アップロード前） */}
+                        {sf.error && !sf.uploadStatus && (
+                          <span class="ics-upload-fileItem__errorMsg">
+                            <AlertCircle size={14} />
+                            {sf.error}
+                          </span>
+                        )}
+                        {/* アップロードステータス表示 */}
+                        {sf.uploadStatus && (
+                          <span class={`ics-upload-fileItem__uploadStatus ics-upload-status--${sf.uploadStatus}`}>
+                            {sf.uploadStatus === 'pending' && <Clock size={14} />}
+                            {sf.uploadStatus === 'uploading' && <Loader2 size={14} class="ics-spin" />}
+                            {sf.uploadStatus === 'done' && <CheckCircle size={14} />}
+                            {sf.uploadStatus === 'error' && <AlertCircle size={14} />}
+                            <span>
+                              {sf.uploadStatus === 'error' && sf.uploadError
+                                ? sf.uploadError
+                                : t(`upload.status.${sf.uploadStatus}`)}
+                            </span>
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          class="ics-upload-fileItem__remove"
+                          onClick={() => removeFile(index)}
+                          disabled={isUploadingLocal}
+                          aria-label={t('common.close')}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
                     </div>
-                    <div class="ics-upload-fileItem__actions">
-                      {sf.error && (
-                        <span class="ics-upload-fileItem__errorMsg">
-                          <AlertCircle size={14} />
-                          {sf.error}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        class="ics-upload-fileItem__remove"
-                        onClick={() => removeFile(index)}
-                        disabled={isUploading}
-                        aria-label={t('common.close')}
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>

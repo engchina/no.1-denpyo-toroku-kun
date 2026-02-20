@@ -4725,6 +4725,41 @@ html[dir="rtl"] .oracle-icon {
 .ics-upload-resultItem--success { color: #28a745; }
 .ics-upload-resultItem--error   { color: #dc3545; }
 
+/* Per-file upload status indicators */
+.ics-upload-fileItem--uploading {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+}
+.ics-upload-fileItem--done {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+}
+.ics-upload-fileItem__uploadStatus {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+.ics-upload-status--pending {
+    color: #9ca3af;
+}
+.ics-upload-status--uploading {
+    color: #3b82f6;
+}
+.ics-upload-status--done {
+    color: #16a34a;
+}
+.ics-upload-status--error {
+    color: #dc2626;
+}
+.ics-upload-progress {
+    font-size: 0.85rem;
+    color: #3b82f6;
+    font-weight: 500;
+}
+
 /* ==================== Badge extensions ==================== */
 
 .ics-badge-info {

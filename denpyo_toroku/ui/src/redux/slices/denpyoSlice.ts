@@ -134,8 +134,10 @@ export const bulkDeleteFiles = createAsyncThunk(
 
 export const analyzeFile = createAsyncThunk(
   'denpyo/analyzeFile',
-  async (fileId: string) => {
-    return await apiPost<AnalysisResult>(`/api/v1/files/${fileId}/analyze`);
+  async (params: { fileId: string; categoryId: number }) => {
+    return await apiPost<AnalysisResult>(`/api/v1/files/${params.fileId}/analyze`, {
+      category_id: params.categoryId
+    });
   }
 );
 
@@ -271,6 +273,10 @@ const denpyoSlice = createSlice({
     clearUploadResult(state) {
       state.uploadResult = null;
     },
+    setUploadResult(state, action) {
+      state.uploadResult = action.payload;
+      state.isUploading = false;
+    },
     clearAnalysisResult(state) {
       state.analysisResult = null;
       state.analyzingFileId = null;
@@ -400,11 +406,11 @@ const denpyoSlice = createSlice({
     builder
       .addCase(analyzeFile.pending, (state, action) => {
         state.isAnalyzing = true;
-        state.analyzingFileId = action.meta.arg;
+        state.analyzingFileId = action.meta.arg.fileId;
         state.analysisResult = null;
         // fileList内のステータスをANALYZINGに更新
         const file = state.fileList.files.find(
-          f => String(f.file_id) === String(action.meta.arg)
+          f => String(f.file_id) === String(action.meta.arg.fileId)
         );
         if (file) file.status = 'ANALYZING';
       })
@@ -612,6 +618,6 @@ const denpyoSlice = createSlice({
   }
 });
 
-export const { clearError, clearUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis } = denpyoSlice.actions;
+export const { clearError, clearUploadResult, setUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis } = denpyoSlice.actions;
 
 export default denpyoSlice.reducer;

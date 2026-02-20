@@ -1,6 +1,6 @@
 /**
  * RegistrationView - DB登録確認画面 (SCR-004)
- * DDL編集・テーブル作成・登録レコード作成
+ * INSERTデータ確認・登録
  */
 import { h } from 'preact';
 import { useState, useCallback, useEffect } from 'preact/hooks';
@@ -27,43 +27,44 @@ export function RegistrationView() {
   const registrationResult = useAppSelector(state => state.denpyo.registrationResult);
   const error = useAppSelector(state => state.denpyo.error);
 
-  // ローカル編集ステート
   const [headerTableName, setHeaderTableName] = useState('');
   const [lineTableName, setLineTableName] = useState('');
-  const [headerDDL, setHeaderDDL] = useState('');
-  const [lineDDL, setLineDDL] = useState('');
-  const [tableMode, setTableMode] = useState<'header_only' | 'header_line'>('header_line');
   const [headerFields, setHeaderFields] = useState<ExtractedField[]>([]);
-  const [previewLine, setPreviewLine] = useState<Record<string, string>>({});
+  const [lineRows, setLineRows] = useState<Record<string, string>[]>([]);
   const [isConfirmed, setIsConfirmed] = useState(false);
   const [validationError, setValidationError] = useState('');
+  const [activeTab, setActiveTab] = useState<'header' | 'line'>('header');
 
-  // 分析結果から初期値を設定
   useEffect(() => {
-    if (analysisResult) {
-      const ddl = analysisResult.ddl_suggestion;
-      setHeaderTableName(ddl.header_table_name || '');
-      setLineTableName(ddl.line_table_name || '');
-      setHeaderDDL(ddl.header_ddl || '');
-      setLineDDL(ddl.line_ddl || '');
-      setHeaderFields(analysisResult.extraction.header_fields || []);
-      const firstLine = (analysisResult.extraction.raw_lines || [])[0] || {};
-      const normalizedLine: Record<string, string> = {};
-      Object.entries(firstLine).forEach(([key, value]) => {
-        normalizedLine[key] = String(value ?? '');
-      });
-      setPreviewLine(normalizedLine);
+    if (!analysisResult) return;
 
-      const hasLineSuggestion = Boolean(
-        (analysisResult.extraction.line_fields || []).length > 0 ||
-        (analysisResult.extraction.raw_lines || []).length > 0 ||
-        ddl.line_table_name ||
-        ddl.line_ddl
-      );
-      setTableMode(hasLineSuggestion ? 'header_line' : 'header_only');
-      setIsConfirmed(false);
-      setValidationError('');
+    const ddl = analysisResult.ddl_suggestion;
+    setHeaderTableName(ddl.header_table_name || '');
+    setLineTableName(ddl.line_table_name || '');
+    setHeaderFields(analysisResult.extraction.header_fields || []);
+
+    const extractedLines = (analysisResult.extraction.raw_lines || []).map(row => {
+      const normalized: Record<string, string> = {};
+      Object.entries(row || {}).forEach(([key, value]) => {
+        normalized[key] = String(value ?? '');
+      });
+      return normalized;
+    });
+
+    if (extractedLines.length > 0) {
+      setLineRows(extractedLines);
+    } else {
+      const fallbackLine: Record<string, string> = {};
+      (analysisResult.extraction.line_fields || []).forEach(field => {
+        const key = field.field_name_en || field.field_name;
+        if (key) fallbackLine[key] = String(field.value ?? '');
+      });
+      setLineRows(Object.keys(fallbackLine).length > 0 ? [fallbackLine] : []);
     }
+
+    setActiveTab('header');
+    setIsConfirmed(false);
+    setValidationError('');
   }, [analysisResult]);
 
   const handleBack = useCallback(() => {
@@ -77,10 +78,17 @@ export function RegistrationView() {
     dispatch(setCurrentView('fileList'));
   }, [dispatch]);
 
+  const updateHeaderFieldValue = (index: number, value: string) => {
+    setHeaderFields(prev => prev.map((f, idx) => (idx === index ? { ...f, value } : f)));
+  };
+
+  const updateLineCell = (rowIndex: number, col: string, value: string) => {
+    setLineRows(prev => prev.map((row, idx) => (idx === rowIndex ? { ...row, [col]: value } : row)));
+  };
+
   const handleRegister = useCallback(async () => {
     if (!analysisResult) return;
 
-    // バリデーション
     if (!isConfirmed) {
       setValidationError(t('registration.error.notConfirmed'));
       return;
@@ -89,43 +97,33 @@ export function RegistrationView() {
       setValidationError(t('registration.error.noHeaderTable'));
       return;
     }
-    if (!headerDDL.trim()) {
-      setValidationError(t('registration.error.noHeaderDDL'));
-      return;
-    }
-    if (tableMode === 'header_line' && !lineTableName.trim()) {
-      setValidationError(t('registration.error.noLineTable'));
-      return;
-    }
-    if (tableMode === 'header_line' && !lineDDL.trim()) {
-      setValidationError(t('registration.error.noLineDDL'));
-      return;
-    }
     setValidationError('');
 
-    const useLine = tableMode === 'header_line';
-    const rawLines = useLine && Object.keys(previewLine).length > 0
-      ? [previewLine as Record<string, unknown>]
-      : [];
+    const normalizedLineRows = lineRows
+      .map(row => {
+        const normalized: Record<string, string> = {};
+        Object.entries(row).forEach(([key, value]) => {
+          normalized[key] = String(value ?? '');
+        });
+        return normalized;
+      })
+      .filter(row => Object.keys(row).length > 0);
 
     const data: RegistrationRequest = {
+      category_id: analysisResult.category_id,
       category_name: analysisResult.classification.category,
       category_name_en: analysisResult.ddl_suggestion.table_prefix || '',
       header_table_name: headerTableName.trim(),
-      line_table_name: useLine ? lineTableName.trim() : '',
-      header_ddl: headerDDL.trim(),
-      line_ddl: useLine ? lineDDL.trim() : '',
+      line_table_name: lineTableName.trim(),
       ai_confidence: analysisResult.classification.confidence,
-      line_count: rawLines.length,
-      // データINSERT用
+      line_count: normalizedLineRows.length,
       header_fields: headerFields,
-      raw_lines: rawLines,
+      raw_lines: normalizedLineRows,
     };
 
     dispatch(registerFile({ fileId: analysisResult.file_id, data }));
-  }, [dispatch, analysisResult, headerTableName, lineTableName, headerDDL, lineDDL, tableMode, headerFields, previewLine, isConfirmed]);
+  }, [dispatch, analysisResult, headerTableName, lineTableName, headerFields, lineRows, isConfirmed]);
 
-  // 分析結果なし
   if (!analysisResult) {
     return (
       <div class="ics-dashboard ics-dashboard--enhanced">
@@ -153,10 +151,9 @@ export function RegistrationView() {
     );
   }
 
-  const { classification, extraction } = analysisResult;
-  const linePreviewColumns = Object.keys(previewLine);
+  const { classification } = analysisResult;
+  const lineColumns = Array.from(new Set(lineRows.flatMap(row => Object.keys(row))));
 
-  // 登録完了
   if (registrationResult?.success) {
     return (
       <div class="ics-dashboard ics-dashboard--enhanced">
@@ -197,7 +194,6 @@ export function RegistrationView() {
 
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
-      {/* ヘッダー */}
       <section class="ics-ops-hero">
         <div class="ics-ops-hero__header">
           <div>
@@ -219,7 +215,6 @@ export function RegistrationView() {
         </div>
       </section>
 
-      {/* 分析サマリー KPI */}
       <section class="ics-ops-kpiGrid">
         <article class="ics-ops-kpiCard">
           <div class="ics-ops-kpiCard__label">
@@ -243,48 +238,14 @@ export function RegistrationView() {
             {t('registration.fieldCount')}
           </div>
           <div class="ics-ops-kpiCard__value">
-            {extraction.header_fields.length}H / {extraction.line_fields.length}L
+            {headerFields.length}H / {lineRows.length}L
           </div>
           <div class="ics-ops-kpiCard__meta">
-            {tableMode === 'header_line'
-              ? t('registration.lineCount', { count: extraction.line_count })
-              : t('registration.headerOnlyMode')}
+            {t('registration.lineCount', { count: lineRows.length })}
           </div>
         </article>
       </section>
 
-      {/* テーブル作成方式 */}
-      <section class="ics-ops-grid ics-ops-grid--one">
-        <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header">
-            <span class="oj-typography-heading-xs">{t('registration.tableMode.title')}</span>
-          </div>
-          <div class="ics-card-body">
-            <div class="ics-table-mode-group">
-              <label class="ics-table-mode-option">
-                <input
-                  type="radio"
-                  name="tableMode"
-                  checked={tableMode === 'header_only'}
-                  onChange={() => setTableMode('header_only')}
-                />
-                <span>{t('registration.tableMode.headerOnly')}</span>
-              </label>
-              <label class="ics-table-mode-option">
-                <input
-                  type="radio"
-                  name="tableMode"
-                  checked={tableMode === 'header_line'}
-                  onChange={() => setTableMode('header_line')}
-                />
-                <span>{t('registration.tableMode.headerAndLine')}</span>
-              </label>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* テーブル名入力 */}
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
           <div class="ics-card-header oj-flex oj-sm-align-items-center">
@@ -295,139 +256,113 @@ export function RegistrationView() {
             <div class="ics-table-name-grid">
               <div class="ics-table-name-field">
                 <label class="ics-table-name-field__label">{t('registration.tableName.header')}</label>
-                <input
-                  type="text"
-                  class="ics-table-name-input"
-                  value={headerTableName}
-                  onInput={(e) => setHeaderTableName((e.target as HTMLInputElement).value)}
-                  placeholder="e.g. INV_HEADER"
-                />
+                <input type="text" class="ics-table-name-input" value={headerTableName} disabled />
               </div>
               <div class="ics-table-name-field">
                 <label class="ics-table-name-field__label">{t('registration.tableName.line')}</label>
-                <input
-                  type="text"
-                  class="ics-table-name-input"
-                  value={lineTableName}
-                  onInput={(e) => setLineTableName((e.target as HTMLInputElement).value)}
-                  placeholder="e.g. INV_LINES"
-                  disabled={tableMode === 'header_only'}
-                />
+                <input type="text" class="ics-table-name-input" value={lineTableName || '--'} disabled />
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* 生成テーブルプレビュー（編集可） */}
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
           <div class="ics-card-header">
             <span class="oj-typography-heading-xs">{t('registration.preview.title')}</span>
           </div>
           <div class="ics-card-body">
-            <div class="ics-table-preview-block">
-              <div class="ics-table-preview-title">{t('registration.preview.header')}</div>
-              {headerFields.length > 0 ? (
-                <table class="ics-table">
+            <div class="ics-tabs" style={{ marginBottom: '8px' }}>
+              <button
+                type="button"
+                class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
+                onClick={() => setActiveTab('header')}
+              >
+                <FileText size={14} />
+                {t('registration.tabHeader')}
+              </button>
+              <button
+                type="button"
+                class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
+                onClick={() => setActiveTab('line')}
+              >
+                <Table2 size={14} />
+                {t('registration.tabLine')}
+              </button>
+            </div>
+
+            {activeTab === 'header' && (
+              <div style={{ overflowX: 'auto' }}>
+                <table class="ics-table ics-table--compact">
                   <thead>
                     <tr>
-                      <th>{t('analysis.table.fieldNameEn')}</th>
-                      <th>{t('analysis.table.sampleValue')}</th>
+                      <th>{t('registration.col.no')}</th>
+                      <th>{t('registration.col.fieldName')}</th>
+                      <th>{t('registration.col.fieldNameEn')}</th>
+                      <th>{t('registration.col.dataType')}</th>
+                      <th>{t('registration.col.value')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {headerFields.map((field, i) => (
                       <tr key={i}>
+                        <td>{i + 1}</td>
+                        <td>{field.field_name}</td>
                         <td>{field.field_name_en || field.field_name}</td>
+                        <td>{field.data_type}</td>
                         <td>
                           <input
                             type="text"
                             class="ics-table-edit-input"
                             value={String(field.value ?? '')}
-                            onInput={(e) => {
-                              const value = (e.target as HTMLInputElement).value;
-                              setHeaderFields(prev => prev.map((f, idx) => (idx === i ? { ...f, value } : f)));
-                            }}
+                            onInput={(e: Event) => updateHeaderFieldValue(i, (e.target as HTMLInputElement).value)}
                           />
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              ) : (
-                <div class="ics-empty-text">{t('analysis.noResult')}</div>
-              )}
-            </div>
+              </div>
+            )}
 
-            {tableMode === 'header_line' && (
-              <div class="ics-table-preview-block">
-                <div class="ics-table-preview-title">{t('registration.preview.lineOneRow')}</div>
-                {linePreviewColumns.length > 0 ? (
+            {activeTab === 'line' && (
+              <>
+                {lineRows.length > 0 ? (
                   <div style={{ overflowX: 'auto' }}>
-                    <table class="ics-table">
+                    <table class="ics-table ics-table--compact">
                       <thead>
                         <tr>
-                          {linePreviewColumns.map((col) => (
+                          <th>{t('registration.col.rowNo')}</th>
+                          {lineColumns.map(col => (
                             <th key={col}>{col}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          {linePreviewColumns.map((col) => (
-                            <td key={col}>
-                              <input
-                                type="text"
-                                class="ics-table-edit-input"
-                                value={String(previewLine[col] ?? '')}
-                                onInput={(e) => {
-                                  const value = (e.target as HTMLInputElement).value;
-                                  setPreviewLine(prev => ({ ...prev, [col]: value }));
-                                }}
-                              />
-                            </td>
-                          ))}
-                        </tr>
+                        {lineRows.map((row, rowIndex) => (
+                          <tr key={rowIndex}>
+                            <td>{rowIndex + 1}</td>
+                            {lineColumns.map(col => (
+                              <td key={`${rowIndex}-${col}`}>
+                                <input
+                                  type="text"
+                                  class="ics-table-edit-input"
+                                  value={String(row[col] ?? '')}
+                                  onInput={(e: Event) => updateLineCell(rowIndex, col, (e.target as HTMLInputElement).value)}
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
                 ) : (
                   <div class="ics-empty-text">{t('registration.preview.noLineData')}</div>
                 )}
-              </div>
+              </>
             )}
-          </div>
-        </div>
-      </section>
-
-      {/* DDLエディタ */}
-      <section class="ics-ops-grid ics-ops-grid--two">
-        <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header oj-flex oj-sm-align-items-center">
-            <span class="oj-typography-heading-xs">{t('registration.ddl.header')}</span>
-          </div>
-          <div class="ics-card-body">
-            <textarea
-              class="ics-ddl-editor"
-              rows={16}
-              value={headerDDL}
-              onInput={(e) => setHeaderDDL((e.target as HTMLTextAreaElement).value)}
-            />
-          </div>
-        </div>
-        <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header oj-flex oj-sm-align-items-center">
-            <span class="oj-typography-heading-xs">{t('registration.ddl.line')}</span>
-          </div>
-          <div class="ics-card-body">
-            <textarea
-              class="ics-ddl-editor"
-              rows={16}
-              value={lineDDL}
-              onInput={(e) => setLineDDL((e.target as HTMLTextAreaElement).value)}
-              disabled={tableMode === 'header_only'}
-            />
           </div>
         </div>
       </section>
@@ -445,7 +380,6 @@ export function RegistrationView() {
         </div>
       </section>
 
-      {/* エラー表示 */}
       {(validationError || error) && (
         <section class="ics-ops-grid ics-ops-grid--one">
           <div class="ics-registration-error">
@@ -455,7 +389,6 @@ export function RegistrationView() {
         </section>
       )}
 
-      {/* アクション */}
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-registration-actions">
           <button

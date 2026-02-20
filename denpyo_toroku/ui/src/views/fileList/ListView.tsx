@@ -10,6 +10,7 @@ import {
   deleteFile,
   bulkDeleteFiles,
   analyzeFile,
+  fetchCategories,
   setFileListPage,
   setFileListStatusFilter
 } from '../../redux/slices/denpyoSlice';
@@ -122,11 +123,15 @@ export function ListView() {
   const isDeleting = useAppSelector(state => state.denpyo.isDeleting);
   const isAnalyzing = useAppSelector(state => state.denpyo.isAnalyzing);
   const analyzingFileId = useAppSelector(state => state.denpyo.analyzingFileId);
+  const categories = useAppSelector(state => state.denpyo.categories);
+  const isCategoriesLoading = useAppSelector(state => state.denpyo.isCategoriesLoading);
   const [goToPageInput, setGoToPageInput] = useState('');
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>('uploaded_at');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [previewTarget, setPreviewTarget] = useState<{ fileId: string; fileName: string } | null>(null);
+  const [analyzeTarget, setAnalyzeTarget] = useState<{ fileId: string; fileName: string } | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
 
   const loadFiles = useCallback(() => {
     dispatch(fetchFileList({ page, pageSize, status: statusFilter, uploadKind: 'raw' }));
@@ -156,6 +161,14 @@ export function ListView() {
       // ignore storage errors
     }
   }, [sortKey, sortDirection]);
+
+  useEffect(() => {
+    if (!analyzeTarget || selectedCategoryId) return;
+    const activeCategories = categories.filter(c => c.is_active);
+    if (activeCategories.length > 0) {
+      setSelectedCategoryId(activeCategories[0].id);
+    }
+  }, [analyzeTarget, categories, selectedCategoryId]);
 
   const handleDelete = useCallback((fileId: string, fileName: string) => {
     requestConfirm({
@@ -188,23 +201,56 @@ export function ListView() {
     });
   }, [dispatch, files.length, page, loadFiles, requestConfirm]);
 
-  const handleAnalyze = useCallback(async (fileId: string) => {
+  const handleAnalyze = useCallback((fileId: string, fileName: string) => {
+    const activeCategories = categories.filter(c => c.is_active);
+    if (activeCategories.length === 0) {
+      dispatch(addNotification({
+        type: 'error',
+        message: t('fileList.analyze.noActiveCategory'),
+        autoClose: true
+      }));
+      return;
+    }
+    setAnalyzeTarget({ fileId, fileName });
+    setSelectedCategoryId(activeCategories[0]?.id ?? null);
+    dispatch(fetchCategories());
+  }, [categories, dispatch]);
+
+  const closeAnalyzeModal = useCallback(() => {
+    setAnalyzeTarget(null);
+    setSelectedCategoryId(null);
+  }, []);
+
+  const handleAnalyzeConfirm = useCallback(async () => {
+    if (!analyzeTarget || !selectedCategoryId) {
+      dispatch(addNotification({
+        type: 'error',
+        message: t('fileList.analyze.required'),
+        autoClose: true
+      }));
+      return;
+    }
+
     try {
-      await dispatch(analyzeFile(fileId)).unwrap();
+      await dispatch(analyzeFile({
+        fileId: analyzeTarget.fileId,
+        categoryId: selectedCategoryId
+      })).unwrap();
+      closeAnalyzeModal();
       dispatch(setCurrentView('analysis'));
       dispatch(addNotification({
         type: 'success',
         message: t('fileList.notify.analyzeOk'),
         autoClose: true
       }));
-    } catch {
+    } catch (e: any) {
       dispatch(addNotification({
         type: 'error',
-        message: t('fileList.notify.analyzeFailed'),
+        message: e?.message || t('fileList.notify.analyzeFailed'),
         autoClose: true
       }));
     }
-  }, [dispatch]);
+  }, [analyzeTarget, closeAnalyzeModal, dispatch, selectedCategoryId]);
 
   const handleStatusChange = useCallback((e: Event) => {
     const value = (e.target as HTMLSelectElement).value;
@@ -504,7 +550,7 @@ export function ListView() {
                           <button
                             type="button"
                             class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
-                            onClick={() => handleAnalyze(String(file.file_id))}
+                            onClick={() => handleAnalyze(String(file.file_id), file.file_name)}
                             disabled={isAnalyzing}
                             title={t('fileList.analyzeFile')}
                           >
@@ -576,6 +622,53 @@ export function ListView() {
                 title={previewTarget.fileName || t('fileList.previewFile')}
                 class="ics-fileListView__previewFrame"
               />
+            </div>
+          </div>
+        </div>
+      )}
+      {analyzeTarget && (
+        <div class="ics-modal-overlay" onClick={closeAnalyzeModal}>
+          <div class="ics-modal" style={{ maxWidth: '520px' }} onClick={(e: Event) => e.stopPropagation()}>
+            <div class="ics-modal__header">
+              <h3>{t('fileList.analyze.categoryTitle')}</h3>
+              <button type="button" class="ics-ops-btn ics-ops-btn--ghost" onClick={closeAnalyzeModal} title={t('common.close')}>
+                <X size={16} />
+              </button>
+            </div>
+            <div class="ics-modal__body">
+              <p class="ics-form-hint" style={{ marginBottom: '12px' }}>
+                {t('fileList.analyze.categoryDesc', { name: analyzeTarget.fileName })}
+              </p>
+              <div class="ics-form-group">
+                <label class="ics-form-label">{t('fileList.analyze.categoryLabel')}</label>
+                <select
+                  class="ics-form-select"
+                  value={selectedCategoryId ? String(selectedCategoryId) : ''}
+                  onChange={(e: Event) => {
+                    const next = parseInt((e.target as HTMLSelectElement).value, 10);
+                    setSelectedCategoryId(Number.isNaN(next) ? null : next);
+                  }}
+                  disabled={isCategoriesLoading || isAnalyzing}
+                >
+                  {(categories || []).filter(c => c.is_active).map(c => (
+                    <option key={c.id} value={c.id}>{c.category_name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div class="ics-modal__footer">
+              <button type="button" class="ics-ops-btn ics-ops-btn--ghost" onClick={closeAnalyzeModal} disabled={isAnalyzing}>
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                class="ics-ops-btn ics-ops-btn--primary"
+                onClick={handleAnalyzeConfirm}
+                disabled={isAnalyzing || !selectedCategoryId}
+              >
+                {isAnalyzing ? <Loader2 size={14} class="ics-spin" /> : <Sparkles size={14} />}
+                <span>{isAnalyzing ? t('analysis.analyzing') : t('fileList.analyzeFile')}</span>
+              </button>
             </div>
           </div>
         </div>

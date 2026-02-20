@@ -669,13 +669,20 @@ class AIService:
             logger.error("伝票分類エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"分類失敗: {str(e)}"}
 
-    def extract_fields(self, image_data: bytes, category: str = "", content_type: str = "image/jpeg") -> Dict[str, Any]:
+    def extract_fields(
+        self,
+        image_data: bytes,
+        category: str = "",
+        content_type: str = "image/jpeg",
+        table_schema: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """伝票画像からフィールド情報を抽出する
 
         Args:
             image_data: 画像のバイトデータ
             category: 伝票の種別（分類結果から）
             content_type: MIMEタイプ
+            table_schema: カテゴリのテーブル構造情報
 
         Returns:
             抽出結果 (header_fields, line_fields)
@@ -685,9 +692,21 @@ class AIService:
             return {"success": False, "message": "AI クライアントが初期化されていません"}
 
         category_hint = f"この伝票の種別は「{category}」です。" if category else ""
+        schema_hint = ""
+        if table_schema:
+            schema_hint = f"""
+【カテゴリの既存テーブル構造（この列名を必ず使う）】
+{json.dumps(table_schema, ensure_ascii=False, indent=2)}
+
+必須制約:
+- header_fields[].field_name_en は HEADER テーブルの column_name をそのまま使用する
+- raw_lines[] のキーは LINE テーブルの column_name をそのまま使用する
+- スキーマに存在しない列名は作らない
+"""
 
         prompt = f"""あなたは伝票データ登録の専門家です。
 この画像は伝票（ビジネス文書）です。{category_hint}
+{schema_hint}
 
 【目的】
 この伝票をOracleデータベースに登録するため、画像に含まれる全ての項目をフィールドとして抽出し、テーブル定義を設計してください。
@@ -759,7 +778,15 @@ class AIService:
       "is_required": true
     }}
   ],
-  "line_count": 3
+  "line_count": 3,
+  "raw_lines": [
+    {{
+      "ITEM_NAME": "商品A",
+      "QUANTITY": "5",
+      "UNIT_PRICE": "1000",
+      "AMOUNT": "5000"
+    }}
+  ]
 }}
 
 フィールドの説明:
@@ -772,6 +799,7 @@ class AIService:
 - max_length: VARCHAR2 の場合は整数値、NUMBER または DATE の場合は null
 - is_required: true または false（必ず Boolean 型で）
 - line_count: 明細行の数（整数）。明細なしは 0
+- raw_lines: 明細の実データ配列。LINEテーブルに挿入する1行=1オブジェクト。明細なしは []
 
 出力は必ず有効な JSON のみ。前後に説明文・コードブロック（```）・コメント（//）を含めないでください。"""
 
@@ -800,22 +828,37 @@ class AIService:
                 chat_request=chat_request,
             )
 
-            response = self._retry_api_call("extract_fields", client.chat, chat_detail)
+            def generate_text() -> str:
+                response = self._retry_api_call("extract_fields", client.chat, chat_detail)
+                return self._get_text_from_chat_response(response.data.chat_response)
 
-            result_text = ""
-            chat_response = response.data.chat_response
-            if hasattr(chat_response, "choices") and chat_response.choices:
-                message = chat_response.choices[0].message
-                if hasattr(message, "content"):
-                    for part in message.content:
-                        if hasattr(part, "text"):
-                            result_text += part.text
+            parsed = self._parse_json_with_regeneration(
+                "extract_fields",
+                generate_text,
+                GENAI_JSON_PARSE_RETRIES
+            )
 
-            try:
-                parsed = self._extract_json(result_text)
-            except json.JSONDecodeError as e:
-                logger.error("AI応答のJSONパースエラー: %s (response=%s)", e, result_text[:600])
-                return {"success": False, "message": f"AI応答の解析に失敗しました: {str(e)}"}
+            if not isinstance(parsed, dict):
+                return {"success": False, "message": "AI応答形式が不正です"}
+
+            header_fields = parsed.get("header_fields")
+            line_fields = parsed.get("line_fields")
+            raw_lines = parsed.get("raw_lines")
+            line_count = parsed.get("line_count")
+
+            if not isinstance(header_fields, list):
+                header_fields = []
+            if not isinstance(line_fields, list):
+                line_fields = []
+            if not isinstance(raw_lines, list):
+                raw_lines = []
+            if not isinstance(line_count, int):
+                line_count = len(raw_lines)
+
+            parsed["header_fields"] = header_fields
+            parsed["line_fields"] = line_fields
+            parsed["raw_lines"] = raw_lines
+            parsed["line_count"] = line_count
             parsed["success"] = True
             return parsed
 

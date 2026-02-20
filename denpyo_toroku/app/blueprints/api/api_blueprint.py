@@ -1857,7 +1857,7 @@ def bulk_delete_files():
 
 @api_blueprint.route("/api/v1/files/<int:file_id>/analyze", methods=["POST"])
 def analyze_file(file_id: int):
-    """伝票ファイルをAI分析する（分類 → フィールド抽出 → DDL提案）"""
+    """伝票ファイルをAI分析する（カテゴリ指定 + フィールド抽出）"""
     from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
     from denpyo_toroku.app.services.database_service import DatabaseService
     from denpyo_toroku.app.services.document_processor import DocumentProcessor
@@ -1867,6 +1867,35 @@ def analyze_file(file_id: int):
     user = session.get("user", "")
 
     try:
+        body = request.get_json(silent=True) or {}
+        raw_category_id = body.get("category_id")
+        try:
+            category_id = int(raw_category_id)
+        except (TypeError, ValueError):
+            g.response.set_data({"success": False, "message": "category_id は必須です"})
+            return jsonify(g.response.get_result()), 400
+
+        category = db_service.get_category_by_id(category_id)
+        if not category:
+            g.response.set_data({"success": False, "message": "指定カテゴリが見つかりません"})
+            return jsonify(g.response.get_result()), 404
+        if not category.get("is_active", False):
+            g.response.set_data({"success": False, "message": "指定カテゴリは無効です"})
+            return jsonify(g.response.get_result()), 400
+
+        table_schema = db_service.get_category_table_schema(category_id)
+        if not table_schema:
+            logging.warning(
+                "カテゴリ構造の取得に失敗したため、テーブル名のみで分析を継続します (category_id=%s)",
+                category_id,
+            )
+            table_schema = {
+                "header_table_name": category.get("header_table_name", ""),
+                "line_table_name": category.get("line_table_name", ""),
+                "header_columns": [],
+                "line_columns": [],
+            }
+
         # 1. ファイル取得
         file_record = db_service.get_file_by_id(file_id)
         if not file_record:
@@ -1914,21 +1943,19 @@ def analyze_file(file_id: int):
 
         image_data, content_type = images[0]
 
-        # 6. AI分類
+        # 6. AI抽出（カテゴリ構造を指定）
         ai_service = AIService()
-        classification = ai_service.classify_invoice(image_data, content_type)
-        if not classification.get("success"):
-            db_service.update_file_status(file_id, "ERROR")
-            g.response.set_data({
-                "success": False,
-                "message": classification.get("message", "AI分類に失敗しました")
-            })
-            return jsonify(g.response.get_result()), 500
-
-        category = classification.get("category", "")
-
-        # 7. フィールド抽出
-        extraction = ai_service.extract_fields(image_data, category, content_type)
+        extraction = ai_service.extract_fields(
+            image_data=image_data,
+            category=category.get("category_name", ""),
+            content_type=content_type,
+            table_schema={
+                "header_table_name": table_schema.get("header_table_name", ""),
+                "line_table_name": table_schema.get("line_table_name", ""),
+                "header_columns": table_schema.get("header_columns", []),
+                "line_columns": table_schema.get("line_columns", []),
+            },
+        )
         if not extraction.get("success"):
             db_service.update_file_status(file_id, "ERROR")
             g.response.set_data({
@@ -1937,36 +1964,39 @@ def analyze_file(file_id: int):
             })
             return jsonify(g.response.get_result()), 500
 
-        # 8. DDL提案
+        # 7. DDL提案（既存カテゴリテーブルをそのまま提示）
         header_fields = extraction.get("header_fields", [])
         line_fields = extraction.get("line_fields", [])
-        ddl_suggestion = ai_service.suggest_ddl(category, header_fields, line_fields)
-        if not ddl_suggestion.get("success"):
-            # DDL提案失敗は致命的ではないため、空の結果で続行
-            logging.warning("DDL提案失敗: %s", ddl_suggestion.get("message", ""))
-            ddl_suggestion = {
-                "table_prefix": "", "header_table_name": "", "line_table_name": "",
-                "header_ddl": "", "line_ddl": ""
-            }
+        ddl_suggestion = {
+            "table_prefix": category.get("category_name_en", "") or "",
+            "header_table_name": table_schema.get("header_table_name", ""),
+            "line_table_name": table_schema.get("line_table_name", ""),
+            "header_ddl": "",
+            "line_ddl": "",
+        }
 
-        # 9. ステータスを ANALYZED に更新
+        # 8. ステータスを ANALYZED に更新
         db_service.update_file_status(file_id, "ANALYZED")
         db_service.log_activity(
             activity_type="ANALYZE_COMPLETE",
-            description=f"ファイル '{file_record.get('original_file_name', '')}' の分析が完了（種別: {category}）",
+            description=(
+                f"ファイル '{file_record.get('original_file_name', '')}' の分析が完了"
+                f"（カテゴリ: {category.get('category_name', '')}）"
+            ),
             file_id=file_id, user_name=user,
         )
 
-        # 10. レスポンス構築
+        # 9. レスポンス構築
         result = {
             "file_id": str(file_id),
             "file_name": file_record.get("original_file_name", ""),
             "status": "ANALYZED",
+            "category_id": category_id,
             "classification": {
-                "category": classification.get("category", ""),
-                "confidence": classification.get("confidence", 0),
-                "description": classification.get("description", ""),
-                "has_line_items": classification.get("has_line_items", False),
+                "category": category.get("category_name", ""),
+                "confidence": 1.0,
+                "description": "選択カテゴリを適用",
+                "has_line_items": len(table_schema.get("line_columns", [])) > 0,
             },
             "extraction": {
                 "header_fields": header_fields,
@@ -2041,6 +2071,7 @@ def register_file(file_id: int):
     body = request.get_json(silent=True) or {}
     category_name = (body.get("category_name") or "").strip()
     category_name_en = (body.get("category_name_en") or "").strip()
+    category_id = body.get("category_id")
     header_table_name = (body.get("header_table_name") or "").strip()
     line_table_name = (body.get("line_table_name") or "").strip()
     header_ddl = (body.get("header_ddl") or "").strip()
@@ -2057,8 +2088,6 @@ def register_file(file_id: int):
         missing.append("category_name")
     if not header_table_name:
         missing.append("header_table_name")
-    if not header_ddl:
-        missing.append("header_ddl")
     if missing:
         g.response.set_data({
             "success": False,
@@ -2081,13 +2110,14 @@ def register_file(file_id: int):
         return jsonify(g.response.get_result()), 400
 
     # --- DDL バリデーション ---
-    header_ddl_error = _validate_ddl(header_ddl)
-    if header_ddl_error:
-        g.response.set_data({
-            "success": False,
-            "message": f"ヘッダーDDLエラー: {header_ddl_error}"
-        })
-        return jsonify(g.response.get_result()), 400
+    if header_ddl:
+        header_ddl_error = _validate_ddl(header_ddl)
+        if header_ddl_error:
+            g.response.set_data({
+                "success": False,
+                "message": f"ヘッダーDDLエラー: {header_ddl_error}"
+            })
+            return jsonify(g.response.get_result()), 400
     if line_ddl:
         line_ddl_error = _validate_ddl(line_ddl)
         if line_ddl_error:
@@ -2098,17 +2128,19 @@ def register_file(file_id: int):
             return jsonify(g.response.get_result()), 400
 
     try:
-        # --- ヘッダーテーブル DDL 実行 ---
-        header_result = db_service.execute_ddl(header_ddl)
-        header_table_created = header_result.get("success", False)
-        if not header_table_created:
-            g.response.set_data({
-                "success": False,
-                "message": f"ヘッダーテーブル作成失敗: {header_result.get('message', '')}"
-            })
-            return jsonify(g.response.get_result()), 400
+        # --- ヘッダーテーブル DDL 実行（指定がある場合のみ） ---
+        header_table_created = False
+        if header_ddl:
+            header_result = db_service.execute_ddl(header_ddl)
+            header_table_created = header_result.get("success", False)
+            if not header_table_created:
+                g.response.set_data({
+                    "success": False,
+                    "message": f"ヘッダーテーブル作成失敗: {header_result.get('message', '')}"
+                })
+                return jsonify(g.response.get_result()), 400
 
-        # --- 明細テーブル DDL 実行 ---
+        # --- 明細テーブル DDL 実行（指定がある場合のみ） ---
         line_table_created = False
         if line_ddl:
             line_result = db_service.execute_ddl(line_ddl)
@@ -2132,13 +2164,51 @@ def register_file(file_id: int):
             if not insert_result.get("success", True):
                 logging.warning("データINSERT警告: %s", insert_result.get("message", ""))
 
-        # --- カテゴリ upsert ---
-        category_id = db_service.upsert_category(
-            category_name=category_name,
-            category_name_en=category_name_en,
-            header_table_name=header_table_name,
-            line_table_name=line_table_name,
-        )
+        # --- カテゴリ確定 ---
+        resolved_category_id = None
+        try:
+            if category_id is not None:
+                resolved_category_id = int(category_id)
+        except (TypeError, ValueError):
+            resolved_category_id = None
+
+        if resolved_category_id is not None:
+            existing_category = db_service.get_category_by_id(resolved_category_id)
+            if not existing_category:
+                g.response.set_data({"success": False, "message": "指定カテゴリが見つかりません"})
+                return jsonify(g.response.get_result()), 400
+
+            category_header_table = (existing_category.get("header_table_name") or "").strip().upper()
+            category_line_table = (existing_category.get("line_table_name") or "").strip().upper()
+            request_header_table = header_table_name.strip().upper()
+            request_line_table = line_table_name.strip().upper()
+
+            if category_header_table != request_header_table:
+                g.response.set_data({
+                    "success": False,
+                    "message": (
+                        "カテゴリのヘッダーテーブル名とリクエストが一致しません: "
+                        f"{category_header_table} != {request_header_table}"
+                    )
+                })
+                return jsonify(g.response.get_result()), 400
+
+            if category_line_table != request_line_table:
+                g.response.set_data({
+                    "success": False,
+                    "message": (
+                        "カテゴリの明細テーブル名とリクエストが一致しません: "
+                        f"{category_line_table or '(なし)'} != {request_line_table or '(なし)'}"
+                    )
+                })
+                return jsonify(g.response.get_result()), 400
+        else:
+            resolved_category_id = db_service.upsert_category(
+                category_name=category_name,
+                category_name_en=category_name_en,
+                header_table_name=header_table_name,
+                line_table_name=line_table_name,
+            )
 
         # --- 登録レコード作成 ---
         registration_id = db_service.insert_registration(
@@ -2168,7 +2238,7 @@ def register_file(file_id: int):
         result = {
             "success": True,
             "registration_id": registration_id,
-            "category_id": category_id,
+            "category_id": resolved_category_id,
             "header_table_created": header_table_created,
             "line_table_created": line_table_created,
             "header_inserted": insert_result.get("header_inserted", 0),

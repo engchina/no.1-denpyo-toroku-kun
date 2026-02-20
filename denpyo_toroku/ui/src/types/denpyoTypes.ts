@@ -152,6 +152,7 @@ export interface AnalysisResult {
   file_id: string;
   file_name: string;
   status: FileStatus;
+  category_id?: number;
   classification: InvoiceClassification;
   extraction: FieldExtraction;
   ddl_suggestion: DDLSuggestion;
@@ -160,12 +161,13 @@ export interface AnalysisResult {
 // --- 登録 ---
 
 export interface RegistrationRequest {
+  category_id?: number;
   category_name: string;
   category_name_en: string;
   header_table_name: string;
   line_table_name: string;
-  header_ddl: string;
-  line_ddl: string;
+  header_ddl?: string;
+  line_ddl?: string;
   ai_confidence: number;
   line_count: number;
   // データINSERT用

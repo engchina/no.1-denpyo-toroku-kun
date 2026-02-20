@@ -646,6 +646,62 @@ class DatabaseService:
             logger.error("カテゴリ取得エラー (id=%s): %s", category_id, e, exc_info=True)
             return None
 
+    def get_category_table_schema(self, category_id: int) -> Optional[Dict[str, Any]]:
+        """カテゴリに紐づくテーブル構造（HEADER/LINE）を取得"""
+        category = self.get_category_by_id(category_id)
+        if not category:
+            return None
+
+        header_table_name = (category.get("header_table_name") or "").upper()
+        line_table_name = (category.get("line_table_name") or "").upper()
+
+        if not header_table_name or not self._is_safe_table_name(header_table_name):
+            return None
+        if line_table_name and not self._is_safe_table_name(line_table_name):
+            return None
+
+        def _fetch_columns(cursor, table_name: str) -> List[Dict[str, Any]]:
+            cursor.execute(
+                """SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, NULLABLE
+                FROM USER_TAB_COLUMNS
+                WHERE TABLE_NAME = :1
+                ORDER BY COLUMN_ID""",
+                [table_name]
+            )
+            cols: List[Dict[str, Any]] = []
+            for row in cursor.fetchall():
+                cols.append({
+                    "column_name": row[0],
+                    "data_type": row[1],
+                    "data_length": row[2],
+                    "precision": row[3],
+                    "scale": row[4],
+                    "nullable": row[5],
+                })
+            return cols
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    header_columns = _fetch_columns(cursor, header_table_name)
+                    line_columns = _fetch_columns(cursor, line_table_name) if line_table_name else []
+
+            if not header_columns:
+                return None
+
+            return {
+                "category_id": category.get("id"),
+                "category_name": category.get("category_name", ""),
+                "category_name_en": category.get("category_name_en", ""),
+                "header_table_name": header_table_name,
+                "line_table_name": line_table_name,
+                "header_columns": header_columns,
+                "line_columns": line_columns,
+            }
+        except Exception as e:
+            logger.error("カテゴリテーブル構造取得エラー (id=%s): %s", category_id, e, exc_info=True)
+            return None
+
     def update_category(self, category_id: int, category_name: str,
                         category_name_en: str, description: str) -> bool:
         """カテゴリの名称・説明を更新（テーブル名は変更不可）"""
