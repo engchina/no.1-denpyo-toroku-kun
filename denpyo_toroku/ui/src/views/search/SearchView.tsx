@@ -472,6 +472,15 @@ function TableBrowserTab({
                     <input
                       type="checkbox"
                       checked={tableListSelection.isAllSelected(tableListPagination.paginatedItems)}
+                      ref={(el) => {
+                        if (!el) return;
+                        const pageItems = tableListPagination.paginatedItems;
+                        const allSelected = tableListSelection.isAllSelected(pageItems);
+                        const hasSelectedOnPage = pageItems.some(item =>
+                          tableListSelection.isSelected(`${item.category_id}-${item.table_type}-${item.table_name}`)
+                        );
+                        el.indeterminate = !allSelected && hasSelectedOnPage;
+                      }}
                       onChange={() => {
                         if (tableListSelection.isAllSelected(tableListPagination.paginatedItems)) {
                           tableListSelection.deselectAll();
@@ -539,9 +548,6 @@ function TableBrowserTab({
               isLastPage={tableListPagination.isLastPage}
               position="bottom"
               show
-              selectedCount={tableListSelection.selectedCount}
-              onSelectAll={() => tableListSelection.selectAll(tableListPagination.paginatedItems)}
-              onDeselectAll={tableListSelection.deselectAll}
             />
           </div>
         ) : (
@@ -616,9 +622,6 @@ function TableBrowserTab({
                     isLastPage={page >= totalPages || isLoading}
                     position="bottom"
                     show
-                    selectedCount={dataRowSelection.selectedCount}
-                    onSelectAll={() => dataRowSelection.selectAll(result.rows)}
-                    onDeselectAll={dataRowSelection.deselectAll}
                   />
                 </>
               ) : (
@@ -663,6 +666,16 @@ function ResultsTable({ columns, rows, actionColumnLabel, renderRowActions, sele
                 <input
                   type="checkbox"
                   checked={selection.isAllSelected(rows)}
+                  ref={(el) => {
+                    if (!el) return;
+                    const selectableRowIds = rows
+                      .map((row) => row.ROW_ID_META)
+                      .filter((raw) => raw !== null && raw !== undefined && raw !== '')
+                      .map((raw) => String(raw));
+                    const allSelected = selection.isAllSelected(rows);
+                    const hasSelected = selectableRowIds.some(id => selection.isSelected(id));
+                    el.indeterminate = !allSelected && hasSelected;
+                  }}
                   onChange={() => {
                     if (selection.isAllSelected(rows)) {
                       selection.deselectAll();

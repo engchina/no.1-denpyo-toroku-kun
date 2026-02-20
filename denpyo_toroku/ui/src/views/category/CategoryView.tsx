@@ -799,7 +799,9 @@ function TableDesignerPanel({
 
 // ─── Main View ────────────────────────────────────────────────────────────────
 
-export function CategoryView() {
+type CategoryViewMode = 'samples' | 'management';
+
+export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) {
   const dispatch = useAppDispatch();
   const { requestConfirm, confirmToast } = useToastConfirm();
   const analysisPanelRef = useRef<HTMLDivElement>(null);
@@ -843,9 +845,12 @@ export function CategoryView() {
   }, [dispatch]);
 
   useEffect(() => {
-    loadSlipsFiles();
+    if (mode === 'samples') {
+      loadSlipsFiles();
+      return;
+    }
     loadCategories();
-  }, [loadSlipsFiles, loadCategories]);
+  }, [mode, loadSlipsFiles, loadCategories]);
 
   // ── Slips file list pagination ────────────────────────────────────────────
   const handleSlipsPageChange = useCallback((newPage: number) => {
@@ -943,7 +948,6 @@ export function CategoryView() {
       );
       dispatch(clearCategoryAnalysis());
       setSelectedFileIds(new Set());
-      loadCategories();
     } catch {
       dispatch(
         addNotification({
@@ -1055,12 +1059,14 @@ export function CategoryView() {
       <section class="ics-ops-hero">
         <div class="ics-ops-hero__header">
           <div>
-            <h2>{t('category.title')}</h2>
-            <p class="ics-ops-hero__subtitle">{t('category.subtitle')}</p>
+            <h2>{t(mode === 'samples' ? 'category.sample.title' : 'category.title')}</h2>
+            <p class="ics-ops-hero__subtitle">{t(mode === 'samples' ? 'category.sample.subtitle' : 'category.subtitle')}</p>
           </div>
         </div>
       </section>
 
+      {mode === 'samples' && (
+        <>
       {/* ═══ Section A: SLIPS_CATEGORY ファイル一覧 ═══ */}
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
@@ -1108,6 +1114,10 @@ export function CategoryView() {
                       <input
                         type="checkbox"
                         checked={allSelectedOnPage}
+                        ref={(el) => {
+                          if (!el) return;
+                          el.indeterminate = selectedFileIds.size > 0 && !allSelectedOnPage;
+                        }}
                         onChange={toggleSelectAll}
                         disabled={selectableOnPageIds.length === 0}
                         aria-label={t('category.slipsFiles.selectAll')}
@@ -1180,9 +1190,6 @@ export function CategoryView() {
               isLastPage={slipsCategoryPage >= slipsCategoryTotalPages || isSlipsCategoryLoading}
               position="bottom"
               show
-              selectedCount={selectedFileIds.size}
-              onSelectAll={toggleSelectAll}
-              onDeselectAll={() => setSelectedFileIds(new Set())}
             />
           </div>
         </div>
@@ -1199,8 +1206,11 @@ export function CategoryView() {
           />
         </div>
       )}
+      </>
+      )}
 
       {/* ═══ Section B: カテゴリ一覧 ═══ */}
+      {mode === 'management' && (
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
           <div class="ics-card-header">
@@ -1226,6 +1236,13 @@ export function CategoryView() {
                       <input
                         type="checkbox"
                         checked={categorySelection.isAllSelected(categoryPagination.paginatedItems)}
+                        ref={(el) => {
+                          if (!el) return;
+                          const pageItems = categoryPagination.paginatedItems;
+                          const allSelected = categorySelection.isAllSelected(pageItems);
+                          const hasSelectedOnPage = pageItems.some(cat => categorySelection.isSelected(String(cat.id)));
+                          el.indeterminate = !allSelected && hasSelectedOnPage;
+                        }}
                         onChange={() => {
                           if (categorySelection.isAllSelected(categoryPagination.paginatedItems)) {
                             categorySelection.deselectAll();
@@ -1337,17 +1354,15 @@ export function CategoryView() {
               isLastPage={categoryPagination.isLastPage}
               position="bottom"
               show
-              selectedCount={categorySelection.selectedCount}
-              onSelectAll={() => categorySelection.selectAll(categoryPagination.paginatedItems)}
-              onDeselectAll={categorySelection.deselectAll}
             />
           </div>
         </div>
       </section>
+      )}
 
       {/* ─── Modals ─── */}
 
-      {showAnalysisModeModal && (
+      {mode === 'samples' && showAnalysisModeModal && (
         <AnalysisModeModal
           selectedCount={selectedFileIds.size}
           onConfirm={handleAnalysisModeConfirm}
@@ -1355,7 +1370,7 @@ export function CategoryView() {
         />
       )}
 
-      {editTarget && (
+      {mode === 'management' && editTarget && (
         <EditModal
           category={editTarget}
           onSave={handleSave}
@@ -1364,7 +1379,7 @@ export function CategoryView() {
         />
       )}
 
-      {confirmToast}
+      {mode === 'management' && confirmToast}
     </div>
   );
 }

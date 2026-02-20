@@ -1,9 +1,6 @@
 /**
- * 共通ページネーション（ページ移動 UI）+ 選択操作
+ * 共通ページネーション（ページ移動 UI）
  * ページングが必要な画面で再利用可能
- *
- * 選択操作（すべて選択 / すべて解除）はオプション。
- * selectedCount を渡すと選択 UI が表示される。
  */
 import { h } from 'preact';
 import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
@@ -23,18 +20,12 @@ export interface PaginationProps {
   position?: 'top' | 'bottom';
   /** Whether to show the component (typically based on totalPages > 1) */
   show?: boolean;
-
-  // ── 選択操作（オプション）──────────────────────────────────────
-  /** 現在の選択件数。undefined の場合、選択 UI は非表示 */
-  selectedCount?: number;
-  /** 「すべて選択」ハンドラ */
-  onSelectAll?: () => void;
-  /** 「すべて解除」ハンドラ */
-  onDeselectAll?: () => void;
+  /** Where to render summary text */
+  summaryPlacement?: 'left' | 'controls';
 }
 
 /**
- * 再利用可能なページネーション + 選択操作
+ * 再利用可能なページネーション
  *
  * 使用例:
  * ```tsx
@@ -53,9 +44,6 @@ export interface PaginationProps {
  *   isLastPage={pagination.isLastPage}
  *   position="bottom"
  *   show={pagination.showPagination}
- *   selectedCount={selection.selectedCount}
- *   onSelectAll={() => selection.selectAll(pagination.paginatedItems)}
- *   onDeselectAll={selection.deselectAll}
  * />
  * ```
  */
@@ -71,9 +59,7 @@ export function Pagination({
   isLastPage,
   position = 'top',
   show = true,
-  selectedCount,
-  onSelectAll,
-  onDeselectAll,
+  summaryPlacement = 'left',
 }: PaginationProps) {
   if (!show) {
     return null;
@@ -90,64 +76,55 @@ export function Pagination({
     || targetPage < 1
     || targetPage > totalPages;
 
-  const showSelection = selectedCount !== undefined && onSelectAll && onDeselectAll;
+  const summaryText = t('common.paginationSummary', {
+    current: currentPage,
+    total: totalPages,
+    totalItems
+  });
 
   return (
     <div
       class={`oj-flex oj-sm-justify-content-space-between oj-sm-align-items-center ics-pagination ics-pagination--${position}`}
     >
-      {/* 左側: 選択操作 + サマリー */}
+      {/* 左側: サマリー */}
       <div class="oj-flex oj-sm-align-items-center ics-pagination__left">
-        {showSelection && (
-          <div class="oj-flex oj-sm-align-items-center ics-pagination__selection">
-            <Button
-              label={t('common.selectAll')}
-              variant="outlined"
-              size="sm"
-              onAction={onSelectAll}
-            />
-            <Button
-              label={t('common.deselectAll')}
-              variant="outlined"
-              size="sm"
-              onAction={onDeselectAll}
-              isDisabled={selectedCount === 0}
-            />
-            {selectedCount > 0 && (
-              <span class="oj-typography-body-sm ics-pagination__selectionCount">
-                {t('common.selectedCount', { count: selectedCount })}
-              </span>
-            )}
-          </div>
+        {summaryPlacement === 'left' && (
+          <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__summary">
+            {summaryText}
+          </span>
         )}
-        <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__summary">
-          {currentPage} / {totalPages} ページ（合計 {totalItems} 件）
-        </span>
       </div>
 
       {/* 右側: ページ移動コントロール */}
       <div class="oj-flex oj-sm-align-items-center ics-pagination__controls">
+        {summaryPlacement === 'controls' && (
+          <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__summary ics-pagination__summary--controls">
+            {summaryText}
+          </span>
+        )}
         <Button
-          label="前へ"
+          label={t('common.previous')}
           variant="outlined"
           size="sm"
           onAction={() => onPageChange(currentPage - 1)}
           isDisabled={isFirstPage}
         />
         <div class="oj-flex oj-sm-align-items-center ics-pagination__goto">
-          <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__gotoLabel">ページ</span>
+          <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__gotoLabel">
+            {t('common.page')}
+          </span>
           <input
             type="number"
             class="ics-input ics-pagination__input"
             min="1"
             max={String(totalPages)}
             value={goToPageInput || currentPage.toString()}
-            aria-label={`ページ移動（現在: ${currentPage}）`}
+            aria-label={t('common.pageInputAria', { current: currentPage })}
             onInput={(e: any) => onGoToPageInputChange(e.target.value)}
             onKeyDown={handleKeyDown as any}
           />
           <Button
-            label="移動"
+            label={t('common.go')}
             variant="outlined"
             size="sm"
             onAction={onGoToPage}
@@ -155,7 +132,7 @@ export function Pagination({
           />
         </div>
         <Button
-          label="次へ"
+          label={t('common.next')}
           variant="outlined"
           size="sm"
           onAction={() => onPageChange(currentPage + 1)}

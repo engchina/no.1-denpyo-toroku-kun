@@ -446,35 +446,39 @@ export function ListView() {
         <div class="ics-card ics-ops-panel">
           <div class="ics-card-header oj-flex oj-sm-align-items-center oj-sm-justify-content-space-between">
             <span class="oj-typography-heading-xs">{t('fileList.tableTitle')}</span>
-            <div class="oj-flex oj-sm-align-items-center oj-sm-gap-2 ics-fileListView__toolbar">
-              <button
-                type="button"
-                class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                onClick={handleBulkDelete}
-                disabled={isDeleting || isLoading || selectedFileIds.length === 0}
-                title={t('fileList.bulkDelete')}
-              >
-                <Trash2 size={14} />
-                <span>{t('fileList.bulkDelete')}</span>
-              </button>
-              <span class="ics-fileListView__filterIcon"><Filter size={14} /></span>
-              <select
-                class="ics-select"
-                value={statusFilter || ''}
-                onChange={handleStatusChange}
-                disabled={isLoading || isDeleting}
-              >
-                {STATUS_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
-                ))}
-              </select>
-              <span class="ics-fileListView__sortIndicator">
-                {sortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
-                {t('fileList.sort.current', {
-                  field: t(SORT_LABEL_KEYS[sortKey]),
-                  direction: currentSortDirectionLabel
-                })}
-              </span>
+            <div class="ics-fileListView__toolbar">
+              <div class="ics-fileListView__toolbarPrimary">
+                <button
+                  type="button"
+                  class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                  onClick={handleBulkDelete}
+                  disabled={isDeleting || isLoading || selectedFileIds.length === 0}
+                  title={t('fileList.bulkDelete')}
+                >
+                  <Trash2 size={14} />
+                  <span>{t('fileList.bulkDelete')}</span>
+                </button>
+              </div>
+              <div class="ics-fileListView__toolbarSecondary">
+                <span class="ics-fileListView__filterIcon"><Filter size={14} /></span>
+                <select
+                  class="ics-select"
+                  value={statusFilter || ''}
+                  onChange={handleStatusChange}
+                  disabled={isLoading || isDeleting}
+                >
+                  {STATUS_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
+                  ))}
+                </select>
+                <span class="ics-fileListView__sortIndicator">
+                  {sortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+                  {t('fileList.sort.current', {
+                    field: t(SORT_LABEL_KEYS[sortKey]),
+                    direction: currentSortDirectionLabel
+                  })}
+                </span>
+              </div>
             </div>
           </div>
           <div class="ics-card-body">
@@ -487,6 +491,10 @@ export function ListView() {
                       <input
                         type="checkbox"
                         checked={isAllSelectedOnPage}
+                        ref={(el) => {
+                          if (!el) return;
+                          el.indeterminate = selectedFileIds.length > 0 && !isAllSelectedOnPage;
+                        }}
                         onChange={handleSelectAllOnPage}
                         disabled={isDeleting || isLoading || selectableIds.length === 0}
                         aria-label={t('fileList.selectAll')}
@@ -603,9 +611,7 @@ export function ListView() {
               isLastPage={page >= totalPages || isLoading}
               position="bottom"
               show
-              selectedCount={selectedFileIds.length}
-              onSelectAll={handleSelectAllOnPage}
-              onDeselectAll={() => setSelectedFileIds([])}
+              summaryPlacement="controls"
             />
           </div>
         </div>

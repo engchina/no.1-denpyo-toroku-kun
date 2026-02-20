@@ -40,6 +40,7 @@ const navGroups: NavGroup[] = [
       { id: 'dashboard', nameKey: 'nav.dashboard', Icon: LayoutDashboard },
       { id: 'upload', nameKey: 'nav.upload', Icon: Upload },
       { id: 'fileList', nameKey: 'nav.fileList', Icon: FileText },
+      { id: 'categorySamples', nameKey: 'nav.categorySamples', Icon: FileText },
       { id: 'categoryManagement', nameKey: 'nav.categoryManagement', Icon: Tags },
       { id: 'search', nameKey: 'nav.dataSearch', Icon: Search }
     ]

@@ -46,8 +46,10 @@ function ViewSwitcher() {
       return <AnalysisView />;
     case 'registration':
       return <RegistrationView />;
+    case 'categorySamples':
+      return <CategoryView mode="samples" />;
     case 'categoryManagement':
-      return <CategoryView />;
+      return <CategoryView mode="management" />;
     case 'search':
       return <SearchView />;
     case 'applicationSettings':
