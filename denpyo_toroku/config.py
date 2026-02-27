@@ -52,8 +52,20 @@ class AppConfig:
     # AI Model Configuration
     LLM_MODEL_ID = os.environ.get(
         "LLM_MODEL_ID",
-        config.get("ai", "llm_model_id", fallback=config.get("ai", "vision_model_name", fallback="google.gemini-2.5-flash"))
+        config.get("ai", "llm_model_id", fallback=config.get("ai", "vision_model_name", fallback="xai.grok-code-fast-1"))
     )
+    VLM_MODEL_ID = os.environ.get(
+        "VLM_MODEL_ID",
+        config.get("ai", "vision_model_name", fallback="google.gemini-2.5-flash")
+    )
+    LLM_MAX_TOKENS = int(os.environ.get(
+        "LLM_MAX_TOKENS",
+        config.get("ai", "llm_max_tokens", fallback="65536")
+    ))
+    LLM_TEMPERATURE = float(os.environ.get(
+        "LLM_TEMPERATURE",
+        config.get("ai", "llm_temperature", fallback="0.0")
+    ))
     EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
 
     # Storage limits

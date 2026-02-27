@@ -142,11 +142,21 @@ def _runtime_oci_defaults() -> Dict[str, str]:
         "service_endpoint": service_endpoint,
         "llm_model_id": _normalize_text(
             os.environ.get("LLM_MODEL_ID"),
-            _normalize_text(getattr(AppConfig, "LLM_MODEL_ID", ""), "google.gemini-2.5-flash"),
+            _normalize_text(getattr(AppConfig, "LLM_MODEL_ID", ""), "xai.grok-code-fast-1"),
+        ),
+        "vlm_model_id": _normalize_text(
+            os.environ.get("VLM_MODEL_ID"),
+            _normalize_text(getattr(AppConfig, "VLM_MODEL_ID", ""), "google.gemini-2.5-flash"),
         ),
         "embedding_model_id": _normalize_text(
             os.environ.get("EMBEDDING_MODEL_ID"),
             _normalize_text(getattr(AppConfig, "EMBEDDING_MODEL_ID", ""), "cohere.embed-v4.0"),
+        ),
+        "llm_max_tokens": int(
+            os.environ.get("LLM_MAX_TOKENS", getattr(AppConfig, "LLM_MAX_TOKENS", 65536))
+        ),
+        "llm_temperature": float(
+            os.environ.get("LLM_TEMPERATURE", getattr(AppConfig, "LLM_TEMPERATURE", 0.0))
         ),
         "namespace": _normalize_text(
             os.environ.get("OCI_NAMESPACE"),
@@ -259,7 +269,10 @@ def _load_oci_settings_snapshot() -> Dict[str, Any]:
             "compartment_id": defaults["compartment_id"],
             "service_endpoint": defaults["service_endpoint"],
             "llm_model_id": defaults["llm_model_id"],
+            "vlm_model_id": defaults["vlm_model_id"],
             "embedding_model_id": defaults["embedding_model_id"],
+            "llm_max_tokens": defaults["llm_max_tokens"],
+            "llm_temperature": defaults["llm_temperature"],
             "namespace": defaults["namespace"],
             "bucket": defaults["bucket"],
         },
@@ -314,7 +327,10 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     os.environ["OCI_CONFIG_COMPARTMENT"] = settings["compartment_id"]
     os.environ["OCI_SERVICE_ENDPOINT"] = settings["service_endpoint"]
     os.environ["LLM_MODEL_ID"] = settings["llm_model_id"]
+    os.environ["VLM_MODEL_ID"] = settings["vlm_model_id"]
     os.environ["EMBEDDING_MODEL_ID"] = settings["embedding_model_id"]
+    os.environ["LLM_MAX_TOKENS"] = str(settings["llm_max_tokens"])
+    os.environ["LLM_TEMPERATURE"] = str(settings["llm_temperature"])
     os.environ["OCI_NAMESPACE"] = settings["namespace"]
     os.environ["OCI_BUCKET"] = settings["bucket"]
 
@@ -323,7 +339,10 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     AppConfig.OCI_CONFIG_COMPARTMENT = settings["compartment_id"]
     AppConfig.OCI_SERVICE_ENDPOINT = settings["service_endpoint"]
     AppConfig.LLM_MODEL_ID = settings["llm_model_id"]
+    AppConfig.VLM_MODEL_ID = settings["vlm_model_id"]
     AppConfig.EMBEDDING_MODEL_ID = settings["embedding_model_id"]
+    AppConfig.LLM_MAX_TOKENS = int(settings["llm_max_tokens"])
+    AppConfig.LLM_TEMPERATURE = float(settings["llm_temperature"])
     AppConfig.OCI_NAMESPACE = settings["namespace"]
     AppConfig.OCI_BUCKET = settings["bucket"]
 
@@ -420,14 +439,25 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
         "service_endpoint": service_endpoint,
         "llm_model_id": _normalize_text(
             settings_payload.get("llm_model_id"),
-            current_settings.get("llm_model_id", "google.gemini-2.5-pro"),
+            current_settings.get("llm_model_id", "xai.grok-code-fast-1"),
         )
-        or "google.gemini-2.5-pro",
+        or "xai.grok-code-fast-1",
+        "vlm_model_id": _normalize_text(
+            settings_payload.get("vlm_model_id"),
+            current_settings.get("vlm_model_id", "google.gemini-2.5-flash"),
+        )
+        or "google.gemini-2.5-flash",
         "embedding_model_id": _normalize_text(
             settings_payload.get("embedding_model_id"),
             current_settings.get("embedding_model_id", "cohere.embed-v4.0"),
         )
         or "cohere.embed-v4.0",
+        "llm_max_tokens": int(
+            settings_payload.get("llm_max_tokens", current_settings.get("llm_max_tokens", 65536))
+        ),
+        "llm_temperature": float(
+            settings_payload.get("llm_temperature", current_settings.get("llm_temperature", 0.0))
+        ),
         "namespace": _normalize_text(
             settings_payload.get("namespace"),
             current_settings.get("namespace", ""),
@@ -446,7 +476,10 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             "OCI_CONFIG_COMPARTMENT": settings_for_env["compartment_id"],
             "OCI_SERVICE_ENDPOINT": settings_for_env["service_endpoint"],
             "LLM_MODEL_ID": settings_for_env["llm_model_id"],
+            "VLM_MODEL_ID": settings_for_env["vlm_model_id"],
             "EMBEDDING_MODEL_ID": settings_for_env["embedding_model_id"],
+            "LLM_MAX_TOKENS": str(settings_for_env["llm_max_tokens"]),
+            "LLM_TEMPERATURE": str(settings_for_env["llm_temperature"]),
             "OCI_NAMESPACE": settings_for_env["namespace"],
             "OCI_BUCKET": settings_for_env["bucket"],
         },
@@ -509,8 +542,12 @@ def _build_oci_model_test_settings(request_settings: Dict[str, Any]) -> Dict[str
     )
     llm_model_id = _normalize_text(
         request_settings.get("llm_model_id"),
-        snapshot_settings.get("llm_model_id", defaults.get("llm_model_id", "google.gemini-2.5-pro")),
-    ) or "google.gemini-2.5-pro"
+        snapshot_settings.get("llm_model_id", defaults.get("llm_model_id", "xai.grok-code-fast-1")),
+    ) or "xai.grok-code-fast-1"
+    vlm_model_id = _normalize_text(
+        request_settings.get("vlm_model_id"),
+        snapshot_settings.get("vlm_model_id", defaults.get("vlm_model_id", "google.gemini-2.5-flash")),
+    ) or "google.gemini-2.5-flash"
     embedding_model_id = _normalize_text(
         request_settings.get("embedding_model_id"),
         snapshot_settings.get("embedding_model_id", defaults.get("embedding_model_id", "cohere.embed-v4.0")),
@@ -520,6 +557,7 @@ def _build_oci_model_test_settings(request_settings: Dict[str, Any]) -> Dict[str
         "service_endpoint": service_endpoint,
         "compartment_id": compartment_id,
         "llm_model_id": llm_model_id,
+        "vlm_model_id": vlm_model_id,
         "embedding_model_id": embedding_model_id,
     }
 
@@ -1099,7 +1137,7 @@ def test_oci_connection():
 
 @api_blueprint.route("/api/v1/oci/model/test", methods=["POST"])
 def test_oci_model_connection():
-    """Test OCI GenAI model IDs (LLM / Embedding) individually."""
+    """Test OCI GenAI model IDs (LLM / VLM / Embedding) individually."""
     try:
         body = request.get_json(silent=True) or {}
         settings_payload = body.get("settings") if isinstance(body.get("settings"), dict) else body
@@ -1108,8 +1146,8 @@ def test_oci_model_connection():
             return jsonify(g.response.get_result()), 422
 
         test_type = _normalize_text(body.get("test_type"), "llm").lower()
-        if test_type not in ("llm", "embedding"):
-            g.response.add_error_message("test_type は llm または embedding を指定してください。")
+        if test_type not in ("llm", "vlm", "embedding"):
+            g.response.add_error_message("test_type は llm / vlm / embedding のいずれかを指定してください。")
             return jsonify(g.response.get_result()), 422
 
         oci_auth_config = _build_oci_test_config(settings_payload)
@@ -1152,9 +1190,9 @@ def test_oci_model_connection():
                         content=[{"type": "TEXT", "text": test_input_text}]
                     )
                 ],
-                max_tokens=256,
-                temperature=0,
-                is_stream=False,
+                max_tokens=AppConfig.LLM_MAX_TOKENS,
+                temperature=AppConfig.LLM_TEMPERATURE,
+                is_stream=True,
             )
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=model_settings["compartment_id"],
@@ -1176,6 +1214,52 @@ def test_oci_model_connection():
                 "details": {
                     "test_type": "llm",
                     "input_text": test_input_text,
+                    "result_text": result_text.strip(),
+                    "model_id": model_id,
+                    "compartment_id": model_settings["compartment_id"],
+                    "region": oci_auth_config["region"],
+                    "request_id": getattr(response, "request_id", ""),
+                },
+            })
+            return jsonify(g.response.get_result())
+
+        if test_type == "vlm":
+            model_id = model_settings["vlm_model_id"]
+            if not model_id:
+                g.response.add_error_message("vlm_model_id は必須です。")
+                return jsonify(g.response.get_result()), 422
+
+            chat_request = oci.generative_ai_inference.models.GenericChatRequest(
+                api_format="GENERIC",
+                messages=[
+                    oci.generative_ai_inference.models.UserMessage(
+                        content=[{"type": "TEXT", "text": "画像解析モデルの接続テストです。'OK' とだけ返答してください。"}]
+                    )
+                ],
+                max_tokens=AppConfig.LLM_MAX_TOKENS,
+                temperature=AppConfig.LLM_TEMPERATURE,
+                is_stream=True,
+            )
+            chat_detail = oci.generative_ai_inference.models.ChatDetails(
+                compartment_id=model_settings["compartment_id"],
+                serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(model_id=model_id),
+                chat_request=chat_request,
+            )
+            response = genai_client.chat(chat_detail)
+            result_text = ""
+            chat_response = getattr(getattr(response, "data", None), "chat_response", None)
+            if hasattr(chat_response, "choices") and chat_response.choices:
+                message = chat_response.choices[0].message
+                if hasattr(message, "content"):
+                    for part in message.content:
+                        if hasattr(part, "text") and part.text:
+                            result_text += part.text
+            g.response.set_data({
+                "success": True,
+                "message": "VLM モデル ID テストに成功しました。",
+                "details": {
+                    "test_type": "vlm",
+                    "input_text": "テスト画像",
                     "result_text": result_text.strip(),
                     "model_id": model_id,
                     "compartment_id": model_settings["compartment_id"],
@@ -2364,12 +2448,17 @@ def analyze_slips_for_category():
     if not isinstance(file_ids, list) or not (1 <= len(file_ids) <= 5):
         g.response.add_error_message("file_idsは1〜5件のIDリストを指定してください")
         return jsonify(g.response.get_result()), 400
+    try:
+        normalized_file_ids = [int(fid) for fid in file_ids]
+    except (TypeError, ValueError):
+        g.response.add_error_message("file_ids は数値のIDリストを指定してください")
+        return jsonify(g.response.get_result()), 400
 
     if analysis_mode not in ("header_only", "header_line"):
         analysis_mode = "header_line"
 
     db_service = DatabaseService()
-    file_records = db_service.get_slips_category_files_by_ids([int(fid) for fid in file_ids])
+    file_records = db_service.get_slips_category_files_by_ids(normalized_file_ids)
     if not file_records:
         g.response.add_error_message("指定されたファイルが見つかりません")
         return jsonify(g.response.get_result()), 404
@@ -2379,45 +2468,72 @@ def analyze_slips_for_category():
     ai_service = AIService()
 
     # 全ファイルを分析してフィールドを収集
-    all_header_fields: List[Dict] = []
-    all_line_fields: List[Dict] = []
-    category_guesses: List[str] = []
-    total_processed = 0
+    all_header_fields: List[Dict[str, Any]] = []
+    all_line_fields: List[Dict[str, Any]] = []
+    tmp_filepaths = []
+    processed_file_ids: List[int] = []
+    schema_result: Dict[str, Any] = {}
+    
+    try:
+        # 1. すべてのファイルをダウンロードし、OCR用に画像化して /tmp に保存
+        for rec in file_records:
+            try:
+                object_name = rec.get("object_name", "")
+                file_data = storage_service.download_file(object_name)
+                if not file_data:
+                    logging.warning("ファイルダウンロード失敗: %s", object_name)
+                    continue
 
-    for rec in file_records:
-        try:
-            object_name = rec.get("object_name", "")
-            content_type = rec.get("content_type", "image/jpeg")
+                images = doc_processor.prepare_for_ai(file_data, rec.get("file_name", ""))
+                if not images:
+                    logging.warning("AI分析用画像の生成に失敗: %s", object_name)
+                    continue
 
-            file_data = storage_service.download_file(object_name)
-            if not file_data:
-                logging.warning("ファイルダウンロード失敗: %s", object_name)
+                for image_data, img_content_type in images:
+                    suffix = ".jpg" if img_content_type in ("image/jpeg", "image/jpg") else ".png"
+                    fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(image_data)
+                    tmp_filepaths.append(tmp_path)
+                if rec.get("id"):
+                    processed_file_ids.append(rec.get("id"))
+            except Exception as e:
+                logging.error("ファイルダウンロード/OCR前処理エラー (id=%s): %s", rec.get("id"), e, exc_info=True)
                 continue
 
-            images = doc_processor.prepare_for_ai(file_data, rec.get("file_name", ""))
-            if not images:
-                logging.warning("AI用画像変換失敗: %s", object_name)
-                continue
+        if not tmp_filepaths:
+            g.response.add_error_message("処理できる画像ファイルがありませんでした")
+            return jsonify(g.response.get_result()), 500
 
-            image_data, img_content_type = images[0]
+        # 2. VLMで画像からテキストを抽出（OCRの代替）
+        ocr_result = ai_service.extract_text_from_images(tmp_filepaths)
+        if not ocr_result.get("success"):
+            g.response.add_error_message(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
+            return jsonify(g.response.get_result()), 500
+            
+        extracted_text = ocr_result.get("extracted_text", "")
 
-            # 分類
-            classification = ai_service.classify_invoice(image_data, img_content_type)
-            if classification.get("success"):
-                category_guesses.append(classification.get("category", ""))
+        # 3. LLMで抽出テキストからスキーマ（JSON）を生成
+        schema_result = ai_service.generate_sql_schema_from_text(extracted_text, analysis_mode)
+        if not schema_result.get("success"):
+            g.response.add_error_message(f"AIによるスキーマ設計に失敗しました: {schema_result.get('message')}")
+            return jsonify(g.response.get_result()), 500
+            
+        # 4. JSONから header_columns, line_columns を取得する
+        all_header_fields = schema_result.get("header_fields", [])
+        all_line_fields = schema_result.get("line_fields", [])
+        
+    finally:
+        # クリーンアップ: 一時ファイルを削除
+        for path in tmp_filepaths:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception as e:
+                logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", path, e)
 
-            # フィールド抽出
-            category_hint = classification.get("category", "") if classification.get("success") else ""
-            extraction = ai_service.extract_fields(image_data, category_hint, img_content_type)
-            if extraction.get("success"):
-                all_header_fields.extend(extraction.get("header_fields", []))
-                if analysis_mode == "header_line":
-                    all_line_fields.extend(extraction.get("line_fields", []))
-                total_processed += 1
 
-        except Exception as e:
-            logging.error("ファイル分析エラー (id=%s): %s", rec.get("id"), e, exc_info=True)
-            continue
+
 
     if not all_header_fields:
         g.response.add_error_message("分析できるファイルがありませんでした")
@@ -2440,11 +2556,18 @@ def analyze_slips_for_category():
                 dt = "VARCHAR2"
 
             if key not in seen:
+                max_length = None
+                if dt == "VARCHAR2":
+                    raw_len = f.get("max_length")
+                    try:
+                        max_length = int(raw_len) if raw_len else 100
+                    except (TypeError, ValueError):
+                        max_length = 100
                 seen[key] = {
                     "column_name": key,
                     "column_name_jp": f.get("field_name") or raw_key,
                     "data_type": dt,
-                    "max_length": f.get("max_length") or 100,
+                    "max_length": max_length,
                     "precision": None,
                     "scale": None,
                     "is_nullable": True,
@@ -2453,17 +2576,28 @@ def analyze_slips_for_category():
                 appear_count[key] = 1
                 required_count[key] = 1 if f.get("is_required") else 0
             else:
+                existing_dt = seen[key].get("data_type", "VARCHAR2")
+                if existing_dt != dt:
+                    # 同名カラムで型がぶれた場合は安全側に倒して文字列化する
+                    seen[key]["data_type"] = "VARCHAR2"
+                    if not seen[key].get("max_length"):
+                        seen[key]["max_length"] = 100
+                    dt = "VARCHAR2"
                 # 最大長は大きい方を採用
-                existing_len = seen[key].get("max_length") or 100
-                new_len = f.get("max_length") or 100
-                seen[key]["max_length"] = max(existing_len, new_len)
+                if dt == "VARCHAR2":
+                    existing_len = seen[key].get("max_length") or 100
+                    raw_new_len = f.get("max_length")
+                    try:
+                        new_len = int(raw_new_len) if raw_new_len else 100
+                    except (TypeError, ValueError):
+                        new_len = 100
+                    seen[key]["max_length"] = max(existing_len, new_len)
                 appear_count[key] += 1
                 if f.get("is_required"):
                     required_count[key] += 1
 
-        # 全ファイルで is_required=true だった列は NOT NULL に設定
         for key in seen:
-            if total_processed > 0 and required_count.get(key, 0) == appear_count.get(key, 0) and appear_count.get(key, 0) >= total_processed:
+            if required_count.get(key, 0) == appear_count.get(key, 0) and appear_count.get(key, 0) > 0:
                 seen[key]["is_nullable"] = False
 
         return list(seen.values())
@@ -2471,20 +2605,24 @@ def analyze_slips_for_category():
     header_columns = _merge_fields(all_header_fields)
     line_columns = _merge_fields(all_line_fields) if analysis_mode == "header_line" else []
 
-    # カテゴリ名推定（多数決で最頻出カテゴリを採用）
-    if category_guesses:
-        from collections import Counter
-        category_guess = Counter(category_guesses).most_common(1)[0][0]
-    else:
-        category_guess = "伝票"
-    # 英語名の推定（簡易変換）
+    category_guess = (schema_result.get("document_type_ja") or "").strip() or "伝票"
+
+    # 英語名の推定（LLM提案を優先。なければ簡易変換）
     category_map = {
         "請求書": "invoice", "領収書": "receipt", "納品書": "delivery_note",
         "注文書": "purchase_order", "見積書": "quotation", "発注書": "order_sheet",
     }
-    category_guess_en = category_map.get(category_guess, "slip")
+    llm_doc_type_en = re.sub(
+        r"[^a-z0-9_]+",
+        "_",
+        (schema_result.get("document_type_en") or "").strip().lower(),
+    ).strip("_")
+    category_guess_en = (
+        llm_doc_type_en
+        or category_map.get(category_guess, "slip")
+    )
 
-    analyzed_file_ids = [rec.get("id") for rec in file_records if rec.get("id")]
+    analyzed_file_ids = list(dict.fromkeys(processed_file_ids))
 
     result = {
         "category_guess": category_guess,

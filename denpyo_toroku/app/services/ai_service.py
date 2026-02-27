@@ -13,6 +13,7 @@ import logging
 import os
 import random
 import time
+import requests
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,10 @@ class AIService:
         self._client = None
         self._region = os.environ.get("OCI_REGION", "ap-osaka-1")
         self._compartment_id = os.environ.get("OCI_CONFIG_COMPARTMENT", "")
-        self._llm_model_id = os.environ.get("LLM_MODEL_ID", "google.gemini-2.5-flash")
+        self._llm_model_id = os.environ.get("LLM_MODEL_ID", "xai.grok-code-fast-1")
+        self._vlm_model_id = os.environ.get("VLM_MODEL_ID", "google.gemini-2.5-flash")
+        self._max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "65536"))
+        self._temperature = float(os.environ.get("LLM_TEMPERATURE", "0.0"))
         self._service_endpoint = os.environ.get(
             "OCI_SERVICE_ENDPOINT",
             f"https://inference.generativeai.{self._region}.oci.oraclecloud.com"
@@ -482,8 +486,8 @@ class AIService:
                         content=[image_content, text_content]
                     )
                 ],
-                max_tokens=1024,
-                temperature=0.1,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
                 is_stream=False,
                 tools=[
                     oci.generative_ai_inference.models.FunctionDefinition(
@@ -504,15 +508,15 @@ class AIService:
                         content=[image_content, text_content]
                     )
                 ],
-                max_tokens=1024,
-                temperature=0.1,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
                 is_stream=False,
             )
 
             structured_chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=self._compartment_id,
                 serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                    model_id=self._llm_model_id
+                    model_id=self._vlm_model_id
                 ),
                 chat_request=structured_chat_request,
             )
@@ -520,7 +524,7 @@ class AIService:
             fallback_chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=self._compartment_id,
                 serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                    model_id=self._llm_model_id
+                    model_id=self._vlm_model_id
                 ),
                 chat_request=fallback_chat_request,
             )
@@ -577,8 +581,8 @@ class AIService:
                             content=[{"type": "TEXT", "text": repair_prompt}]
                         )
                     ],
-                    max_tokens=512,
-                    temperature=0.0,
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
                     is_stream=False,
                 )
                 repair_structured_request = oci.generative_ai_inference.models.GenericChatRequest(
@@ -588,8 +592,8 @@ class AIService:
                             content=[{"type": "TEXT", "text": repair_prompt}]
                         )
                     ],
-                    max_tokens=512,
-                    temperature=0.0,
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
                     is_stream=False,
                     tools=[
                         oci.generative_ai_inference.models.FunctionDefinition(
@@ -605,14 +609,14 @@ class AIService:
                 repair_text_detail = oci.generative_ai_inference.models.ChatDetails(
                     compartment_id=self._compartment_id,
                     serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                        model_id=self._llm_model_id
+                        model_id=self._vlm_model_id
                     ),
                     chat_request=repair_text_request,
                 )
                 repair_structured_detail = oci.generative_ai_inference.models.ChatDetails(
                     compartment_id=self._compartment_id,
                     serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                        model_id=self._llm_model_id
+                        model_id=self._vlm_model_id
                     ),
                     chat_request=repair_structured_request,
                 )
@@ -881,15 +885,15 @@ class AIService:
                         content=[image_content, text_content]
                     )
                 ],
-                max_tokens=4096,
-                temperature=0.1,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
                 is_stream=False,
             )
 
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=self._compartment_id,
                 serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                    model_id=self._llm_model_id
+                    model_id=self._vlm_model_id
                 ),
                 chat_request=chat_request,
             )
@@ -931,6 +935,270 @@ class AIService:
         except Exception as e:
             logger.error("フィールド抽出エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"フィールド抽出失敗: {str(e)}"}
+
+    def extract_text_from_images(self, image_filepaths: List[str]) -> Dict[str, Any]:
+        """伝票画像群からVLMを用いてテキストを抽出する"""
+        client = self._get_client()
+        if not client:
+            return {"success": False, "message": "AI クライアントが初期化されていません"}
+
+        prompt = """Extract all text from the image exactly as it appears. 
+Preserve the original formatting, layout, line breaks, and structure. 
+Output only the extracted text with no additional commentary, explanations, or metadata."""
+
+        try:
+            import oci
+            import base64
+            import mimetypes
+
+            contents = []
+            for filepath in image_filepaths:
+                if not os.path.exists(filepath):
+                    continue
+                with open(filepath, "rb") as f:
+                    image_data = f.read()
+                content_type = mimetypes.guess_type(filepath)[0] or "image/jpeg"
+                encoded = base64.b64encode(image_data).decode("ascii")
+                contents.append({
+                    "type": "IMAGE",
+                    "imageUrl": {
+                        "url": f"data:{content_type};base64,{encoded}"
+                    }
+                })
+
+            if not contents:
+                return {"success": False, "message": "有効な画像ファイルがありません"}
+
+            contents.append({"type": "TEXT", "text": prompt})
+
+            chat_request = oci.generative_ai_inference.models.GenericChatRequest(
+                api_format="GENERIC",
+                messages=[
+                    oci.generative_ai_inference.models.UserMessage(
+                        content=contents
+                    )
+                ],
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
+                is_stream=False,
+            )
+
+            chat_detail = oci.generative_ai_inference.models.ChatDetails(
+                compartment_id=self._compartment_id,
+                serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
+                    model_id=self._vlm_model_id
+                ),
+                chat_request=chat_request,
+            )
+
+            response = self._retry_api_call("extract_text_from_images", client.chat, chat_detail)
+            extracted_text = self._get_text_from_chat_response(response.data.chat_response)
+            
+            if not extracted_text.strip():
+                return {"success": False, "message": "VLMによるテキスト抽出結果が空でした"}
+
+            return {"success": True, "extracted_text": extracted_text}
+
+        except Exception as e:
+            logger.error("VLM テキスト抽出エラー: %s", e, exc_info=True)
+            return {"success": False, "message": f"テキスト抽出失敗: {str(e)}"}
+
+    def generate_sql_schema_from_text(self, ocr_text: str, analysis_mode: str) -> Dict[str, Any]:
+        """OCR抽出されたテキストから、最適なJSONスキーマ（テーブル構造）を提案する"""
+        client = self._get_client()
+        if not client:
+            return {"success": False, "message": "AI クライアントが初期化されていません"}
+
+        header_only_hint = ""
+        if analysis_mode == "header_only":
+            header_only_hint = "今回はヘッダーのみ（1伝票=1レコード）の設計を求めています。明細テーブル（line_table）は作成せず、line_table_name は空文字列とし、line_columns は空配列にしてください。"
+        else:
+            header_only_hint = "伝票内に繰り返しの明細行がある場合は、明細テーブル（line_table）を分離して設計してください。ない場合は header のみとしてください。"
+
+        prompt = f"""You are a database schema designer. Analyze the following OCR-extracted text from a Japanese business document (伝票) and design Oracle CREATE TABLE structures to store all the structured information found in it.
+
+## OCR Content:
+{ocr_text}
+
+## Requirements:
+
+### 1. Document Type Detection
+- First, identify the document type (e.g., 領収書, 請求書, 納品書, 見積書, 注文書, 発注書, etc.).
+- Design the table name and structure accordingly.
+
+### 2. Naming Conventions
+- **Table name**: Romanized Katakana in UPPERCASE alphabet (e.g., RYOUSHUUSHO for 領収書, SEIKYUUSHO for 請求書, NOUHINNSHO for 納品書).
+- **Physical column names**: Romanized Katakana in UPPERCASE alphabet with underscores (e.g., HAKKOOBI for 発行日, GOUKEI_KINGAKU for 合計金額, ATESAKI_MEI for 宛先名).
+- **Logical column names**: Japanese (Kanji) via comment (e.g., 発行日, 合計金額).
+- Use consistent Hepburn romanization rules (e.g., しょ→SHO, きゅう→KYUU, おう→OU).
+
+### 3. Schema Design Rules
+- Choose appropriate Oracle data types: VARCHAR2, NUMBER, DATE, CLOB, etc.
+- Make columns NULLABLE unless they are clearly always present.
+- Add appropriate length for VARCHAR2 based on the data observed.
+- {header_only_hint}
+
+### 4. Capture ALL information present in the document, such as:
+- Document metadata (document number, date, type)
+- Party information (sender/receiver name, address, phone, registration number)
+- Amount summary (subtotal, tax, total)
+- Tax breakdown by rate if present
+- Line item details if present (item name, quantity, unit price, amount, tax rate)
+- Any stamps, notes, remarks, or payment terms
+
+### 5. Output Format
+Output ONLY a valid JSON object matching this structure (No explanation or markdown code fences needed):
+{{
+  "document_type_ja": "請求書",
+  "document_type_en": "invoice",
+  "header_table_name": "SEIKYUUSHO",
+  "line_table_name": "SEIKYUUSHO_MEISAI",
+  "header_columns": [
+    {{
+      "column_name": "HAKKOOBI",
+      "comment": "発行日",
+      "data_type": "DATE",
+      "data_length": null,
+      "is_nullable": false
+    }},
+    {{
+       "column_name": "ATESAKI_MEI",
+       "comment": "宛先名",
+       "data_type": "VARCHAR2",
+       "data_length": 100,
+       "is_nullable": false
+    }}
+  ],
+  "line_columns": [
+    {{
+      "column_name": "SHOUHIN_MEI",
+      "comment": "商品名",
+      "data_type": "VARCHAR2",
+      "data_length": 200,
+      "is_nullable": false
+    }}
+  ]
+}}
+If no line table is needed, set "line_table_name" to "" and "line_columns" to [].
+"""
+
+        try:
+            import oci
+            
+            text_content = {"type": "TEXT", "text": prompt}
+
+            chat_request = oci.generative_ai_inference.models.GenericChatRequest(
+                api_format="GENERIC",
+                messages=[
+                    oci.generative_ai_inference.models.UserMessage(
+                        content=[text_content]
+                    )
+                ],
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
+                is_stream=False,
+            )
+
+            chat_detail = oci.generative_ai_inference.models.ChatDetails(
+                compartment_id=self._compartment_id,
+                serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
+                    model_id=self._llm_model_id
+                ),
+                chat_request=chat_request,
+            )
+
+            def generate_text() -> str:
+                response = self._retry_api_call("generate_sql_schema_from_text", client.chat, chat_detail)
+                return self._get_text_from_chat_response(response.data.chat_response)
+
+            parsed = self._parse_json_with_regeneration(
+                "generate_sql_schema_from_text",
+                generate_text,
+                GENAI_JSON_PARSE_RETRIES
+            )
+
+            if not isinstance(parsed, dict):
+                return {"success": False, "message": "AI応答形式が不正です"}
+
+            header_columns = parsed.get("header_columns")
+            line_columns = parsed.get("line_columns")
+
+            # Map the JSON schema output back to the format expected by the frontend.
+            def _to_bool(value: Any, default: bool = True) -> bool:
+                if value is None:
+                    return default
+                if isinstance(value, bool):
+                    return value
+                if isinstance(value, (int, float)):
+                    return bool(value)
+                if isinstance(value, str):
+                    raw = value.strip().lower()
+                    if raw in ("1", "true", "yes", "y", "on"):
+                        return True
+                    if raw in ("0", "false", "no", "n", "off"):
+                        return False
+                return default
+
+            def _to_int_or_none(value: Any) -> Optional[int]:
+                if value in (None, ""):
+                    return None
+                try:
+                    i = int(value)
+                    return i if i > 0 else None
+                except Exception:
+                    return None
+
+            def _normalize_table_name(name: Any) -> str:
+                raw = str(name or "").strip().upper()
+                cleaned = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in raw).strip("_")
+                if not cleaned:
+                    return ""
+                if not cleaned[0].isalpha():
+                    cleaned = f"T_{cleaned}"
+                return cleaned[:128]
+
+            def _map_columns(cols):
+                if not isinstance(cols, list):
+                    return []
+                mapped = []
+                for c in cols:
+                    data_type = str(c.get("data_type", "VARCHAR2")).upper()
+                    if data_type not in {"VARCHAR2", "NUMBER", "DATE", "TIMESTAMP", "CLOB"}:
+                        data_type = "VARCHAR2"
+                    max_length = _to_int_or_none(c.get("data_length")) if data_type == "VARCHAR2" else None
+
+                    mapped.append({
+                        "field_name_en": str(c.get("column_name", "")).strip(),
+                        "field_name": str(c.get("comment", "")).strip(),
+                        "data_type": data_type,
+                        "max_length": max_length,
+                        "is_required": not _to_bool(c.get("is_nullable"), default=True),
+                    })
+                return mapped
+
+            mapped_header_fields = _map_columns(header_columns)
+            mapped_line_fields = _map_columns(line_columns)
+            if analysis_mode == "header_only":
+                mapped_line_fields = []
+
+            line_table_name = _normalize_table_name(parsed.get("line_table_name", ""))
+            if analysis_mode == "header_only":
+                line_table_name = ""
+
+            result = {
+                "success": True,
+                "document_type_ja": str(parsed.get("document_type_ja", "")).strip(),
+                "document_type_en": str(parsed.get("document_type_en", "")).strip().lower(),
+                "header_table_name": _normalize_table_name(parsed.get("header_table_name", "")),
+                "line_table_name": line_table_name,
+                "header_fields": mapped_header_fields,
+                "line_fields": mapped_line_fields,
+            }
+            return result
+
+        except Exception as e:
+            logger.error("スキーマ生成エラー: %s", e, exc_info=True)
+            return {"success": False, "message": f"スキーマ生成失敗: {str(e)}"}
 
     def suggest_ddl(self, category: str, header_fields: List[Dict], line_fields: List[Dict]) -> Dict[str, Any]:
         """フィールド情報からテーブルDDLを提案する
@@ -987,8 +1255,8 @@ class AIService:
                         content=[text_content]
                     )
                 ],
-                max_tokens=4096,
-                temperature=0.1,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
                 is_stream=False,
             )
 
@@ -1089,8 +1357,8 @@ class AIService:
                         content=[text_content]
                     )
                 ],
-                max_tokens=2048,
-                temperature=0.1,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
                 is_stream=False,
             )
 

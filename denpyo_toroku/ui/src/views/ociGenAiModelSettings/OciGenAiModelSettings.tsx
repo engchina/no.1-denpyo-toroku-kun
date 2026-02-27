@@ -6,7 +6,8 @@ import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import { t } from '../../i18n';
 
-const DEFAULT_LLM_MODEL = 'google.gemini-2.5-pro';
+const DEFAULT_LLM_MODEL = 'xai.grok-code-fast-1';
+const DEFAULT_VLM_MODEL = 'google.gemini-2.5-flash';
 const DEFAULT_EMBEDDING_MODEL = 'cohere.embed-v4.0';
 const DEFAULT_ENDPOINT = 'https://inference.generativeai.us-chicago-1.oci.oraclecloud.com';
 
@@ -14,7 +15,10 @@ interface OciModelSettingsForm {
   compartment_id: string;
   service_endpoint: string;
   llm_model_id: string;
+  vlm_model_id: string;
   embedding_model_id: string;
+  llm_max_tokens: number;
+  llm_temperature: number;
 }
 
 interface OciSettingsSnapshot {
@@ -25,7 +29,7 @@ interface OciModelTestResult {
   success: boolean;
   message?: string;
   details?: {
-    test_type?: 'llm' | 'embedding';
+    test_type?: 'llm' | 'vlm' | 'embedding';
     input_text?: string;
     result_text?: string;
     embedding_dimension?: number;
@@ -37,7 +41,10 @@ const EMPTY_SETTINGS: OciModelSettingsForm = {
   compartment_id: '',
   service_endpoint: DEFAULT_ENDPOINT,
   llm_model_id: DEFAULT_LLM_MODEL,
-  embedding_model_id: DEFAULT_EMBEDDING_MODEL
+  vlm_model_id: DEFAULT_VLM_MODEL,
+  embedding_model_id: DEFAULT_EMBEDDING_MODEL,
+  llm_max_tokens: 65536,
+  llm_temperature: 0.0
 };
 
 export function OciGenAiModelSettings() {
@@ -46,8 +53,10 @@ export function OciGenAiModelSettings() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isLlmTesting, setIsLlmTesting] = useState<boolean>(false);
+  const [isVlmTesting, setIsVlmTesting] = useState<boolean>(false);
   const [isEmbeddingTesting, setIsEmbeddingTesting] = useState<boolean>(false);
   const [llmResultText, setLlmResultText] = useState<string>('');
+  const [vlmResultText, setVlmResultText] = useState<string>('');
   const [embeddingResultText, setEmbeddingResultText] = useState<string>('');
 
   const applySnapshot = useCallback((snapshot: OciSettingsSnapshot) => {
@@ -79,7 +88,13 @@ export function OciGenAiModelSettings() {
   const updateField = useCallback(
     (field: keyof OciModelSettingsForm) => (event: Event) => {
       const target = event.target as HTMLInputElement;
-      setSettings(prev => ({ ...prev, [field]: target.value }));
+      setSettings(prev => {
+        let val: string | number = target.value;
+        if (field === 'llm_max_tokens' || field === 'llm_temperature') {
+          val = Number(val);
+        }
+        return { ...prev, [field]: val };
+      });
     },
     []
   );
@@ -103,10 +118,13 @@ export function OciGenAiModelSettings() {
     }
   }, [dispatch, settings]);
 
-  const handleModelTest = useCallback(async (testType: 'llm' | 'embedding') => {
+  const handleModelTest = useCallback(async (testType: 'llm' | 'vlm' | 'embedding') => {
     const isLlm = testType === 'llm';
+    const isVlm = testType === 'vlm';
     if (isLlm) {
       setIsLlmTesting(true);
+    } else if (isVlm) {
+      setIsVlmTesting(true);
     } else {
       setIsEmbeddingTesting(true);
     }
@@ -120,6 +138,10 @@ export function OciGenAiModelSettings() {
         const input = result.details?.input_text || 'こんにちわ';
         const output = result.details?.result_text || '';
         setLlmResultText(`IN: ${input}\nOUT: ${output}`);
+      } else if (isVlm) {
+        const input = result.details?.input_text || t('settings.model.testResult.vlmInput');
+        const output = result.details?.result_text || '';
+        setVlmResultText(`IN: ${input}\nOUT: ${output}`);
       } else {
         const input = result.details?.input_text || 'こんにちわ';
         const dimension = result.details?.embedding_dimension ?? 0;
@@ -131,30 +153,42 @@ export function OciGenAiModelSettings() {
         message: result.message || (
           isLlm
             ? (result.success ? t('notify.settings.llmTestOk') : t('notify.settings.llmTestFailed'))
-            : (result.success ? t('notify.settings.embeddingTestOk') : t('notify.settings.embeddingTestFailed'))
+            : isVlm
+              ? (result.success ? t('notify.settings.vlmTestOk') : t('notify.settings.vlmTestFailed'))
+              : (result.success ? t('notify.settings.embeddingTestOk') : t('notify.settings.embeddingTestFailed'))
         ),
         autoClose: result.success
       }));
     } catch (err: any) {
       if (isLlm) {
         setLlmResultText('');
+      } else if (isVlm) {
+        setVlmResultText('');
       } else {
         setEmbeddingResultText('');
       }
       dispatch(addNotification({
         type: 'error',
-        message: err.message || (isLlm ? t('notify.settings.llmTestRequestFailed') : t('notify.settings.embeddingTestRequestFailed'))
+        message: err.message || (
+          isLlm
+            ? t('notify.settings.llmTestRequestFailed')
+            : isVlm
+              ? t('notify.settings.vlmTestRequestFailed')
+              : t('notify.settings.embeddingTestRequestFailed')
+        )
       }));
     } finally {
       if (isLlm) {
         setIsLlmTesting(false);
+      } else if (isVlm) {
+        setIsVlmTesting(false);
       } else {
         setIsEmbeddingTesting(false);
       }
     }
   }, [dispatch, settings]);
 
-  const isActionLocked = isLoading || isSaving || isLlmTesting || isEmbeddingTesting;
+  const isActionLocked = isLoading || isSaving || isLlmTesting || isVlmTesting || isEmbeddingTesting;
   const endpointDomain = useMemo(() => {
     try {
       return new URL(settings.service_endpoint || DEFAULT_ENDPOINT).host;
@@ -195,6 +229,10 @@ export function OciGenAiModelSettings() {
           <div class="applicationSettingsView__heroMetric">
             <div class="applicationSettingsView__heroMetricLabel">LLM</div>
             <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{settings.llm_model_id || DEFAULT_LLM_MODEL}</div>
+          </div>
+          <div class="applicationSettingsView__heroMetric">
+            <div class="applicationSettingsView__heroMetricLabel">VLM</div>
+            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{settings.vlm_model_id || DEFAULT_VLM_MODEL}</div>
           </div>
           <div class="applicationSettingsView__heroMetric">
             <div class="applicationSettingsView__heroMetricLabel">Embedding</div>
@@ -241,12 +279,44 @@ export function OciGenAiModelSettings() {
               />
             </label>
             <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.field.vlmModelId')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                value={settings.vlm_model_id}
+                onInput={updateField('vlm_model_id')}
+                placeholder={DEFAULT_VLM_MODEL}
+              />
+            </label>
+            <label class="applicationSettingsView__field">
               <span class="applicationSettingsView__fieldLabel">{t('settings.field.embeddingModelId')}</span>
               <input
                 class="ics-input applicationSettingsView__modelInput"
                 value={settings.embedding_model_id}
                 onInput={updateField('embedding_model_id')}
                 placeholder={DEFAULT_EMBEDDING_MODEL}
+              />
+            </label>
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.field.llmMaxTokens', '最大トークン数 (Max Tokens)')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                type="number"
+                min="4096"
+                max="98304"
+                value={settings.llm_max_tokens}
+                onInput={updateField('llm_max_tokens')}
+              />
+            </label>
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.field.llmTemperature', '温度 (Temperature)')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                type="number"
+                step="0.1"
+                min="0.0"
+                max="1.0"
+                value={settings.llm_temperature}
+                onInput={updateField('llm_temperature')}
               />
             </label>
           </div>
@@ -271,6 +341,13 @@ export function OciGenAiModelSettings() {
                 isDisabled={isActionLocked}
               />
               <Button
+                label={isVlmTesting ? t('settings.model.action.testingVlm') : t('settings.model.action.testVlm')}
+                variant="outlined"
+                size="sm"
+                onAction={() => { void handleModelTest('vlm'); }}
+                isDisabled={isActionLocked}
+              />
+              <Button
                 label={isEmbeddingTesting ? t('settings.model.action.testingEmbedding') : t('settings.model.action.testEmbedding')}
                 variant="outlined"
                 size="sm"
@@ -290,6 +367,19 @@ export function OciGenAiModelSettings() {
                 rows={4}
                 readOnly
                 value={llmResultText}
+                placeholder={t('settings.model.testResult.placeholder')}
+              />
+            </label>
+
+            <label class="applicationSettingsView__field applicationSettingsView__resultPanel">
+              <span class="applicationSettingsView__fieldLabel applicationSettingsView__resultTitle">
+                <Network size={14} /> {t('settings.model.testResult.vlm')}
+              </span>
+              <textarea
+                class="ics-input applicationSettingsView__resultTextArea"
+                rows={4}
+                readOnly
+                value={vlmResultText}
                 placeholder={t('settings.model.testResult.placeholder')}
               />
             </label>
