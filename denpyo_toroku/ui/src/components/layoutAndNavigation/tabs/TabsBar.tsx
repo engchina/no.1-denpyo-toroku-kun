@@ -2,32 +2,34 @@
  * タブバー（Oracle JET Redwood TabBar）による画面ナビゲーション
  * @oracle/oraclejet-preact の TabBar/TabBarItem を使用
  */
-import { h } from 'preact';
-import { useAppSelector, useAppDispatch } from '../../../redux/store';
-import { setCurrentView } from '../../../redux/slices/applicationSlice';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { APP_ROUTES } from '../../../constants/routes';
 import { TabBar, TabBarItem } from '@oracle/oraclejet-preact/UNSAFE_TabBar';
-import { LayoutDashboard, MessageSquare, GraduationCap, BarChart3, Info } from 'lucide-react';
+import { LayoutDashboard, Upload, FileText, Search, SlidersHorizontal } from 'lucide-react';
 
 const tabs = [
-  { id: 'dashboard', name: 'ダッシュボード', Icon: LayoutDashboard },
-  { id: 'predict', name: '予測', Icon: MessageSquare },
-  { id: 'train', name: '学習', Icon: GraduationCap },
-  { id: 'stats', name: '統計', Icon: BarChart3 },
-  { id: 'modelInfo', name: 'モデル情報', Icon: Info }
+  { id: APP_ROUTES.dashboard, name: 'ダッシュボード', Icon: LayoutDashboard },
+  { id: APP_ROUTES.upload, name: 'アップロード', Icon: Upload },
+  { id: APP_ROUTES.fileList, name: 'ファイル一覧', Icon: FileText },
+  { id: APP_ROUTES.search, name: '検索', Icon: Search },
+  { id: APP_ROUTES.settingsApplication, name: '設定', Icon: SlidersHorizontal }
 ];
 
 export function TabsBar() {
-  const dispatch = useAppDispatch();
-  const currentView = useAppSelector(state => state.application.currentView);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const selectedTab = location.pathname.startsWith('/settings/')
+    ? APP_ROUTES.settingsApplication
+    : location.pathname;
 
   const handleSelect = (detail: { value: string | number }) => {
-    dispatch(setCurrentView(String(detail.value)));
+    navigate(String(detail.value));
   };
 
   return (
     <div class="oj-sm-margin-4x-top oj-sm-margin-4x-bottom">
       <TabBar
-        selection={currentView}
+        selection={selectedTab}
         onSelect={handleSelect}
         layout="condense"
         edge="top"

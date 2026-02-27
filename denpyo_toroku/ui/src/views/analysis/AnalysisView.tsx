@@ -5,7 +5,8 @@
 import { useCallback } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import { clearAnalysisResult } from '../../redux/slices/denpyoSlice';
-import { setCurrentView } from '../../redux/slices/applicationSlice';
+import { useNavigate } from 'react-router-dom';
+import { APP_ROUTES } from '../../constants/routes';
 import { t } from '../../i18n';
 import type { TableColumnInfo, ExtractedField } from '../../types/denpyoTypes';
 import {
@@ -17,6 +18,7 @@ import {
   Database,
   CheckCircle2,
 } from 'lucide-react';
+import { StatusBadge } from '../../components/common/StatusBadge';
 
 /** DBカラム一覧に対し抽出フィールドをマッピングして表示するテーブル */
 function ColumnDataTable({
@@ -38,20 +40,20 @@ function ColumnDataTable({
   // テーブルスキーマがない場合は抽出フィールドをそのまま表示
   const rows = columns.length > 0
     ? columns.map(col => {
-        const matched = valueMap[col.column_name.toUpperCase()];
-        return {
-          column_name: col.column_name,
-          label: col.comment || matched?.field_name || col.column_name,
-          data_type: col.data_type,
-          value: matched?.value ?? '',
-        };
-      })
+      const matched = valueMap[col.column_name.toUpperCase()];
+      return {
+        column_name: col.column_name,
+        label: col.comment || matched?.field_name || col.column_name,
+        data_type: col.data_type,
+        value: matched?.value ?? '',
+      };
+    })
     : fields.map(f => ({
-        column_name: f.field_name_en || f.field_name,
-        label: f.field_name,
-        data_type: f.data_type,
-        value: f.value ?? '',
-      }));
+      column_name: f.field_name_en || f.field_name,
+      label: f.field_name,
+      data_type: f.data_type,
+      value: f.value ?? '',
+    }));
 
   return (
     <section class="ics-ops-grid ics-ops-grid--one">
@@ -79,7 +81,7 @@ function ColumnDataTable({
                       {row.column_name}
                     </td>
                     <td>
-                      <span class="ics-badge ics-badge-info">{row.data_type}</span>
+                      <StatusBadge variant="info">{row.data_type}</StatusBadge>
                     </td>
                     <td>
                       {row.value !== '' ? (
@@ -167,11 +169,12 @@ export function AnalysisView() {
   const dispatch = useAppDispatch();
   const analysisResult = useAppSelector(state => state.denpyo.analysisResult);
   const isAnalyzing = useAppSelector(state => state.denpyo.isAnalyzing);
+  const navigate = useNavigate();
 
   const handleBack = useCallback(() => {
     dispatch(clearAnalysisResult());
-    dispatch(setCurrentView('fileList'));
-  }, [dispatch]);
+    navigate(APP_ROUTES.fileList);
+  }, [dispatch, navigate]);
 
   // ローディング中
   if (isAnalyzing) {
@@ -314,7 +317,7 @@ export function AnalysisView() {
           <div class="ics-registration-actions">
             <button
               class="ics-ops-btn ics-ops-btn--primary"
-              onClick={() => dispatch(setCurrentView('registration'))}
+              onClick={() => navigate(APP_ROUTES.registration)}
             >
               <CheckCircle2 size={14} />
               <span>{t('analysis.goToRegister')}</span>

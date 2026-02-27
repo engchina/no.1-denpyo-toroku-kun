@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
 import { Upload, KeyRound, CheckCircle, XCircle } from 'lucide-react';
+import { StatusBadge } from '../../components/common/StatusBadge';
 import { apiGet, apiPost } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -239,10 +240,13 @@ export function ApplicationSettings() {
           </div>
 
           <div class="applicationSettingsView__heroMeta">
-            <span class={`applicationSettingsView__heroBadge ${getStatusClassName(status)}`}>
-              {isConfiguredStatus(status) ? <CheckCircle size={14} /> : <XCircle size={14} />}
+            <StatusBadge
+              class="applicationSettingsView__heroBadge"
+              variant={isConfiguredStatus(status) ? 'success' : 'unknown'}
+              icon={isConfiguredStatus(status) ? CheckCircle : XCircle}
+            >
               {statusLabel(status)}
-            </span>
+            </StatusBadge>
           </div>
         </div>
 

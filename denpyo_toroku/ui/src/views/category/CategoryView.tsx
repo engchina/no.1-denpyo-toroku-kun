@@ -62,7 +62,10 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  CheckCircle2,
+  MinusCircle,
 } from 'lucide-react';
+import { StatusBadge } from '../../components/common/StatusBadge';
 
 // ─── Utils ───────────────────────────────────────────────────────────────────
 
@@ -1656,628 +1659,629 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
 
       {mode === 'samples' && (
         <>
-      {/* ═══ Section A: SLIPS_CATEGORY ファイル一覧 ═══ */}
-      <section class="ics-ops-grid ics-ops-grid--one">
-        <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header ics-card-header--table-toolbar">
-            <div class="ics-unified-table-header">
-              <span class="oj-typography-heading-xs">{t('category.slipsFiles.title')}</span>
-              <div class="ics-unified-table-toolbar">
-                <div class="ics-unified-table-toolbar__group">
-                  <button
-                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
-                    onClick={handleBulkDeleteSlips}
-                    disabled={selectedFileIds.size === 0 || isBulkDeletingSlips || isSlipsCategoryLoading}
-                  >
-                    <Trash2 size={14} />
-                    <span>{t('fileList.bulkDelete')}</span>
-                  </button>
-                  <span class="ics-unified-table-toolbar__meta">
-                    {t('category.slipsFiles.selected', { count: selectedFileIds.size })}
-                  </span>
-                </div>
-                <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
-                  <button
-                    class="ics-ops-btn ics-ops-btn--ghost"
-                    onClick={loadSlipsFiles}
-                    disabled={isSlipsCategoryLoading}
-                  >
-                    <RefreshCw size={14} class={isSlipsCategoryLoading ? 'ics-spin' : ''} />
-                    <span>{t('category.refresh')}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="ics-card-body">
-            {slipsCategoryFiles.length > 0 ? (
-              <div class="ics-table-wrapper">
-                <table class="ics-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: '40px' }}>
-                      <input
-                        type="checkbox"
-                        checked={allSelectedOnPage}
-                        ref={(el) => {
-                          if (!el) return;
-                          el.indeterminate = selectedFileIds.size > 0 && !allSelectedOnPage;
-                        }}
-                        onChange={toggleSelectAll}
-                        disabled={selectableOnPageIds.length === 0}
-                        aria-label={t('category.slipsFiles.selectAll')}
-                        title={t('category.slipsFiles.selectAll')}
-                      />
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('file_name')}>
-                        {t('category.slipsFiles.colFileName')}
-                        {renderSlipsSortIcon('file_name')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('file_type')}>
-                        {t('category.slipsFiles.colType')}
-                        {renderSlipsSortIcon('file_type')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('file_size')}>
-                        {t('category.slipsFiles.colSize')}
-                        {renderSlipsSortIcon('file_size')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('uploaded_at')}>
-                        {t('category.slipsFiles.colUploadedAt')}
-                        {renderSlipsSortIcon('uploaded_at')}
-                      </button>
-                    </th>
-                    <th>{t('category.col.actions')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedSlipsCategoryFiles.map((file: DenpyoFile) => {
-                    const fileId = String(file.file_id);
-                    const selected = selectedFileIds.has(fileId);
-                    const disabledByMax = !selected && selectedFileIds.size >= 5;
-                    return (
-                      <tr
-                        key={fileId}
-                        class={selected ? 'ics-table__row--selected' : ''}
-                        onClick={(e: Event) => {
-                          const target = e.target as HTMLElement;
-                          if (target.closest('input[type="checkbox"]')) return;
-                          if (!disabledByMax) toggleFileSelect(fileId);
-                        }}
-                        style={{ cursor: disabledByMax ? 'not-allowed' : 'pointer', opacity: disabledByMax ? 0.5 : 1 }}
+          {/* ═══ Section A: SLIPS_CATEGORY ファイル一覧 ═══ */}
+          <section class="ics-ops-grid ics-ops-grid--one">
+            <div class="ics-card ics-ops-panel">
+              <div class="ics-card-header ics-card-header--table-toolbar">
+                <div class="ics-unified-table-header">
+                  <span class="oj-typography-heading-xs">{t('category.slipsFiles.title')}</span>
+                  <div class="ics-unified-table-toolbar">
+                    <div class="ics-unified-table-toolbar__group">
+                      <button
+                        class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
+                        onClick={handleBulkDeleteSlips}
+                        disabled={selectedFileIds.size === 0 || isBulkDeletingSlips || isSlipsCategoryLoading}
                       >
-                        <td class="ics-table__cell--center">
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={() => !disabledByMax && toggleFileSelect(fileId)}
-                            disabled={disabledByMax}
-                            aria-label={t('fileList.selectFile')}
-                          />
-                        </td>
-                        <td class="ics-fileListView__fileNameCell">
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <FileText size={14} />
-                            <span>{file.file_name}</span>
-                          </div>
-                        </td>
-                        <td>
-                          <code class="ics-code">{file.file_type || t('upload.kind.category')}</code>
-                        </td>
-                        <td>{formatFileSize(file.file_size)}</td>
-                        <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
-                        <td class="ics-fileListView__actions" onClick={(e: Event) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            class="ics-ops-btn ics-ops-btn--ghost"
-                            onClick={() => setPreviewTarget({ fileId, fileName: file.file_name })}
-                            title={t('fileList.previewFile')}
-                          >
-                            <Eye size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
-                            onClick={() => handleAnalyzeSingleFile(fileId)}
-                            disabled={isCategoryAnalyzing || !!categoryAnalysisResult}
-                            title={t('fileList.analyzeFile')}
-                          >
-                            {isCategoryAnalyzing
-                              ? <Loader2 size={14} class="ics-spin" />
-                              : <Sparkles size={14} />
-                            }
-                          </button>
-                          <button
-                            type="button"
-                            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                            onClick={() => handleDeleteSlipFile(fileId, file.file_name)}
-                            disabled={isBulkDeletingSlips || isSlipsCategoryLoading}
-                            title={t('fileList.deleteFile')}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                </table>
+                        <Trash2 size={14} />
+                        <span>{t('fileList.bulkDelete')}</span>
+                      </button>
+                      <span class="ics-unified-table-toolbar__meta">
+                        {t('category.slipsFiles.selected', { count: selectedFileIds.size })}
+                      </span>
+                    </div>
+                    <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                      <button
+                        class="ics-ops-btn ics-ops-btn--ghost"
+                        onClick={loadSlipsFiles}
+                        disabled={isSlipsCategoryLoading}
+                      >
+                        <RefreshCw size={14} class={isSlipsCategoryLoading ? 'ics-spin' : ''} />
+                        <span>{t('category.refresh')}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div class="ics-empty-text">
-                {isSlipsCategoryLoading
-                  ? t('common.loading')
-                  : t('category.slipsFiles.noData')}
+              <div class="ics-card-body">
+                {slipsCategoryFiles.length > 0 ? (
+                  <div class="ics-table-wrapper">
+                    <table class="ics-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40px' }}>
+                            <input
+                              type="checkbox"
+                              checked={allSelectedOnPage}
+                              ref={(el) => {
+                                if (!el) return;
+                                el.indeterminate = selectedFileIds.size > 0 && !allSelectedOnPage;
+                              }}
+                              onChange={toggleSelectAll}
+                              disabled={selectableOnPageIds.length === 0}
+                              aria-label={t('category.slipsFiles.selectAll')}
+                              title={t('category.slipsFiles.selectAll')}
+                            />
+                          </th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('file_name')}>
+                              {t('category.slipsFiles.colFileName')}
+                              {renderSlipsSortIcon('file_name')}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('file_type')}>
+                              {t('category.slipsFiles.colType')}
+                              {renderSlipsSortIcon('file_type')}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('file_size')}>
+                              {t('category.slipsFiles.colSize')}
+                              {renderSlipsSortIcon('file_size')}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('uploaded_at')}>
+                              {t('category.slipsFiles.colUploadedAt')}
+                              {renderSlipsSortIcon('uploaded_at')}
+                            </button>
+                          </th>
+                          <th>{t('category.col.actions')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedSlipsCategoryFiles.map((file: DenpyoFile) => {
+                          const fileId = String(file.file_id);
+                          const selected = selectedFileIds.has(fileId);
+                          const disabledByMax = !selected && selectedFileIds.size >= 5;
+                          return (
+                            <tr
+                              key={fileId}
+                              class={selected ? 'ics-table__row--selected' : ''}
+                              onClick={(e: Event) => {
+                                const target = e.target as HTMLElement;
+                                if (target.closest('input[type="checkbox"]')) return;
+                                if (!disabledByMax) toggleFileSelect(fileId);
+                              }}
+                              style={{ cursor: disabledByMax ? 'not-allowed' : 'pointer', opacity: disabledByMax ? 0.5 : 1 }}
+                            >
+                              <td class="ics-table__cell--center">
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  onChange={() => !disabledByMax && toggleFileSelect(fileId)}
+                                  disabled={disabledByMax}
+                                  aria-label={t('fileList.selectFile')}
+                                />
+                              </td>
+                              <td class="ics-fileListView__fileNameCell">
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <FileText size={14} />
+                                  <span>{file.file_name}</span>
+                                </div>
+                              </td>
+                              <td>
+                                <code class="ics-code">{file.file_type || t('upload.kind.category')}</code>
+                              </td>
+                              <td>{formatFileSize(file.file_size)}</td>
+                              <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
+                              <td class="ics-fileListView__actions" onClick={(e: Event) => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  class="ics-ops-btn ics-ops-btn--ghost"
+                                  onClick={() => setPreviewTarget({ fileId, fileName: file.file_name })}
+                                  title={t('fileList.previewFile')}
+                                >
+                                  <Eye size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
+                                  onClick={() => handleAnalyzeSingleFile(fileId)}
+                                  disabled={isCategoryAnalyzing || !!categoryAnalysisResult}
+                                  title={t('fileList.analyzeFile')}
+                                >
+                                  {isCategoryAnalyzing
+                                    ? <Loader2 size={14} class="ics-spin" />
+                                    : <Sparkles size={14} />
+                                  }
+                                </button>
+                                <button
+                                  type="button"
+                                  class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                                  onClick={() => handleDeleteSlipFile(fileId, file.file_name)}
+                                  disabled={isBulkDeletingSlips || isSlipsCategoryLoading}
+                                  title={t('fileList.deleteFile')}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div class="ics-empty-text">
+                    {isSlipsCategoryLoading
+                      ? t('common.loading')
+                      : t('category.slipsFiles.noData')}
+                  </div>
+                )}
+                <Pagination
+                  currentPage={slipsCategoryPage}
+                  totalPages={slipsCategoryTotalPages}
+                  totalItems={slipsCategoryTotal}
+                  pageSize={slipsCategoryPageSize}
+                  pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
+                  onPageSizeChange={handleSlipsPageSizeChange}
+                  goToPageInput={slipsGoToPageInput}
+                  onPageChange={handleSlipsPageChange}
+                  onGoToPageInputChange={setSlipsGoToPageInput}
+                  onGoToPage={handleSlipsGoToPage}
+                  rangeStart={slipsRangeStart}
+                  rangeEnd={slipsRangeEnd}
+                  showGoToPage={false}
+                  isFirstPage={slipsCategoryPage <= 1 || isSlipsCategoryLoading}
+                  isLastPage={slipsCategoryPage >= slipsCategoryTotalPages || isSlipsCategoryLoading}
+                  position="bottom"
+                  show
+                  summaryPlacement="controls"
+                />
               </div>
-            )}
-            <Pagination
-              currentPage={slipsCategoryPage}
-              totalPages={slipsCategoryTotalPages}
-              totalItems={slipsCategoryTotal}
-              pageSize={slipsCategoryPageSize}
-              pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
-              onPageSizeChange={handleSlipsPageSizeChange}
-              goToPageInput={slipsGoToPageInput}
-              onPageChange={handleSlipsPageChange}
-              onGoToPageInputChange={setSlipsGoToPageInput}
-              onGoToPage={handleSlipsGoToPage}
-              rangeStart={slipsRangeStart}
-              rangeEnd={slipsRangeEnd}
-              showGoToPage={false}
-              isFirstPage={slipsCategoryPage <= 1 || isSlipsCategoryLoading}
-              isLastPage={slipsCategoryPage >= slipsCategoryTotalPages || isSlipsCategoryLoading}
-              position="bottom"
-              show
-              summaryPlacement="controls"
-            />
-          </div>
-        </div>
-      </section>
-      {previewTarget && (
-        <div class="ics-modal-overlay" onClick={() => setPreviewTarget(null)}>
-          <div class="ics-modal ics-modal--xl ics-fileListView__previewModal" onClick={(e: Event) => e.stopPropagation()}>
-            <div class="ics-modal__header">
-              <h3>{previewTarget.fileName || t('fileList.previewFile')}</h3>
-              <button
-                type="button"
-                class="ics-ops-btn ics-ops-btn--ghost"
-                onClick={() => setPreviewTarget(null)}
-                title={t('common.close')}
-              >
-                <X size={16} />
-              </button>
             </div>
-            <div class="ics-modal__body ics-fileListView__previewBody">
-              <iframe
-                src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=category`}
-                title={previewTarget.fileName || t('fileList.previewFile')}
-                class="ics-fileListView__previewFrame"
+          </section>
+          {previewTarget && (
+            <div class="ics-modal-overlay" onClick={() => setPreviewTarget(null)}>
+              <div class="ics-modal ics-modal--xl ics-fileListView__previewModal" onClick={(e: Event) => e.stopPropagation()}>
+                <div class="ics-modal__header">
+                  <h3>{previewTarget.fileName || t('fileList.previewFile')}</h3>
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={() => setPreviewTarget(null)}
+                    title={t('common.close')}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <div class="ics-modal__body ics-fileListView__previewBody">
+                  <iframe
+                    src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=category`}
+                    title={previewTarget.fileName || t('fileList.previewFile')}
+                    class="ics-fileListView__previewFrame"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ═══ Section: AI分析結果 テーブルデザイナー（インラインパネル） ═══ */}
+          {categoryAnalysisResult && (
+            <div ref={analysisPanelRef}>
+              <TableDesignerPanel
+                analysisResult={categoryAnalysisResult}
+                onConfirm={handleCreateCategory}
+                onClose={handleDesignerClose}
+                isCreating={isCategoryCreating}
               />
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ Section: AI分析結果 テーブルデザイナー（インラインパネル） ═══ */}
-      {categoryAnalysisResult && (
-        <div ref={analysisPanelRef}>
-          <TableDesignerPanel
-            analysisResult={categoryAnalysisResult}
-            onConfirm={handleCreateCategory}
-            onClose={handleDesignerClose}
-            isCreating={isCategoryCreating}
-          />
-        </div>
-      )}
-      </>
+          )}
+        </>
       )}
 
       {/* ═══ Section B: 伝票分類一覧 ═══ */}
       {mode === 'management' && (
-      <>
-      <section class="ics-ops-grid ics-ops-grid--one">
-        <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header ics-card-header--table-toolbar">
-            <div class="ics-unified-table-header">
-              <span class="oj-typography-heading-xs">{t('category.tableTitle')}</span>
-              <div class="ics-unified-table-toolbar">
-                <div class="ics-unified-table-toolbar__group">
-                  <button
-                    type="button"
-                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
-                    onClick={handleBulkDeleteCategories}
-                    disabled={categorySelection.selectedCount === 0 || isBulkDeletingCategories || isCategoriesLoading}
-                  >
-                    <Trash2 size={14} />
-                    <span>{t('fileList.bulkDelete')}</span>
-                  </button>
-                  <span class="ics-unified-table-toolbar__meta">
-                    {t('category.slipsFiles.selected', { count: categorySelection.selectedCount })}
-                  </span>
-                </div>
-                <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
-                  <button
-                    class="ics-ops-btn ics-ops-btn--ghost"
-                    onClick={loadCategories}
-                    disabled={isCategoriesLoading}
-                  >
-                    <RefreshCw size={14} class={isCategoriesLoading ? 'ics-spin' : ''} />
-                    <span>{t('category.refresh')}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="ics-card-body">
-            {categories.length > 0 ? (
-              <div class="ics-table-wrapper">
-                <table class="ics-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: '40px' }}>
-                      <input
-                        type="checkbox"
-                        checked={categorySelection.isAllSelected(categoryPagination.paginatedItems)}
-                        ref={(el) => {
-                          if (!el) return;
-                          const pageItems = categoryPagination.paginatedItems;
-                          const allSelected = categorySelection.isAllSelected(pageItems);
-                          const hasSelectedOnPage = pageItems.some(cat => categorySelection.isSelected(String(cat.id)));
-                          el.indeterminate = !allSelected && hasSelectedOnPage;
-                        }}
-                        onChange={() => {
-                          if (categorySelection.isAllSelected(categoryPagination.paginatedItems)) {
-                            categorySelection.deselectAll();
-                          } else {
-                            categorySelection.selectAll(categoryPagination.paginatedItems);
-                          }
-                        }}
-                        aria-label={t('common.selectAll')}
-                      />
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('category_name')}>
-                        {t('category.col.name')}
-                        {renderCategorySortIcon('category_name')}
+        <>
+          <section class="ics-ops-grid ics-ops-grid--one">
+            <div class="ics-card ics-ops-panel">
+              <div class="ics-card-header ics-card-header--table-toolbar">
+                <div class="ics-unified-table-header">
+                  <span class="oj-typography-heading-xs">{t('category.tableTitle')}</span>
+                  <div class="ics-unified-table-toolbar">
+                    <div class="ics-unified-table-toolbar__group">
+                      <button
+                        type="button"
+                        class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
+                        onClick={handleBulkDeleteCategories}
+                        disabled={categorySelection.selectedCount === 0 || isBulkDeletingCategories || isCategoriesLoading}
+                      >
+                        <Trash2 size={14} />
+                        <span>{t('fileList.bulkDelete')}</span>
                       </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('category_name_en')}>
-                        {t('category.col.nameEn')}
-                        {renderCategorySortIcon('category_name_en')}
+                      <span class="ics-unified-table-toolbar__meta">
+                        {t('category.slipsFiles.selected', { count: categorySelection.selectedCount })}
+                      </span>
+                    </div>
+                    <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                      <button
+                        class="ics-ops-btn ics-ops-btn--ghost"
+                        onClick={loadCategories}
+                        disabled={isCategoriesLoading}
+                      >
+                        <RefreshCw size={14} class={isCategoriesLoading ? 'ics-spin' : ''} />
+                        <span>{t('category.refresh')}</span>
                       </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('header_table_name')}>
-                        {t('category.col.headerTable')}
-                        {renderCategorySortIcon('header_table_name')}
-                      </button>
-                    </th>
-                    <th>{t('category.col.lineTable')}</th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('registration_count')}>
-                        {t('category.col.registrations')}
-                        {renderCategorySortIcon('registration_count')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('is_active')}>
-                        {t('category.col.status')}
-                        {renderCategorySortIcon('is_active')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('created_at')}>
-                        {t('category.col.createdAt')}
-                        {renderCategorySortIcon('created_at')}
-                      </button>
-                    </th>
-                    <th>{t('category.col.actions')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {categoryPagination.paginatedItems.map(cat => (
-                    <tr
-                      key={cat.id}
-                      role="button"
-                      tabIndex={0}
-                      class={`${cat.is_active ? '' : 'ics-table__row--inactive'} ${selectedCategoryId === cat.id ? 'ics-table-row--selected' : ''} ${categorySelection.isSelected(String(cat.id)) ? 'ics-table__row--selected' : ''}`}
-                      onClick={() => handleCategoryRowSelect(cat.id)}
-                      onKeyDown={(e) => handleCategoryRowKeyDown(e, cat.id)}
-                    >
-                      <td class="ics-table__cell--center">
-                        <input
-                          type="checkbox"
-                          checked={categorySelection.isSelected(String(cat.id))}
-                          onChange={() => categorySelection.toggle(String(cat.id))}
-                          onClick={(e: Event) => e.stopPropagation()}
-                          disabled={cat.registration_count > 0}
-                          aria-label={t('common.selectAll')}
-                        />
-                      </td>
-                      <td class="ics-table__cell--name">{cat.category_name}</td>
-                      <td class="oj-text-color-secondary">{cat.category_name_en || '--'}</td>
-                      <td>
-                        <code class="ics-code">{cat.header_table_name}</code>
-                      </td>
-                      <td>
-                        {cat.line_table_name ? (
-                          <code class="ics-code">{cat.line_table_name}</code>
-                        ) : (
-                          '--'
-                        )}
-                      </td>
-                      <td>{cat.registration_count}</td>
-                      <td>
-                        <span
-                          class={`ics-badge ${cat.is_active ? 'ics-badge-success' : 'ics-badge-error'}`}
-                        >
-                          {cat.is_active
-                            ? t('category.status.active')
-                            : t('category.status.inactive')}
-                        </span>
-                      </td>
-                      <td class="oj-text-color-secondary">{formatDateTime(cat.created_at)}</td>
-                      <td class="ics-fileListView__actions" onClick={(e: Event) => e.stopPropagation()}>
-                        <button
-                          type="button"
-                          class="ics-ops-btn ics-ops-btn--ghost"
-                          onClick={() => handleToggle(cat)}
-                          title={
-                            cat.is_active
-                              ? t('category.action.deactivate')
-                              : t('category.action.activate')
-                          }
-                        >
-                          {cat.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                        </button>
-                        <button
-                          type="button"
-                          class="ics-ops-btn ics-ops-btn--ghost"
-                          onClick={() => setEditTarget(cat)}
-                          title={t('category.action.edit')}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                          onClick={() => handleDelete(cat)}
-                          disabled={cat.registration_count > 0}
-                          title={
-                            cat.registration_count > 0
-                              ? t('category.cannotDelete')
-                              : t('category.action.delete')
-                          }
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                </table>
-              </div>
-            ) : (
-              <div class="ics-empty-text">
-                {isCategoriesLoading ? t('common.loading') : t('category.noData')}
-              </div>
-            )}
-            <Pagination
-              currentPage={categoryPagination.currentPage}
-              totalPages={categoryPagination.totalPages}
-              totalItems={categoryPagination.totalItems}
-              pageSize={categoryPageSize}
-              pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
-              onPageSizeChange={setCategoryPageSize}
-              goToPageInput={categoryPagination.goToPageInput}
-              onPageChange={categoryPagination.goToPage}
-              onGoToPageInputChange={categoryPagination.setGoToPageInput}
-              onGoToPage={categoryPagination.handleGoToPage}
-              rangeStart={categoryRangeStart}
-              rangeEnd={categoryRangeEnd}
-              showGoToPage={false}
-              isFirstPage={categoryPagination.isFirstPage}
-              isLastPage={categoryPagination.isLastPage}
-              position="bottom"
-              show
-              summaryPlacement="controls"
-            />
-          </div>
-        </div>
-      </section>
-      <section class="ics-ops-grid ics-ops-grid--one">
-        <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header ics-card-header--table-toolbar">
-            <div class="ics-unified-table-header">
-              <div class="ics-browser-title-wrap">
-                <span class="oj-typography-heading-xs">{t('category.preview.title')}</span>
-                {selectedCategory && <span class="ics-browser-table-chip">{selectedCategory.category_name}</span>}
-                {previewTableName && <span class="ics-browser-table-chip">{previewTableName}</span>}
-              </div>
-              <div class="ics-unified-table-toolbar">
-                <div class="ics-unified-table-toolbar__group">
-                  <button
-                    type="button"
-                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
-                    onClick={handleBulkDeletePreviewRows}
-                    disabled={previewRowSelection.selectedCount === 0 || isBulkDeletingPreviewRows || isTableBrowsing}
-                  >
-                    {isBulkDeletingPreviewRows ? <Loader2 size={14} class="ics-spin" /> : <Trash2 size={14} />}
-                    <span>{t('fileList.bulkDelete')}</span>
-                  </button>
-                  <span class="ics-unified-table-toolbar__meta">
-                    {t('search.browser.selectedRows', { count: previewRowSelection.selectedCount })}
-                  </span>
-                </div>
-                <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
-                  <button
-                    type="button"
-                    class="ics-ops-btn ics-ops-btn--ghost"
-                    onClick={requestCategoryPreview}
-                    disabled={!selectedCategory || !previewTableName || isTableBrowsing}
-                  >
-                    {isTableBrowsing ? <Loader2 size={14} class="ics-spin" /> : <RefreshCw size={14} />}
-                    <span>{t('search.browser.refresh')}</span>
-                  </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
-          <div class="ics-card-body">
-            {selectedCategory && hasLineTable && (
-              <div class="ics-tabs" style={{ marginBottom: '12px' }}>
-                <button
-                  type="button"
-                  class={`ics-tab ${previewTab === 'header' ? 'ics-tab--active' : ''}`}
-                  onClick={() => setPreviewTab('header')}
-                >
-                  <FileText size={14} />
-                  {t('search.browser.header')}
-                </button>
-                <button
-                  type="button"
-                  class={`ics-tab ${previewTab === 'line' ? 'ics-tab--active' : ''}`}
-                  onClick={() => setPreviewTab('line')}
-                >
-                  <Table2 size={14} />
-                  {t('search.browser.line')}
-                </button>
-              </div>
-            )}
-
-            {!selectedCategory && (
-              <div class="ics-empty-text">{t('category.preview.noSelection')}</div>
-            )}
-
-            {selectedCategory && isTableBrowsing && (
-              <div class="ics-loading oj-sm-margin-4x-top">
-                <Loader2 size={24} class="ics-spin" />
-                <span>{t('common.loading')}</span>
-              </div>
-            )}
-
-            {selectedCategory && !isTableBrowsing && isPreviewResultMatched && tableBrowseResult && (
-              <div class="ics-browser-results">
-                {tableBrowseResult.rows && tableBrowseResult.rows.length > 0 ? (
-                  <>
-                    <div class="ics-table-wrapper">
-                      <table class="ics-table">
-                        <thead>
-                          <tr>
-                            <th style={{ width: '40px' }}>
+              <div class="ics-card-body">
+                {categories.length > 0 ? (
+                  <div class="ics-table-wrapper">
+                    <table class="ics-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40px' }}>
+                            <input
+                              type="checkbox"
+                              checked={categorySelection.isAllSelected(categoryPagination.paginatedItems)}
+                              ref={(el) => {
+                                if (!el) return;
+                                const pageItems = categoryPagination.paginatedItems;
+                                const allSelected = categorySelection.isAllSelected(pageItems);
+                                const hasSelectedOnPage = pageItems.some(cat => categorySelection.isSelected(String(cat.id)));
+                                el.indeterminate = !allSelected && hasSelectedOnPage;
+                              }}
+                              onChange={() => {
+                                if (categorySelection.isAllSelected(categoryPagination.paginatedItems)) {
+                                  categorySelection.deselectAll();
+                                } else {
+                                  categorySelection.selectAll(categoryPagination.paginatedItems);
+                                }
+                              }}
+                              aria-label={t('common.selectAll')}
+                            />
+                          </th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('category_name')}>
+                              {t('category.col.name')}
+                              {renderCategorySortIcon('category_name')}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('category_name_en')}>
+                              {t('category.col.nameEn')}
+                              {renderCategorySortIcon('category_name_en')}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('header_table_name')}>
+                              {t('category.col.headerTable')}
+                              {renderCategorySortIcon('header_table_name')}
+                            </button>
+                          </th>
+                          <th>{t('category.col.lineTable')}</th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('registration_count')}>
+                              {t('category.col.registrations')}
+                              {renderCategorySortIcon('registration_count')}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('is_active')}>
+                              {t('category.col.status')}
+                              {renderCategorySortIcon('is_active')}
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('created_at')}>
+                              {t('category.col.createdAt')}
+                              {renderCategorySortIcon('created_at')}
+                            </button>
+                          </th>
+                          <th>{t('category.col.actions')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {categoryPagination.paginatedItems.map(cat => (
+                          <tr
+                            key={cat.id}
+                            role="button"
+                            tabIndex={0}
+                            class={`${cat.is_active ? '' : 'ics-table__row--inactive'} ${selectedCategoryId === cat.id ? 'ics-table-row--selected' : ''} ${categorySelection.isSelected(String(cat.id)) ? 'ics-table__row--selected' : ''}`}
+                            onClick={() => handleCategoryRowSelect(cat.id)}
+                            onKeyDown={(e) => handleCategoryRowKeyDown(e, cat.id)}
+                          >
+                            <td class="ics-table__cell--center">
                               <input
                                 type="checkbox"
-                                checked={previewRowSelection.isAllSelected(sortedPreviewRows)}
-                                ref={(el) => {
-                                  if (!el) return;
-                                  const selectableRowIds = sortedPreviewRows
-                                    .map((row) => row.ROW_ID_META)
-                                    .filter((raw) => raw !== null && raw !== undefined && raw !== '')
-                                    .map((raw) => String(raw));
-                                  const allSelected = previewRowSelection.isAllSelected(sortedPreviewRows);
-                                  const hasSelected = selectableRowIds.some((id) => previewRowSelection.isSelected(id));
-                                  el.indeterminate = !allSelected && hasSelected;
-                                }}
-                                onChange={() => {
-                                  if (previewRowSelection.isAllSelected(sortedPreviewRows)) {
-                                    previewRowSelection.deselectAll();
-                                  } else {
-                                    previewRowSelection.selectAll(sortedPreviewRows);
-                                  }
-                                }}
+                                checked={categorySelection.isSelected(String(cat.id))}
+                                onChange={() => categorySelection.toggle(String(cat.id))}
+                                onClick={(e: Event) => e.stopPropagation()}
+                                disabled={cat.registration_count > 0}
                                 aria-label={t('common.selectAll')}
                               />
-                            </th>
-                            {tableBrowseResult.columns.map((column) => (
-                              <th key={column}>
-                                <button type="button" class="ics-fileListView__sortBtn" onClick={() => handlePreviewSort(column)}>
-                                  {column}
-                                  {renderPreviewSortIcon(column)}
-                                </button>
-                              </th>
-                            ))}
-                            <th>{t('search.browser.col.actions')}</th>
+                            </td>
+                            <td class="ics-table__cell--name">{cat.category_name}</td>
+                            <td class="oj-text-color-secondary">{cat.category_name_en || '--'}</td>
+                            <td>
+                              <code class="ics-code">{cat.header_table_name}</code>
+                            </td>
+                            <td>
+                              {cat.line_table_name ? (
+                                <code class="ics-code">{cat.line_table_name}</code>
+                              ) : (
+                                '--'
+                              )}
+                            </td>
+                            <td>{cat.registration_count}</td>
+                            <td class="ics-table__cell--center">
+                              <StatusBadge
+                                variant={cat.is_active ? 'success' : 'inactive'}
+                                icon={cat.is_active ? CheckCircle2 : MinusCircle}
+                              >
+                                {cat.is_active
+                                  ? t('category.status.active')
+                                  : t('category.status.inactive')}
+                              </StatusBadge>
+                            </td>
+                            <td class="oj-text-color-secondary">{formatDateTime(cat.created_at)}</td>
+                            <td class="ics-fileListView__actions" onClick={(e: Event) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                class="ics-ops-btn ics-ops-btn--ghost"
+                                onClick={() => handleToggle(cat)}
+                                title={
+                                  cat.is_active
+                                    ? t('category.action.deactivate')
+                                    : t('category.action.activate')
+                                }
+                              >
+                                {cat.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                              </button>
+                              <button
+                                type="button"
+                                class="ics-ops-btn ics-ops-btn--ghost"
+                                onClick={() => setEditTarget(cat)}
+                                title={t('category.action.edit')}
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                                onClick={() => handleDelete(cat)}
+                                disabled={cat.registration_count > 0}
+                                title={
+                                  cat.registration_count > 0
+                                    ? t('category.cannotDelete')
+                                    : t('category.action.delete')
+                                }
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {sortedPreviewRows.map((row, rowIndex) => {
-                            const rowId = getPreviewRowId(row);
-                            return (
-                            <tr key={rowIndex}>
-                              <td class="ics-table__cell--center">
-                                <input
-                                  type="checkbox"
-                                  checked={rowId ? previewRowSelection.isSelected(rowId) : false}
-                                  onChange={() => {
-                                    if (rowId) previewRowSelection.toggle(rowId);
-                                  }}
-                                  disabled={row.ROW_ID_META === null || row.ROW_ID_META === undefined || row.ROW_ID_META === ''}
-                                />
-                              </td>
-                              {tableBrowseResult.columns.map((column) => (
-                                <td key={column}>{formatCellValue(row[column])}</td>
-                              ))}
-                              <td class="ics-fileListView__actions">
-                                <button
-                                  type="button"
-                                  class="ics-ops-btn ics-ops-btn--ghost"
-                                  onClick={() => handleDeletePreviewRow(row)}
-                                  disabled={!rowId || deletingPreviewRowId === rowId || isBulkDeletingPreviewRows || isTableBrowsing}
-                                  title={t('common.delete')}
-                                >
-                                  {deletingPreviewRowId === rowId
-                                    ? <Loader2 size={14} class="ics-spin" />
-                                    : <Trash2 size={14} />
-                                  }
-                                </button>
-                              </td>
-                            </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    <Pagination
-                      currentPage={previewPage}
-                      totalPages={previewTotalPages}
-                      totalItems={previewTotal}
-                      pageSize={previewPageSize}
-                      pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
-                      onPageSizeChange={handlePreviewPageSizeChange}
-                      goToPageInput={previewGoToPageInput}
-                      onPageChange={handlePreviewPageChange}
-                      onGoToPageInputChange={setPreviewGoToPageInput}
-                      onGoToPage={handlePreviewGoToPage}
-                      rangeStart={previewRangeStart}
-                      rangeEnd={previewRangeEnd}
-                      showGoToPage={false}
-                      isFirstPage={previewPage <= 1 || isTableBrowsing}
-                      isLastPage={previewPage >= previewTotalPages || isTableBrowsing}
-                      position="bottom"
-                      show
-                      summaryPlacement="controls"
-                    />
-                  </>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 ) : (
-                  <div class="ics-empty-text">{t('search.browser.noData')}</div>
+                  <div class="ics-empty-text">
+                    {isCategoriesLoading ? t('common.loading') : t('category.noData')}
+                  </div>
+                )}
+                <Pagination
+                  currentPage={categoryPagination.currentPage}
+                  totalPages={categoryPagination.totalPages}
+                  totalItems={categoryPagination.totalItems}
+                  pageSize={categoryPageSize}
+                  pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
+                  onPageSizeChange={setCategoryPageSize}
+                  goToPageInput={categoryPagination.goToPageInput}
+                  onPageChange={categoryPagination.goToPage}
+                  onGoToPageInputChange={categoryPagination.setGoToPageInput}
+                  onGoToPage={categoryPagination.handleGoToPage}
+                  rangeStart={categoryRangeStart}
+                  rangeEnd={categoryRangeEnd}
+                  showGoToPage={false}
+                  isFirstPage={categoryPagination.isFirstPage}
+                  isLastPage={categoryPagination.isLastPage}
+                  position="bottom"
+                  show
+                  summaryPlacement="controls"
+                />
+              </div>
+            </div>
+          </section>
+          <section class="ics-ops-grid ics-ops-grid--one">
+            <div class="ics-card ics-ops-panel">
+              <div class="ics-card-header ics-card-header--table-toolbar">
+                <div class="ics-unified-table-header">
+                  <div class="ics-browser-title-wrap">
+                    <span class="oj-typography-heading-xs">{t('category.preview.title')}</span>
+                    {selectedCategory && <span class="ics-browser-table-chip">{selectedCategory.category_name}</span>}
+                    {previewTableName && <span class="ics-browser-table-chip">{previewTableName}</span>}
+                  </div>
+                  <div class="ics-unified-table-toolbar">
+                    <div class="ics-unified-table-toolbar__group">
+                      <button
+                        type="button"
+                        class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-ops-btn--bulk-danger"
+                        onClick={handleBulkDeletePreviewRows}
+                        disabled={previewRowSelection.selectedCount === 0 || isBulkDeletingPreviewRows || isTableBrowsing}
+                      >
+                        {isBulkDeletingPreviewRows ? <Loader2 size={14} class="ics-spin" /> : <Trash2 size={14} />}
+                        <span>{t('fileList.bulkDelete')}</span>
+                      </button>
+                      <span class="ics-unified-table-toolbar__meta">
+                        {t('search.browser.selectedRows', { count: previewRowSelection.selectedCount })}
+                      </span>
+                    </div>
+                    <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                      <button
+                        type="button"
+                        class="ics-ops-btn ics-ops-btn--ghost"
+                        onClick={requestCategoryPreview}
+                        disabled={!selectedCategory || !previewTableName || isTableBrowsing}
+                      >
+                        {isTableBrowsing ? <Loader2 size={14} class="ics-spin" /> : <RefreshCw size={14} />}
+                        <span>{t('search.browser.refresh')}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="ics-card-body">
+                {selectedCategory && hasLineTable && (
+                  <div class="ics-tabs" style={{ marginBottom: '12px' }}>
+                    <button
+                      type="button"
+                      class={`ics-tab ${previewTab === 'header' ? 'ics-tab--active' : ''}`}
+                      onClick={() => setPreviewTab('header')}
+                    >
+                      <FileText size={14} />
+                      {t('search.browser.header')}
+                    </button>
+                    <button
+                      type="button"
+                      class={`ics-tab ${previewTab === 'line' ? 'ics-tab--active' : ''}`}
+                      onClick={() => setPreviewTab('line')}
+                    >
+                      <Table2 size={14} />
+                      {t('search.browser.line')}
+                    </button>
+                  </div>
+                )}
+
+                {!selectedCategory && (
+                  <div class="ics-empty-text">{t('category.preview.noSelection')}</div>
+                )}
+
+                {selectedCategory && isTableBrowsing && (
+                  <div class="ics-loading oj-sm-margin-4x-top">
+                    <Loader2 size={24} class="ics-spin" />
+                    <span>{t('common.loading')}</span>
+                  </div>
+                )}
+
+                {selectedCategory && !isTableBrowsing && isPreviewResultMatched && tableBrowseResult && (
+                  <div class="ics-browser-results">
+                    {tableBrowseResult.rows && tableBrowseResult.rows.length > 0 ? (
+                      <>
+                        <div class="ics-table-wrapper">
+                          <table class="ics-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '40px' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={previewRowSelection.isAllSelected(sortedPreviewRows)}
+                                    ref={(el) => {
+                                      if (!el) return;
+                                      const selectableRowIds = sortedPreviewRows
+                                        .map((row) => row.ROW_ID_META)
+                                        .filter((raw) => raw !== null && raw !== undefined && raw !== '')
+                                        .map((raw) => String(raw));
+                                      const allSelected = previewRowSelection.isAllSelected(sortedPreviewRows);
+                                      const hasSelected = selectableRowIds.some((id) => previewRowSelection.isSelected(id));
+                                      el.indeterminate = !allSelected && hasSelected;
+                                    }}
+                                    onChange={() => {
+                                      if (previewRowSelection.isAllSelected(sortedPreviewRows)) {
+                                        previewRowSelection.deselectAll();
+                                      } else {
+                                        previewRowSelection.selectAll(sortedPreviewRows);
+                                      }
+                                    }}
+                                    aria-label={t('common.selectAll')}
+                                  />
+                                </th>
+                                {tableBrowseResult.columns.map((column) => (
+                                  <th key={column}>
+                                    <button type="button" class="ics-fileListView__sortBtn" onClick={() => handlePreviewSort(column)}>
+                                      {column}
+                                      {renderPreviewSortIcon(column)}
+                                    </button>
+                                  </th>
+                                ))}
+                                <th>{t('search.browser.col.actions')}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sortedPreviewRows.map((row, rowIndex) => {
+                                const rowId = getPreviewRowId(row);
+                                return (
+                                  <tr key={rowIndex}>
+                                    <td class="ics-table__cell--center">
+                                      <input
+                                        type="checkbox"
+                                        checked={rowId ? previewRowSelection.isSelected(rowId) : false}
+                                        onChange={() => {
+                                          if (rowId) previewRowSelection.toggle(rowId);
+                                        }}
+                                        disabled={row.ROW_ID_META === null || row.ROW_ID_META === undefined || row.ROW_ID_META === ''}
+                                      />
+                                    </td>
+                                    {tableBrowseResult.columns.map((column) => (
+                                      <td key={column}>{formatCellValue(row[column])}</td>
+                                    ))}
+                                    <td class="ics-fileListView__actions">
+                                      <button
+                                        type="button"
+                                        class="ics-ops-btn ics-ops-btn--ghost"
+                                        onClick={() => handleDeletePreviewRow(row)}
+                                        disabled={!rowId || deletingPreviewRowId === rowId || isBulkDeletingPreviewRows || isTableBrowsing}
+                                        title={t('common.delete')}
+                                      >
+                                        {deletingPreviewRowId === rowId
+                                          ? <Loader2 size={14} class="ics-spin" />
+                                          : <Trash2 size={14} />
+                                        }
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        <Pagination
+                          currentPage={previewPage}
+                          totalPages={previewTotalPages}
+                          totalItems={previewTotal}
+                          pageSize={previewPageSize}
+                          pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
+                          onPageSizeChange={handlePreviewPageSizeChange}
+                          goToPageInput={previewGoToPageInput}
+                          onPageChange={handlePreviewPageChange}
+                          onGoToPageInputChange={setPreviewGoToPageInput}
+                          onGoToPage={handlePreviewGoToPage}
+                          rangeStart={previewRangeStart}
+                          rangeEnd={previewRangeEnd}
+                          showGoToPage={false}
+                          isFirstPage={previewPage <= 1 || isTableBrowsing}
+                          isLastPage={previewPage >= previewTotalPages || isTableBrowsing}
+                          position="bottom"
+                          show
+                          summaryPlacement="controls"
+                        />
+                      </>
+                    ) : (
+                      <div class="ics-empty-text">{t('search.browser.noData')}</div>
+                    )}
+                  </div>
+                )}
+
+                {selectedCategory && !isTableBrowsing && !isPreviewResultMatched && (
+                  <div class="ics-empty-text">{t('common.loading')}</div>
                 )}
               </div>
-            )}
-
-            {selectedCategory && !isTableBrowsing && !isPreviewResultMatched && (
-              <div class="ics-empty-text">{t('common.loading')}</div>
-            )}
-          </div>
-        </div>
-      </section>
-      </>
+            </div>
+          </section>
+        </>
       )}
 
       {/* ─── Modals ─── */}

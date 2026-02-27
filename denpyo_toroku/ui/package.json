@@ -11,15 +11,16 @@
         "lucide-react": "0.460.0",
         "preact": "10.25.0",
         "react-redux": "9.2.0",
+        "react-router-dom": "^7.13.1",
         "xlsx": "0.18.5"
     },
     "devDependencies": {
         "@oracle/ojet-cli": "18.0.0",
         "@prefresh/babel-plugin": "0.5.1",
         "@prefresh/webpack": "4.0.2",
+        "@types/node": "18.16.3",
         "@typescript-eslint/eslint-plugin": "8.44.0",
         "@typescript-eslint/parser": "8.44.0",
-        "@types/node": "18.16.3",
         "clean-webpack-plugin": "4.0.0",
         "compression-webpack-plugin": "11.1.0",
         "copy-webpack-plugin": "13.0.0",

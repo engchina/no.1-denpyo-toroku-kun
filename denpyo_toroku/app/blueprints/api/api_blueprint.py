@@ -1200,7 +1200,7 @@ def test_oci_model_connection():
                 ],
                 max_tokens=model_settings.get("llm_max_tokens", AppConfig.LLM_MAX_TOKENS),
                 temperature=model_settings.get("llm_temperature", AppConfig.LLM_TEMPERATURE),
-                is_stream=True,
+                is_stream=False,
             )
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=model_settings["compartment_id"],
@@ -1246,7 +1246,7 @@ def test_oci_model_connection():
                 ],
                 max_tokens=model_settings.get("llm_max_tokens", AppConfig.LLM_MAX_TOKENS),
                 temperature=model_settings.get("llm_temperature", AppConfig.LLM_TEMPERATURE),
-                is_stream=True,
+                is_stream=False,
             )
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
                 compartment_id=model_settings["compartment_id"],

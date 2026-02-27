@@ -3,8 +3,9 @@
  */
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
-import { setCurrentView } from '../../redux/slices/applicationSlice';
+import { useNavigate } from 'react-router-dom';
 import { fetchHealth, fetchDashboardStats } from '../../redux/slices/denpyoSlice';
+import { FEATURE_ROUTES, type FeatureRouteKey } from '../../constants/routes';
 import { t } from '../../i18n';
 import {
   Activity,
@@ -20,7 +21,9 @@ import {
   Server,
   Tags,
   Upload,
+  type LucideIcon,
 } from 'lucide-react';
+import { StatusBadge } from '../../components/common/StatusBadge';
 
 interface DashboardActivityItem {
   type?: string;
@@ -32,12 +35,12 @@ interface DashboardActivityItem {
 }
 
 interface FeatureCard {
-  id: 'upload' | 'fileList' | 'categorySamples' | 'categoryManagement' | 'search';
+  id: FeatureRouteKey;
   titleKey: Parameters<typeof t>[0];
   descriptionKey: Parameters<typeof t>[0];
   metricKey: Parameters<typeof t>[0];
   metricValue: (stats: any) => number;
-  Icon: any;
+  Icon: LucideIcon;
 }
 
 const featureCards: FeatureCard[] = [
@@ -97,6 +100,7 @@ export function Dashboard() {
   const dashboardStats = useAppSelector(state => state.denpyo.dashboardStats);
   const isHealthLoading = useAppSelector(state => state.denpyo.isHealthLoading);
   const isDashboardLoading = useAppSelector(state => state.denpyo.isDashboardLoading);
+  const navigate = useNavigate();
 
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
 
@@ -125,7 +129,7 @@ export function Dashboard() {
   const StatusIcon = health?.status === 'healthy' ? CheckCircle : Activity;
 
   const goToView = (viewId: FeatureCard['id']) => {
-    dispatch(setCurrentView(viewId));
+    navigate(FEATURE_ROUTES[viewId]);
   };
 
   const getActivityLabel = (item: DashboardActivityItem) => {
@@ -171,10 +175,12 @@ export function Dashboard() {
         <article class="ics-ops-kpiCard">
           <div class="ics-ops-kpiCard__label"><Server size={14} />{t('dashboard.card.serviceStatus')}</div>
           <div class="ics-ops-kpiCard__value">{statusLabel}</div>
-          <div class={`ics-status-badge ${health?.status === 'healthy' ? 'ics-status-healthy' : 'ics-status-unknown'}`}>
-            <StatusIcon size={16} />
-            <span>{health?.message || 'v' + (health?.version || '--')}</span>
-          </div>
+          <StatusBadge
+            variant={health?.status === 'healthy' ? 'success' : 'unknown'}
+            icon={StatusIcon}
+          >
+            {health?.message || 'v' + (health?.version || '--')}
+          </StatusBadge>
         </article>
 
         <article class="ics-ops-kpiCard">
@@ -263,7 +269,7 @@ export function Dashboard() {
                 {activities.slice(0, 6).map((item, idx) => (
                   <div key={`${item.created_at || item.timestamp || 'activity'}-${idx}`} class="ics-dashboard-activityItem">
                     <div class="ics-dashboard-activityItem__head">
-                      <span class="ics-badge ics-badge-info">{getActivityLabel(item)}</span>
+                      <StatusBadge variant="info">{getActivityLabel(item)}</StatusBadge>
                       <span>{getActivityAt(item)}</span>
                     </div>
                     <div class="ics-dashboard-activityItem__body">{getActivityMessage(item)}</div>

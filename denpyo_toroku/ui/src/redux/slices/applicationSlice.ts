@@ -7,7 +7,6 @@ import { ApplicationGlobalType } from '../../types/appTypes';
 const initialState: ApplicationGlobalType = {
   isLoading: false,
   isAuthenticated: false,
-  currentView: 'dashboard',
   isDrawerOpen: false,
   isSidebarCollapsed: false,
   userName: 'hello@oracle.com',
@@ -23,9 +22,6 @@ const applicationSlice = createSlice({
     },
     setAuthenticated(state, action: PayloadAction<boolean>) {
       state.isAuthenticated = action.payload;
-    },
-    setCurrentView(state, action: PayloadAction<string>) {
-      state.currentView = action.payload;
     },
     toggleDrawer(state) {
       state.isDrawerOpen = !state.isDrawerOpen;
@@ -48,7 +44,6 @@ const applicationSlice = createSlice({
 export const {
   setLoading,
   setAuthenticated,
-  setCurrentView,
   toggleDrawer,
   setDrawerOpen,
   toggleSidebar,

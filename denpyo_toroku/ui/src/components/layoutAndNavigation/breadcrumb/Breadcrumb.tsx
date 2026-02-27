@@ -4,10 +4,8 @@
  * 区切りは Oracle JET の慣例に合わせて「/」を使用
  * 表示: ホーム / [現在ページ]
  */
-import { h } from 'preact';
-import { useCallback } from 'preact/hooks';
-import { useAppSelector, useAppDispatch } from '../../../redux/store';
-import { setCurrentView } from '../../../redux/slices/applicationSlice';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { APP_ROUTES } from '../../../constants/routes';
 
 interface NavItem {
   path: string;
@@ -19,17 +17,13 @@ interface BreadcrumbProps {
 }
 
 export function Breadcrumb({ navItems }: BreadcrumbProps) {
-  const dispatch = useAppDispatch();
-  const currentView = useAppSelector(state => state.application.currentView);
-
-  const handleNavigate = useCallback((path: string) => {
-    dispatch(setCurrentView(path));
-  }, [dispatch]);
+  const location = useLocation();
+  const navigate = useNavigate();
 
   // Find the current nav item label
-  const currentItem = navItems.find(item => item.path === currentView);
+  const currentItem = navItems.find(item => item.path === location.pathname);
   const currentLabel = currentItem ? currentItem.label : 'ダッシュボード';
-  const isHome = currentView === 'dashboard';
+  const isHome = location.pathname === APP_ROUTES.dashboard;
 
   return (
     <div class="oj-breadcrumb-container" role="navigation" aria-label="パンくずリスト">
@@ -42,9 +36,12 @@ export function Breadcrumb({ navItems }: BreadcrumbProps) {
         ) : (
           <span class="oj-breadcrumb-item">
             <a
-              href="javascript:void(0)"
+              href={APP_ROUTES.dashboard}
               class="oj-breadcrumb-item-link"
-              onClick={() => handleNavigate('dashboard')}
+              onClick={(e) => {
+                e.preventDefault();
+                navigate(APP_ROUTES.dashboard);
+              }}
             >
               ホーム
             </a>

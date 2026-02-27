@@ -5,7 +5,6 @@
 export interface ApplicationGlobalType {
   isLoading: boolean;
   isAuthenticated: boolean;
-  currentView: string;
   isDrawerOpen: boolean;
   isSidebarCollapsed: boolean;
   userName: string;

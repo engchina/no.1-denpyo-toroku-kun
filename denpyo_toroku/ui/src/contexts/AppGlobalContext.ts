@@ -7,7 +7,6 @@ import { ApplicationGlobalType } from '../types/appTypes';
 export const AppGlobalContext = createContext<ApplicationGlobalType>({
   isLoading: false,
   isAuthenticated: false,
-  currentView: 'dashboard',
   isDrawerOpen: false,
   isSidebarCollapsed: false,
   userName: 'john.hancock@oracle.com',

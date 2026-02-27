@@ -2,11 +2,11 @@
  * RegistrationView - DB登録確認画面 (SCR-004)
  * INSERTデータ確認・登録
  */
-import { h } from 'preact';
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import { registerFile, clearRegistrationResult, clearAnalysisResult } from '../../redux/slices/denpyoSlice';
-import { setCurrentView } from '../../redux/slices/applicationSlice';
+import { useNavigate } from 'react-router-dom';
+import { APP_ROUTES } from '../../constants/routes';
 import { t } from '../../i18n';
 import type { ExtractedField, RegistrationRequest } from '../../types/denpyoTypes';
 import {
@@ -26,6 +26,7 @@ export function RegistrationView() {
   const isRegistering = useAppSelector(state => state.denpyo.isRegistering);
   const registrationResult = useAppSelector(state => state.denpyo.registrationResult);
   const error = useAppSelector(state => state.denpyo.error);
+  const navigate = useNavigate();
 
   const [headerTableName, setHeaderTableName] = useState('');
   const [lineTableName, setLineTableName] = useState('');
@@ -69,14 +70,14 @@ export function RegistrationView() {
 
   const handleBack = useCallback(() => {
     dispatch(clearRegistrationResult());
-    dispatch(setCurrentView('analysis'));
-  }, [dispatch]);
+    navigate(APP_ROUTES.analysis);
+  }, [dispatch, navigate]);
 
   const handleBackToList = useCallback(() => {
     dispatch(clearRegistrationResult());
     dispatch(clearAnalysisResult());
-    dispatch(setCurrentView('fileList'));
-  }, [dispatch]);
+    navigate(APP_ROUTES.fileList);
+  }, [dispatch, navigate]);
 
   const updateHeaderFieldValue = (index: number, value: string) => {
     setHeaderFields(prev => prev.map((f, idx) => (idx === index ? { ...f, value } : f)));

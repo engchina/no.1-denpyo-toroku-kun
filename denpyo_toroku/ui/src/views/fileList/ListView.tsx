@@ -15,7 +15,8 @@ import {
   setFileListStatusFilter
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
-import { setCurrentView } from '../../redux/slices/applicationSlice';
+import { useNavigate } from 'react-router-dom';
+import { APP_ROUTES } from '../../constants/routes';
 import Pagination from '../../components/Pagination';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
@@ -34,8 +35,12 @@ import {
   ArrowUp,
   ArrowDown,
   FolderSearch,
-  X
+  X,
+  UploadCloud,
+  Database as DatabaseIcon,
+  XCircle
 } from 'lucide-react';
+import { StatusBadge } from '../../components/common/StatusBadge';
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '--';
@@ -69,13 +74,20 @@ type SortDirection = 'asc' | 'desc';
 const DEFAULT_FILE_LIST_SORT_KEY: SortKey = 'uploaded_at';
 const DEFAULT_FILE_LIST_SORT_DIRECTION: SortDirection = 'desc';
 
-function StatusBadge({ status }: { status: FileStatus }) {
-  const classMap: Record<FileStatus, string> = {
-    UPLOADED: 'ics-badge-info',
-    ANALYZING: 'ics-badge-warning',
-    ANALYZED: 'ics-badge-success',
-    REGISTERED: 'ics-badge-primary',
-    ERROR: 'ics-badge-error'
+function FileStatusBadge({ status }: { status: FileStatus }) {
+  const variantMap: Record<FileStatus, 'info' | 'warning' | 'success' | 'primary' | 'error'> = {
+    UPLOADED: 'info',
+    ANALYZING: 'warning',
+    ANALYZED: 'success',
+    REGISTERED: 'primary',
+    ERROR: 'error'
+  };
+  const iconMap: Record<FileStatus, any> = {
+    UPLOADED: UploadCloud,
+    ANALYZING: Loader2,
+    ANALYZED: CheckCircle2,
+    REGISTERED: DatabaseIcon,
+    ERROR: XCircle
   };
   const keyMap: Record<FileStatus, Parameters<typeof t>[0]> = {
     UPLOADED: 'fileList.status.uploaded',
@@ -84,10 +96,11 @@ function StatusBadge({ status }: { status: FileStatus }) {
     REGISTERED: 'fileList.status.registered',
     ERROR: 'fileList.status.error'
   };
+  const IconComponent = iconMap[status] || UploadCloud;
   return (
-    <span class={`ics-badge ${classMap[status] || 'ics-badge-info'}`}>
+    <StatusBadge variant={variantMap[status] || 'info'} icon={status === 'ANALYZING' ? () => <IconComponent size={14} class="ics-spin" /> : IconComponent}>
       {t(keyMap[status] || 'fileList.status.uploaded')}
-    </span>
+    </StatusBadge>
   );
 }
 
@@ -102,6 +115,7 @@ export function ListView() {
   const isAnalyzing = useAppSelector(state => state.denpyo.isAnalyzing);
   const analyzingFileId = useAppSelector(state => state.denpyo.analyzingFileId);
   const categories = useAppSelector(state => state.denpyo.categories);
+  const navigate = useNavigate();
   const isCategoriesLoading = useAppSelector(state => state.denpyo.isCategoriesLoading);
   const [goToPageInput, setGoToPageInput] = useState('');
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
@@ -242,7 +256,7 @@ export function ListView() {
         categoryId: selectedCategoryId
       })).unwrap();
       closeAnalyzeModal();
-      dispatch(setCurrentView('analysis'));
+      navigate(APP_ROUTES.analysis);
       dispatch(addNotification({
         type: 'success',
         message: t('fileList.notify.analyzeOk'),
@@ -486,102 +500,102 @@ export function ListView() {
             {files.length > 0 ? (
               <div class="ics-fileListView__tableWrap">
                 <table class="ics-table ics-fileListView__table">
-                <thead>
-                  <tr>
-                    <th>
-                      <input
-                        type="checkbox"
-                        checked={isAllSelectedOnPage}
-                        ref={(el) => {
-                          if (!el) return;
-                          el.indeterminate = selectedFileIds.length > 0 && !isAllSelectedOnPage;
-                        }}
-                        onChange={handleSelectAllOnPage}
-                        disabled={isDeleting || isLoading || selectableIds.length === 0}
-                        aria-label={t('fileList.selectAll')}
-                      />
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('file_name')}>
-                        {t('fileList.col.name')}
-                        {renderSortIcon('file_name')}
-                      </button>
-                    </th>
-                    <th>{t('fileList.col.type')}</th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('file_size')}>
-                        {t('fileList.col.size')}
-                        {renderSortIcon('file_size')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('status')}>
-                        {t('fileList.col.status')}
-                        {renderSortIcon('status')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('uploaded_at')}>
-                        {t('fileList.col.uploadedAt')}
-                        {renderSortIcon('uploaded_at')}
-                      </button>
-                    </th>
-                    <th>{t('fileList.col.actions')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedFiles.map(file => (
-                    <tr key={file.file_id} class={selectedFileIds.includes(String(file.file_id)) ? 'ics-fileListView__row--selected' : ''}>
-                      <td>
+                  <thead>
+                    <tr>
+                      <th>
                         <input
                           type="checkbox"
-                          checked={selectedFileIds.includes(String(file.file_id))}
-                          onChange={() => toggleFileSelection(String(file.file_id))}
-                          disabled={file.status === 'REGISTERED' || isDeleting}
-                          aria-label={t('fileList.selectFile')}
+                          checked={isAllSelectedOnPage}
+                          ref={(el) => {
+                            if (!el) return;
+                            el.indeterminate = selectedFileIds.length > 0 && !isAllSelectedOnPage;
+                          }}
+                          onChange={handleSelectAllOnPage}
+                          disabled={isDeleting || isLoading || selectableIds.length === 0}
+                          aria-label={t('fileList.selectAll')}
                         />
-                      </td>
-                      <td class="ics-table__cell--name ics-fileListView__fileNameCell">{file.file_name}</td>
-                      <td>{t('upload.kind.raw')}</td>
-                      <td>{formatFileSize(file.file_size)}</td>
-                      <td><StatusBadge status={file.status} /></td>
-                      <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
-                      <td class="ics-fileListView__actions">
-                        <button
-                          type="button"
-                          class="ics-ops-btn ics-ops-btn--ghost"
-                          onClick={() => handlePreview(String(file.file_id), file.file_name)}
-                          title={t('fileList.previewFile')}
-                        >
-                          <Eye size={14} />
+                      </th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('file_name')}>
+                          {t('fileList.col.name')}
+                          {renderSortIcon('file_name')}
                         </button>
-                        {(file.status === 'UPLOADED' || file.status === 'ERROR') && (
+                      </th>
+                      <th>{t('fileList.col.type')}</th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('file_size')}>
+                          {t('fileList.col.size')}
+                          {renderSortIcon('file_size')}
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('status')}>
+                          {t('fileList.col.status')}
+                          {renderSortIcon('status')}
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSort('uploaded_at')}>
+                          {t('fileList.col.uploadedAt')}
+                          {renderSortIcon('uploaded_at')}
+                        </button>
+                      </th>
+                      <th>{t('fileList.col.actions')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedFiles.map(file => (
+                      <tr key={file.file_id} class={selectedFileIds.includes(String(file.file_id)) ? 'ics-fileListView__row--selected' : ''}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedFileIds.includes(String(file.file_id))}
+                            onChange={() => toggleFileSelection(String(file.file_id))}
+                            disabled={file.status === 'REGISTERED' || isDeleting}
+                            aria-label={t('fileList.selectFile')}
+                          />
+                        </td>
+                        <td class="ics-table__cell--name ics-fileListView__fileNameCell">{file.file_name}</td>
+                        <td>{t('upload.kind.raw')}</td>
+                        <td>{formatFileSize(file.file_size)}</td>
+                        <td><FileStatusBadge status={file.status} /></td>
+                        <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
+                        <td class="ics-fileListView__actions">
                           <button
                             type="button"
-                            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
-                            onClick={() => handleAnalyze(String(file.file_id), file.file_name)}
-                            disabled={isAnalyzing}
-                            title={t('fileList.analyzeFile')}
+                            class="ics-ops-btn ics-ops-btn--ghost"
+                            onClick={() => handlePreview(String(file.file_id), file.file_name)}
+                            title={t('fileList.previewFile')}
                           >
-                            {isAnalyzing && String(analyzingFileId) === String(file.file_id)
-                              ? <Loader2 size={14} class="ics-spin" />
-                              : <Sparkles size={14} />
-                            }
+                            <Eye size={14} />
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                          onClick={() => handleDelete(String(file.file_id), file.file_name)}
-                          disabled={isDeleting || file.status === 'REGISTERED'}
-                          title={file.status === 'REGISTERED' ? t('fileList.cannotDeleteRegistered') : t('fileList.deleteFile')}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
+                          {(file.status === 'UPLOADED' || file.status === 'ERROR') && (
+                            <button
+                              type="button"
+                              class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
+                              onClick={() => handleAnalyze(String(file.file_id), file.file_name)}
+                              disabled={isAnalyzing}
+                              title={t('fileList.analyzeFile')}
+                            >
+                              {isAnalyzing && String(analyzingFileId) === String(file.file_id)
+                                ? <Loader2 size={14} class="ics-spin" />
+                                : <Sparkles size={14} />
+                              }
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                            onClick={() => handleDelete(String(file.file_id), file.file_name)}
+                            disabled={isDeleting || file.status === 'REGISTERED'}
+                            title={file.status === 'REGISTERED' ? t('fileList.cannotDeleteRegistered') : t('fileList.deleteFile')}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
             ) : (

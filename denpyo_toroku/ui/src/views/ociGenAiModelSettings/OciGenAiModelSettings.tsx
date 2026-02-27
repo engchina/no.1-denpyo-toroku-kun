@@ -297,7 +297,7 @@ export function OciGenAiModelSettings() {
               />
             </label>
             <label class="applicationSettingsView__field">
-              <span class="applicationSettingsView__fieldLabel">{t('settings.field.llmMaxTokens', '最大トークン数 (Max Tokens)')}</span>
+              <span class="applicationSettingsView__fieldLabel">{t('settings.field.llmMaxTokens')}</span>
               <input
                 class="ics-input applicationSettingsView__modelInput"
                 type="number"
@@ -308,7 +308,7 @@ export function OciGenAiModelSettings() {
               />
             </label>
             <label class="applicationSettingsView__field">
-              <span class="applicationSettingsView__fieldLabel">{t('settings.field.llmTemperature', '温度 (Temperature)')}</span>
+              <span class="applicationSettingsView__fieldLabel">{t('settings.field.llmTemperature')}</span>
               <input
                 class="ics-input applicationSettingsView__modelInput"
                 type="number"

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
 import { Upload, CheckCircle, XCircle, Database, Power, PowerOff, RefreshCw } from 'lucide-react';
+import { StatusBadge, type StatusBadgeVariant } from '../../components/common/StatusBadge';
 import { apiGet, apiPost, apiPostWithTimeout } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -144,7 +145,7 @@ export function DatabaseSettings() {
     try {
       const snapshot = await apiGet<DatabaseSettingsSnapshot>('/api/v1/database/settings');
       applyDbSnapshot(snapshot);
-      
+
       // 常にADB情報を取得（region表示のため）
       setAdbIsLoading(true);
       try {
@@ -342,7 +343,7 @@ export function DatabaseSettings() {
     try {
       const result = await apiPost<AdbInfo>('/api/v1/database/adb/start', {});
       setAdbInfo(prev => ({ ...prev, ...result, region: result.region || prev?.region || null }));
-      
+
       const operationResult: AdbOperationResult = {
         status: result.status,
         message: result.message,
@@ -373,7 +374,7 @@ export function DatabaseSettings() {
     try {
       const result = await apiPost<AdbInfo>('/api/v1/database/adb/stop', {});
       setAdbInfo(prev => ({ ...prev, ...result, region: result.region || prev?.region || null }));
-      
+
       const operationResult: AdbOperationResult = {
         status: result.status,
         message: result.message,
@@ -405,24 +406,24 @@ export function DatabaseSettings() {
     return key ? t(key) : state;
   }, []);
 
-  const getAdbStatusClassName = useCallback((state: string | null | undefined): string => {
-    if (!state) return 'ics-status-unknown';
+  const getAdbStatusVariant = useCallback((state: string | null | undefined): StatusBadgeVariant => {
+    if (!state) return 'unknown';
     switch (state) {
       case 'AVAILABLE':
-        return 'ics-status-healthy';
+        return 'success';
       case 'STARTING':
       case 'STOPPING':
       case 'UPDATING':
       case 'RESTORING':
-        return 'ics-status-warning';
+        return 'warning';
       case 'STOPPED':
       case 'UNAVAILABLE':
-        return 'ics-status-inactive';
+        return 'inactive';
       case 'FAILED':
       case 'INACCESSIBLE':
-        return 'ics-status-error';
+        return 'error';
       default:
-        return 'ics-status-unknown';
+        return 'unknown';
     }
   }, []);
 
@@ -436,7 +437,13 @@ export function DatabaseSettings() {
             </div>
           </div>
           <div class="applicationSettingsView__heroMeta">
-            <span class={`applicationSettingsView__heroBadge ${getStatusClassName(dbStatus)}`}>{statusLabel(dbStatus)}</span>
+            <StatusBadge
+              class="applicationSettingsView__heroBadge"
+              variant={isConfiguredStatus(dbStatus) ? 'success' : 'unknown'}
+              icon={isConfiguredStatus(dbStatus) ? CheckCircle : XCircle}
+            >
+              {statusLabel(dbStatus)}
+            </StatusBadge>
           </div>
         </div>
       </section>
@@ -456,26 +463,26 @@ export function DatabaseSettings() {
               onAction={() => { void loadAdbInfo(); }}
               isDisabled={adbIsLoading || adbIsStarting || adbIsStopping}
             />
-            <span class={`applicationSettingsView__heroBadge ${getAdbStatusClassName(adbInfo?.lifecycle_state)}`}>
+            <StatusBadge variant={getAdbStatusVariant(adbInfo?.lifecycle_state)}>
               {adbInfo?.lifecycle_state ? getAdbLifecycleLabel(adbInfo.lifecycle_state) : t('settings.adb.statusUnknown')}
-            </span>
+            </StatusBadge>
           </div>
         </div>
         <div class="ics-card-body">
           <p class="applicationSettingsView__description">{t('settings.adb.description')}</p>
-          
+
           <div class="applicationSettingsView__grid">
             <label class="applicationSettingsView__field">
               <span class="applicationSettingsView__fieldLabel">{t('settings.adb.field.region')}</span>
               <input class="ics-input" value={dbSettings.region || ''} readonly />
             </label>
-            
+
             <label class="applicationSettingsView__field applicationSettingsView__field--wide">
               <span class="applicationSettingsView__fieldLabel">{t('settings.adb.field.ocid')}*</span>
               <input class="ics-input" value={dbSettings.adb_ocid || ''} readonly placeholder="ocid1.autonomousdatabase.oc1.." />
             </label>
           </div>
-          
+
           <div class="applicationSettingsView__actions" style="margin-bottom: 20px;">
             <Button
               label={adbIsStarting ? t('settings.adb.action.starting') : t('settings.adb.action.start')}

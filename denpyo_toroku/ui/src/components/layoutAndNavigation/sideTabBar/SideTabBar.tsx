@@ -4,7 +4,9 @@
  * 参照 MHTML に合わせて Lucide React のアイコンを使用。
  */
 import { useAppSelector, useAppDispatch } from '../../../redux/store';
-import { setCurrentView, toggleSidebar } from '../../../redux/slices/applicationSlice';
+import { toggleSidebar } from '../../../redux/slices/applicationSlice';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { APP_ROUTES } from '../../../constants/routes';
 import { t } from '../../../i18n';
 import {
   SlidersHorizontal,
@@ -17,7 +19,8 @@ import {
   Upload,
   FileText,
   Tags,
-  Search
+  Search,
+  type LucideIcon
 } from 'lucide-react';
 
 type TKey = Parameters<typeof t>[0];
@@ -25,7 +28,8 @@ type TKey = Parameters<typeof t>[0];
 interface NavItemDef {
   id: string;
   nameKey: TKey;
-  Icon: any;
+  Icon: LucideIcon;
+  path: string;
 }
 
 interface NavGroup {
@@ -37,21 +41,21 @@ const navGroups: NavGroup[] = [
   {
     labelKey: 'nav.section.denpyo',
     items: [
-      { id: 'dashboard', nameKey: 'nav.dashboard', Icon: LayoutDashboard },
-      { id: 'upload', nameKey: 'nav.upload', Icon: Upload },
-      { id: 'fileList', nameKey: 'nav.fileList', Icon: FileText },
-      { id: 'categorySamples', nameKey: 'nav.categorySamples', Icon: FileText },
-      { id: 'categoryManagement', nameKey: 'nav.categoryManagement', Icon: Tags },
-      { id: 'search', nameKey: 'nav.dataSearch', Icon: Search }
+      { id: 'dashboard', nameKey: 'nav.dashboard', Icon: LayoutDashboard, path: APP_ROUTES.dashboard },
+      { id: 'upload', nameKey: 'nav.upload', Icon: Upload, path: APP_ROUTES.upload },
+      { id: 'fileList', nameKey: 'nav.fileList', Icon: FileText, path: APP_ROUTES.fileList },
+      { id: 'categorySamples', nameKey: 'nav.categorySamples', Icon: FileText, path: APP_ROUTES.categorySamples },
+      { id: 'categoryManagement', nameKey: 'nav.categoryManagement', Icon: Tags, path: APP_ROUTES.categoryManagement },
+      { id: 'search', nameKey: 'nav.dataSearch', Icon: Search, path: APP_ROUTES.search }
     ]
   },
   {
     labelKey: 'nav.section.settings',
     items: [
-      { id: 'applicationSettings', nameKey: 'nav.applicationSettings', Icon: SlidersHorizontal },
-      { id: 'ociGenAiModelSettings', nameKey: 'nav.ociGenAiModelSettings', Icon: Cpu },
-      { id: 'ociObjectStorageSettings', nameKey: 'nav.ociObjectStorageSettings', Icon: HardDrive },
-      { id: 'databaseSettings', nameKey: 'nav.databaseSettings', Icon: Database }
+      { id: 'applicationSettings', nameKey: 'nav.applicationSettings', Icon: SlidersHorizontal, path: APP_ROUTES.settingsApplication },
+      { id: 'ociGenAiModelSettings', nameKey: 'nav.ociGenAiModelSettings', Icon: Cpu, path: APP_ROUTES.settingsOciGenAi },
+      { id: 'ociObjectStorageSettings', nameKey: 'nav.ociObjectStorageSettings', Icon: HardDrive, path: APP_ROUTES.settingsObjectStorage },
+      { id: 'databaseSettings', nameKey: 'nav.databaseSettings', Icon: Database, path: APP_ROUTES.settingsDatabase }
     ]
   }
 ];
@@ -59,18 +63,19 @@ const navGroups: NavGroup[] = [
 export function SideTabBar() {
   const dispatch = useAppDispatch();
   const collapsed = useAppSelector(state => state.application.isSidebarCollapsed);
-  const currentView = useAppSelector(state => state.application.currentView);
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  const containerCls = `navigationSideMenu__container${
-    collapsed ? ' navigationSideMenu__container--collapsed' : ''
-  }`;
+  const containerCls = `navigationSideMenu__container${collapsed ? ' navigationSideMenu__container--collapsed' : ''
+    }`;
+  const isItemSelected = (path: string) =>
+    location.pathname === path || location.pathname.startsWith(`${path}/`);
 
   return (
     <nav class={containerCls} aria-label={t('nav.sidebar.aria')}>
       <div
-        class={`navigationSideMenu__toggleBtn ${
-          collapsed ? 'navigationSideMenu__toggleBtn--collapsed' : 'navigationSideMenu__toggleBtn--expanded'
-        }`}
+        class={`navigationSideMenu__toggleBtn ${collapsed ? 'navigationSideMenu__toggleBtn--collapsed' : 'navigationSideMenu__toggleBtn--expanded'
+          }`}
       >
         <button
           type="button"
@@ -86,15 +91,14 @@ export function SideTabBar() {
         {navGroups.map(group => (
           <div key={group.labelKey}>
             <p
-              class={`oj-typography-body-sm oj-typography-semi-bold oj-sm-margin-3x-top oj-sm-margin-1x-bottom${
-                collapsed ? ' navigationSideMenu__groupLabel--collapsed' : ''
-              }`}
+              class={`oj-typography-body-sm oj-typography-semi-bold oj-sm-margin-3x-top oj-sm-margin-1x-bottom${collapsed ? ' navigationSideMenu__groupLabel--collapsed' : ''
+                }`}
             >
               {t(group.labelKey)}
             </p>
             <div class={`navigationSideMenu__container-group${collapsed ? ' navigationSideMenu__container-group--collapsed' : ''}`}>
               {group.items.map(item => {
-                const isSelected = currentView === item.id;
+                const isSelected = isItemSelected(item.path);
                 const label = t(item.nameKey);
                 return (
                   <div
@@ -107,7 +111,7 @@ export function SideTabBar() {
                       aria-current={isSelected ? 'page' : undefined}
                       aria-label={collapsed ? label : undefined}
                       title={collapsed ? label : undefined}
-                      onClick={() => dispatch(setCurrentView(item.id))}
+                      onClick={() => navigate(item.path)}
                     >
                       <figure class="genericIcon genericIcon__button genericIcon__extra-small">
                         <item.Icon size={15} strokeWidth={2.5} />
