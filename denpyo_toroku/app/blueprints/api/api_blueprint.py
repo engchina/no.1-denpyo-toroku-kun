@@ -552,6 +552,12 @@ def _build_oci_model_test_settings(request_settings: Dict[str, Any]) -> Dict[str
         request_settings.get("embedding_model_id"),
         snapshot_settings.get("embedding_model_id", defaults.get("embedding_model_id", "cohere.embed-v4.0")),
     ) or "cohere.embed-v4.0"
+    llm_max_tokens = int(
+        request_settings.get("llm_max_tokens", snapshot_settings.get("llm_max_tokens", defaults.get("llm_max_tokens", 65536)))
+    )
+    llm_temperature = float(
+        request_settings.get("llm_temperature", snapshot_settings.get("llm_temperature", defaults.get("llm_temperature", 0.0)))
+    )
 
     return {
         "service_endpoint": service_endpoint,
@@ -559,6 +565,8 @@ def _build_oci_model_test_settings(request_settings: Dict[str, Any]) -> Dict[str
         "llm_model_id": llm_model_id,
         "vlm_model_id": vlm_model_id,
         "embedding_model_id": embedding_model_id,
+        "llm_max_tokens": llm_max_tokens,
+        "llm_temperature": llm_temperature,
     }
 
 
@@ -1190,8 +1198,8 @@ def test_oci_model_connection():
                         content=[{"type": "TEXT", "text": test_input_text}]
                     )
                 ],
-                max_tokens=AppConfig.LLM_MAX_TOKENS,
-                temperature=AppConfig.LLM_TEMPERATURE,
+                max_tokens=model_settings.get("llm_max_tokens", AppConfig.LLM_MAX_TOKENS),
+                temperature=model_settings.get("llm_temperature", AppConfig.LLM_TEMPERATURE),
                 is_stream=True,
             )
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
@@ -1236,8 +1244,8 @@ def test_oci_model_connection():
                         content=[{"type": "TEXT", "text": "画像解析モデルの接続テストです。'OK' とだけ返答してください。"}]
                     )
                 ],
-                max_tokens=AppConfig.LLM_MAX_TOKENS,
-                temperature=AppConfig.LLM_TEMPERATURE,
+                max_tokens=model_settings.get("llm_max_tokens", AppConfig.LLM_MAX_TOKENS),
+                temperature=model_settings.get("llm_temperature", AppConfig.LLM_TEMPERATURE),
                 is_stream=True,
             )
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
@@ -2093,12 +2101,36 @@ def analyze_file(file_id: int):
 
         image_data, content_type = images[0]
 
-        # 6. AI抽出（カテゴリ構造を指定）
         ai_service = AIService()
-        extraction = ai_service.extract_fields(
-            image_data=image_data,
+
+        # 6. VLM経由でのOCRテキスト抽出
+        import tempfile
+        import os
+        suffix = ".jpg" if content_type in ("image/jpeg", "image/jpg") else ".png"
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(image_data)
+            
+            ocr_result = ai_service.extract_text_from_images([tmp_path])
+            if not ocr_result.get("success"):
+                db_service.update_file_status(file_id, "ERROR")
+                g.response.set_data({"success": False, "message": f"テキスト抽出に失敗しました: {ocr_result.get('message')}"})
+                return jsonify(g.response.get_result()), 500
+                
+            extracted_text = ocr_result.get("extracted_text", "")
+            
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception as e:
+                    logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", tmp_path, e)
+
+        # 7. AI抽出（カテゴリ構造を指定してLLMでデータ生成）
+        extraction = ai_service.extract_data_from_text(
+            ocr_text=extracted_text,
             category=category.get("category_name", ""),
-            content_type=content_type,
             table_schema={
                 "header_table_name": table_schema.get("header_table_name", ""),
                 "line_table_name": table_schema.get("line_table_name", ""),

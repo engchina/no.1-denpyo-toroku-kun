@@ -287,7 +287,7 @@ export function OciGenAiModelSettings() {
                 placeholder={DEFAULT_VLM_MODEL}
               />
             </label>
-            <label class="applicationSettingsView__field">
+            <label class="applicationSettingsView__field applicationSettingsView__field--wide">
               <span class="applicationSettingsView__fieldLabel">{t('settings.field.embeddingModelId')}</span>
               <input
                 class="ics-input applicationSettingsView__modelInput"

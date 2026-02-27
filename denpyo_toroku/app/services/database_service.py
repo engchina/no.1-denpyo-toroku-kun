@@ -1384,43 +1384,38 @@ class DatabaseService:
         offset: int = 0,
         upload_kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """ファイル一覧を取得（SLIPS_RAW / SLIPS_CATEGORY 基準）"""
+        """ファイル一覧を取得（DENPYO_FILES 基準）"""
         kind = (upload_kind or "").strip().lower()
         raw_prefix = (os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw").strip("/")
         category_prefix = (os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category").strip("/")
+        
         path_prefix = None
-        table_name = "SLIPS_RAW"
         if kind == "raw":
             path_prefix = raw_prefix
-            table_name = "SLIPS_RAW"
         elif kind == "category":
             path_prefix = category_prefix
-            table_name = "SLIPS_CATEGORY"
 
         try:
             normalized_status = (status or "").strip().upper()
-            if normalized_status and normalized_status != "UPLOADED":
-                return []
 
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
+                    query = """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT
+                               FROM DENPYO_FILES WHERE 1=1"""
+                    params = []
+
                     if path_prefix:
-                        cursor.execute(
-                            f"""SELECT ID, OBJECT_NAME, FILE_NAME, CONTENT_TYPE, FILE_SIZE_BYTES, CREATED_AT
-                            FROM {table_name}
-                            WHERE OBJECT_NAME LIKE :1
-                            ORDER BY CREATED_AT DESC
-                            OFFSET :2 ROWS FETCH NEXT :3 ROWS ONLY""",
-                            [f"{path_prefix}/%", offset, limit]
-                        )
-                    else:
-                        cursor.execute(
-                            f"""SELECT ID, OBJECT_NAME, FILE_NAME, CONTENT_TYPE, FILE_SIZE_BYTES, CREATED_AT
-                            FROM {table_name}
-                            ORDER BY CREATED_AT DESC
-                            OFFSET :1 ROWS FETCH NEXT :2 ROWS ONLY""",
-                            [offset, limit]
-                        )
+                        query += f" AND OBJECT_STORAGE_PATH LIKE :{len(params)+1}"
+                        params.append(f"{path_prefix}/%")
+                    
+                    if normalized_status:
+                        query += f" AND STATUS = :{len(params)+1}"
+                        params.append(normalized_status)
+                    
+                    query += f" ORDER BY UPLOADED_AT DESC OFFSET :{len(params)+1} ROWS FETCH NEXT :{len(params)+2} ROWS ONLY"
+                    params.extend([offset, limit])
+                    
+                    cursor.execute(query, params)
 
                     files = []
                     for row in cursor.fetchall():
@@ -1430,9 +1425,9 @@ class DatabaseService:
                             "original_file_name": row[2],
                             "content_type": row[3],
                             "file_size": row[4],
-                            "status": "UPLOADED",
-                            "uploaded_by": "",
-                            "uploaded_at": str(row[5]) if row[5] else "",
+                            "status": row[5],
+                            "uploaded_by": row[6] or "",
+                            "uploaded_at": str(row[7]) if row[7] else "",
                         })
                     return files
         except Exception as e:
@@ -1440,33 +1435,34 @@ class DatabaseService:
             return []
 
     def get_files_count(self, status: str = None, upload_kind: Optional[str] = None) -> int:
-        """ファイル総件数を取得（SLIPS_RAW / SLIPS_CATEGORY 基準）"""
+        """ファイル総件数を取得（DENPYO_FILES 基準）"""
         kind = (upload_kind or "").strip().lower()
         raw_prefix = (os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw").strip("/")
         category_prefix = (os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category").strip("/")
+        
         path_prefix = None
-        table_name = "SLIPS_RAW"
         if kind == "raw":
             path_prefix = raw_prefix
-            table_name = "SLIPS_RAW"
         elif kind == "category":
             path_prefix = category_prefix
-            table_name = "SLIPS_CATEGORY"
 
         try:
             normalized_status = (status or "").strip().upper()
-            if normalized_status and normalized_status != "UPLOADED":
-                return 0
 
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
+                    query = "SELECT COUNT(*) FROM DENPYO_FILES WHERE 1=1"
+                    params = []
+
                     if path_prefix:
-                        cursor.execute(
-                            f"SELECT COUNT(*) FROM {table_name} WHERE OBJECT_NAME LIKE :1",
-                            [f"{path_prefix}/%"]
-                        )
-                    else:
-                        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                        query += f" AND OBJECT_STORAGE_PATH LIKE :{len(params)+1}"
+                        params.append(f"{path_prefix}/%")
+                    
+                    if normalized_status:
+                        query += f" AND STATUS = :{len(params)+1}"
+                        params.append(normalized_status)
+                    
+                    cursor.execute(query, params)
                     return cursor.fetchone()[0]
         except Exception as e:
             logger.error("ファイル件数取得エラー: %s", e, exc_info=True)

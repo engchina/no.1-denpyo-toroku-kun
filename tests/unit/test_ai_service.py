@@ -1,5 +1,6 @@
 from denpyo_toroku.app.services.ai_service import AIService
 from types import SimpleNamespace
+import sys
 
 
 def test_extract_json_recovers_truncated_string_and_braces():
@@ -129,3 +130,95 @@ def test_get_text_from_chat_response_falls_back_to_content_text():
 
     payload = service._get_text_from_chat_response(chat_response)
     assert '"category":"その他"' in payload
+
+
+def _install_fake_oci(monkeypatch):
+    models = SimpleNamespace(
+        GenericChatRequest=lambda **kwargs: kwargs,
+        UserMessage=lambda **kwargs: kwargs,
+        ChatDetails=lambda **kwargs: kwargs,
+        OnDemandServingMode=lambda **kwargs: kwargs,
+    )
+    fake_oci = SimpleNamespace(generative_ai_inference=SimpleNamespace(models=models))
+    monkeypatch.setitem(sys.modules, "oci", fake_oci)
+    import os
+    monkeypatch.setattr(os.path, "exists", lambda path: True)
+    from io import BytesIO
+    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: BytesIO(b"fake_image_data"))
+
+
+def test_generate_sql_schema_from_text_maps_columns(monkeypatch):
+    service = AIService()
+    _install_fake_oci(monkeypatch)
+    monkeypatch.setattr(service, "_get_client", lambda: SimpleNamespace(chat=lambda _: None))
+    monkeypatch.setattr(
+        service,
+        "_parse_json_with_regeneration",
+        lambda *_args, **_kwargs: {
+            "document_type_ja": "請求書",
+            "document_type_en": "invoice",
+            "header_table_name": "SEIKYUUSHO",
+            "line_table_name": "SEIKYUUSHO_MEISAI",
+            "header_columns": [
+                {
+                    "column_name": "HAKKOOBI",
+                    "comment": "発行日",
+                    "data_type": "DATE",
+                    "data_length": 50,
+                    "is_nullable": False,
+                },
+                {
+                    "column_name": "NOTE",
+                    "comment": "備考",
+                    "data_type": "UNKNOWN",
+                    "data_length": 200,
+                    "is_nullable": True,
+                },
+            ],
+            "line_columns": [
+                {
+                    "column_name": "KINGAKU",
+                    "comment": "金額",
+                    "data_type": "NUMBER",
+                    "data_length": 12,
+                    "is_nullable": False,
+                }
+            ],
+        },
+    )
+
+    result = service.generate_sql_schema_from_text("dummy text", "header_line")
+
+    assert result["success"] is True
+    assert result["document_type_ja"] == "請求書"
+    assert result["document_type_en"] == "invoice"
+    assert result["header_fields"][0] == {
+        "field_name_en": "HAKKOOBI",
+        "field_name": "発行日",
+        "data_type": "DATE",
+        "max_length": None,
+        "is_required": True,
+    }
+    assert result["header_fields"][1]["data_type"] == "VARCHAR2"
+    assert result["line_fields"][0]["max_length"] is None
+
+
+def test_generate_sql_schema_from_text_forces_empty_line_fields_in_header_only(monkeypatch):
+    service = AIService()
+    _install_fake_oci(monkeypatch)
+    monkeypatch.setattr(service, "_get_client", lambda: SimpleNamespace(chat=lambda _: None))
+    monkeypatch.setattr(
+        service,
+        "_parse_json_with_regeneration",
+        lambda *_args, **_kwargs: {
+            "header_table_name": "RYOUSHUUSHO",
+            "line_table_name": "RYOUSHUUSHO_MEISAI",
+            "header_columns": [{"column_name": "NO", "comment": "番号", "data_type": "VARCHAR2", "data_length": 20, "is_nullable": False}],
+            "line_columns": [{"column_name": "SHOUHIN", "comment": "商品", "data_type": "VARCHAR2", "data_length": 100, "is_nullable": False}],
+        },
+    )
+
+    result = service.generate_sql_schema_from_text("dummy text", "header_only")
+
+    assert result["success"] is True
+    assert result["line_fields"] == []

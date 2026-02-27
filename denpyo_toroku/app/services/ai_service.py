@@ -936,6 +936,186 @@ class AIService:
             logger.error("フィールド抽出エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"フィールド抽出失敗: {str(e)}"}
 
+    def extract_data_from_text(
+        self,
+        ocr_text: str,
+        category: str = "",
+        table_schema: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """OCR抽出テキストからフィールド情報を抽出する
+
+        Args:
+            ocr_text: OCR抽出されたテキスト
+            category: 伝票の種別（分類結果から）
+            table_schema: カテゴリのテーブル構造情報
+
+        Returns:
+            抽出結果 (header_fields, line_fields)
+        """
+        client = self._get_client()
+        if not client:
+            return {"success": False, "message": "AI クライアントが初期化されていません"}
+
+        if not table_schema:
+            return {"success": False, "message": "テーブルスキーマ情報が必要です"}
+
+        category_hint = f"この伝票の種別は「{category}」です。" if category else ""
+
+        # ── スキーマ情報のフォーマット ────────────────────────────────────────
+        def _fmt_cols(columns: list) -> str:
+            if not columns:
+                return "  （定義なし）"
+            lines = []
+            for col in columns:
+                comment = col.get("comment", "")
+                comment_str = f"  -- {comment}" if comment else ""
+                dt = col.get("data_type", "VARCHAR2")
+                length = col.get("data_length")
+                if dt == "VARCHAR2" and length:
+                    type_str = f"VARCHAR2({length})"
+                elif dt == "NUMBER":
+                    prec = col.get("precision")
+                    scale = col.get("scale")
+                    if prec and scale is not None:
+                        type_str = f"NUMBER({prec},{scale})"
+                    elif prec:
+                        type_str = f"NUMBER({prec})"
+                    else:
+                        type_str = "NUMBER"
+                else:
+                    type_str = dt
+                lines.append(f"  {col['column_name']}  {type_str}{comment_str}")
+            return "\n".join(lines)
+
+        header_cols_fmt = _fmt_cols(table_schema.get("header_columns", []))
+        line_cols_fmt = _fmt_cols(table_schema.get("line_columns", []))
+        header_tbl = table_schema.get("header_table_name", "")
+        line_tbl = table_schema.get("line_table_name", "")
+        has_line_tbl = bool(line_tbl and table_schema.get("line_columns"))
+
+        prompt = f"""あなたはOracleデータベースへの伝票データ登録を専門とするデータ入力エキスパートです。
+以下のOCR抽出テキストから、定義済みDBテーブルの各カラムに対応する値を正確に読み取り、JSONで返してください。
+{category_hint}
+
+【OCR抽出テキスト】
+{ocr_text}
+
+【対象テーブル構造】（カラム名・データ型は厳守。右側の -- が日本語ラベル）
+▶ HEADERテーブル: {header_tbl}
+{header_cols_fmt}
+
+▶ LINEテーブル: {line_tbl if has_line_tbl else '（明細なし）'}
+{line_cols_fmt if has_line_tbl else '  （定義なし）'}
+
+【値読み取りルール】
+1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する
+2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
+3. 日付: ISO 8601形式 YYYY-MM-DD（例: "令和6年1月15日" → "2024-01-15"）
+4. テキスト: OCRテキストの文字をそのまま転記。
+5. テキストに該当項目が存在しない場合: "" （null は使わない）
+6. スキーマに存在する全カラムを header_fields に出力する（値がなくても省略禁止）
+
+【カラム名の厳守】
+- header_fields[].field_name_en: 必ず HEADERテーブルの COLUMN_NAME をそのまま使用（UPPERCASE、変名・追加・省略禁止）
+- raw_lines[] のキー: 必ず LINEテーブルの COLUMN_NAME をそのまま使用（UPPERCASE）
+- スキーマに存在しないカラム名は絶対に作成しない
+
+【出力形式】（JSON のみ。マークダウン・コードブロック・コメント禁止）
+{{
+  "header_fields": [
+    {{"field_name": "請求書番号", "field_name_en": "INVOICE_NO", "value": "INV-2024-001", "data_type": "VARCHAR2", "max_length": 50, "is_required": true}},
+    {{"field_name": "請求日", "field_name_en": "INVOICE_DATE", "value": "2024-01-15", "data_type": "DATE", "max_length": null, "is_required": true}},
+    {{"field_name": "請求金額合計", "field_name_en": "TOTAL_AMOUNT", "value": "110000", "data_type": "NUMBER", "max_length": null, "is_required": true}}
+  ],
+  "line_fields": [
+    {{"field_name": "品名", "field_name_en": "ITEM_NAME", "value": "製品A", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
+    {{"field_name": "数量", "field_name_en": "QUANTITY", "value": "10", "data_type": "NUMBER", "max_length": null, "is_required": true}}
+  ],
+  "line_count": 2,
+  "raw_lines": [
+    {{"ITEM_NAME": "製品A", "QUANTITY": "10", "UNIT_PRICE": "5000", "AMOUNT": "50000"}},
+    {{"ITEM_NAME": "製品B", "QUANTITY": "5", "UNIT_PRICE": "8000", "AMOUNT": "40000"}}
+  ]
+}}
+
+各フィールドの説明:
+- header_fields: HEADERテーブルの全カラムに対応するエントリ（省略禁止）
+  - field_name: カラムの日本語ラベル（コメントから取得。コメントなしはカラム名から推測）
+  - field_name_en: HEADERテーブルの COLUMN_NAME（UPPERCASE、厳守）
+  - value: テキストから読み取った値（文字列。空欄・不存在は ""）
+  - data_type: HEADERテーブルのカラム定義に従う
+  - max_length: VARCHAR2 の場合は定義の数値、それ以外は null
+  - is_required: カラムが NOT NULL なら true、NULLABLE なら false
+- line_fields: LINEテーブルのカラム定義（明細なしは []）
+- line_count: 実際の明細行数（整数。明細なしは 0）
+- raw_lines: 各明細行の実データ配列。キーは LINEテーブルの COLUMN_NAME（明細なしは []）
+
+出力は有効なJSON1つのみ。```や//や説明文を含めないこと。"""
+
+        try:
+            import oci
+            
+            text_content = {"type": "TEXT", "text": prompt}
+
+            chat_request = oci.generative_ai_inference.models.GenericChatRequest(
+                api_format="GENERIC",
+                messages=[
+                    oci.generative_ai_inference.models.UserMessage(
+                        content=[text_content]
+                    )
+                ],
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
+                is_stream=False,
+            )
+
+            chat_detail = oci.generative_ai_inference.models.ChatDetails(
+                compartment_id=self._compartment_id,
+                serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
+                    model_id=self._llm_model_id
+                ),
+                chat_request=chat_request,
+            )
+
+            def generate_text() -> str:
+                response = self._retry_api_call("extract_data_from_text", client.chat, chat_detail)
+                return self._get_text_from_chat_response(response.data.chat_response)
+
+            parsed = self._parse_json_with_regeneration(
+                "extract_data_from_text",
+                generate_text,
+                GENAI_JSON_PARSE_RETRIES
+            )
+
+            if not isinstance(parsed, dict):
+                return {"success": False, "message": "AI応答形式が不正です"}
+
+            header_fields = parsed.get("header_fields")
+            line_fields = parsed.get("line_fields")
+            raw_lines = parsed.get("raw_lines")
+            line_count = parsed.get("line_count")
+
+            if not isinstance(header_fields, list):
+                header_fields = []
+            if not isinstance(line_fields, list):
+                line_fields = []
+            if not isinstance(raw_lines, list):
+                raw_lines = []
+            if not isinstance(line_count, int):
+                line_count = len(raw_lines)
+
+            parsed["header_fields"] = header_fields
+            parsed["line_fields"] = line_fields
+            parsed["raw_lines"] = raw_lines
+            parsed["line_count"] = line_count
+            parsed["success"] = True
+            return parsed
+
+        except Exception as e:
+            logger.error("テキストからのデータ抽出エラー: %s", e, exc_info=True)
+            return {"success": False, "message": f"テキストからのデータ抽出失敗: {str(e)}"}
+
+
     def extract_text_from_images(self, image_filepaths: List[str]) -> Dict[str, Any]:
         """伝票画像群からVLMを用いてテキストを抽出する"""
         client = self._get_client()
