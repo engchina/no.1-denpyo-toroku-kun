@@ -162,9 +162,9 @@ export function Pagination({
             />
           </div>
         )}
-        <div class="ics-pagination-group">
+        <div class="ics-btn-group">
           <button
-            class="ics-pagination-btn ics-pagination-btn--prev"
+            class="ics-btn"
             onClick={() => onPageChange(currentPage - 1)}
             disabled={isFirstPage}
             type="button"
@@ -173,7 +173,7 @@ export function Pagination({
             <span>{t('common.previous')}</span>
           </button>
           <button
-            class="ics-pagination-btn ics-pagination-btn--next"
+            class="ics-btn"
             onClick={() => onPageChange(currentPage + 1)}
             disabled={isLastPage}
             type="button"

@@ -238,7 +238,7 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
         <div class="ics-search-actions">
           <button
             type="button"
-            class="oj-button oj-button-primary"
+            class="ics-btn ics-btn--primary"
             onClick={handleSearch}
             disabled={!query.trim() || noTables || isLoading}
           >
@@ -693,135 +693,135 @@ function TableBrowserTab({
         </div>
 
         <div class="ics-card-body">
-        {tableBrowserTables.length > 0 ? (
-          <>
-            <div class="ics-table-wrapper">
-              <table class="ics-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: '40px' }}>
-                      <input
-                        type="checkbox"
-                        checked={tableListSelection.isAllSelected(tableListPagination.paginatedItems)}
-                        ref={(el) => {
-                          if (!el) return;
-                          const pageItems = tableListPagination.paginatedItems;
-                          const allSelected = tableListSelection.isAllSelected(pageItems);
-                          const hasSelectedOnPage = pageItems.some(item =>
-                            tableListSelection.isSelected(`${item.category_id}-${item.table_type}-${item.table_name}`)
-                          );
-                          el.indeterminate = !allSelected && hasSelectedOnPage;
-                        }}
-                        onChange={() => {
-                          if (tableListSelection.isAllSelected(tableListPagination.paginatedItems)) {
-                            tableListSelection.deselectAll();
-                          } else {
-                            tableListSelection.selectAll(tableListPagination.paginatedItems);
-                          }
-                        }}
-                        aria-label={t('common.selectAll')}
-                      />
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_name')}>
-                        {t('search.browser.col.tableName')}
-                        {renderTableListSortIcon('table_name')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('category_name')}>
-                        {t('search.browser.col.category')}
-                        {renderTableListSortIcon('category_name')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_type')}>
-                        {t('search.browser.col.type')}
-                        {renderTableListSortIcon('table_type')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('row_count')}>
-                        {t('search.browser.col.rows')}
-                        {renderTableListSortIcon('row_count')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('column_count')}>
-                        {t('search.browser.col.columns')}
-                        {renderTableListSortIcon('column_count')}
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('created_at')}>
-                        {t('search.browser.col.createdAt')}
-                        {renderTableListSortIcon('created_at')}
-                      </button>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tableListPagination.paginatedItems.map(table => {
-                    const tableKey = `${table.category_id}-${table.table_type}-${table.table_name}`;
-                    return (
-                    <tr
-                      key={tableKey}
-                      role="button"
-                      tabIndex={0}
-                      class={
-                        selectedTable &&
-                        selectedTable.table_name === table.table_name &&
-                        selectedTable.table_type === table.table_type &&
-                        selectedTable.category_id === table.category_id
-                          ? 'ics-table-row--selected'
-                          : ''
-                      }
-                      onClick={() => handleTableSelect(table)}
-                      onKeyDown={(e) => handleTableRowKeyDown(e, table)}
-                    >
-                      <td class="ics-table__cell--center" onClick={(e: Event) => e.stopPropagation()}>
+          {tableBrowserTables.length > 0 ? (
+            <>
+              <div class="ics-table-wrapper">
+                <table class="ics-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '40px' }}>
                         <input
                           type="checkbox"
-                          checked={tableListSelection.isSelected(tableKey)}
-                          onChange={() => tableListSelection.toggle(tableKey)}
+                          checked={tableListSelection.isAllSelected(tableListPagination.paginatedItems)}
+                          ref={(el) => {
+                            if (!el) return;
+                            const pageItems = tableListPagination.paginatedItems;
+                            const allSelected = tableListSelection.isAllSelected(pageItems);
+                            const hasSelectedOnPage = pageItems.some(item =>
+                              tableListSelection.isSelected(`${item.category_id}-${item.table_type}-${item.table_name}`)
+                            );
+                            el.indeterminate = !allSelected && hasSelectedOnPage;
+                          }}
+                          onChange={() => {
+                            if (tableListSelection.isAllSelected(tableListPagination.paginatedItems)) {
+                              tableListSelection.deselectAll();
+                            } else {
+                              tableListSelection.selectAll(tableListPagination.paginatedItems);
+                            }
+                          }}
+                          aria-label={t('common.selectAll')}
                         />
-                      </td>
-                      <td>{table.table_name}</td>
-                      <td>{table.category_name}</td>
-                      <td>{table.table_type === 'header' ? t('search.browser.header') : t('search.browser.line')}</td>
-                      <td>{table.row_count.toLocaleString()}</td>
-                      <td>{table.column_count}</td>
-                      <td>{formatDateTime(table.created_at)}</td>
+                      </th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_name')}>
+                          {t('search.browser.col.tableName')}
+                          {renderTableListSortIcon('table_name')}
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('category_name')}>
+                          {t('search.browser.col.category')}
+                          {renderTableListSortIcon('category_name')}
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_type')}>
+                          {t('search.browser.col.type')}
+                          {renderTableListSortIcon('table_type')}
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('row_count')}>
+                          {t('search.browser.col.rows')}
+                          {renderTableListSortIcon('row_count')}
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('column_count')}>
+                          {t('search.browser.col.columns')}
+                          {renderTableListSortIcon('column_count')}
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('created_at')}>
+                          {t('search.browser.col.createdAt')}
+                          {renderTableListSortIcon('created_at')}
+                        </button>
+                      </th>
                     </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <Pagination
-              currentPage={tableListPagination.currentPage}
-              totalPages={tableListPagination.totalPages}
-              totalItems={tableListPagination.totalItems}
-              pageSize={tableListPageSize}
-              pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
-              onPageSizeChange={setTableListPageSize}
-              goToPageInput={tableListPagination.goToPageInput}
-              onPageChange={tableListPagination.goToPage}
-              onGoToPageInputChange={tableListPagination.setGoToPageInput}
-              onGoToPage={tableListPagination.handleGoToPage}
-              rangeStart={tableListRangeStart}
-              rangeEnd={tableListRangeEnd}
-              showGoToPage={false}
-              isFirstPage={tableListPagination.isFirstPage}
-              isLastPage={tableListPagination.isLastPage}
-              position="bottom"
-              show
-              summaryPlacement="controls"
-            />
-          </>
-        ) : (
-          <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noTableList')}</p>
-        )}
+                  </thead>
+                  <tbody>
+                    {tableListPagination.paginatedItems.map(table => {
+                      const tableKey = `${table.category_id}-${table.table_type}-${table.table_name}`;
+                      return (
+                        <tr
+                          key={tableKey}
+                          role="button"
+                          tabIndex={0}
+                          class={
+                            selectedTable &&
+                              selectedTable.table_name === table.table_name &&
+                              selectedTable.table_type === table.table_type &&
+                              selectedTable.category_id === table.category_id
+                              ? 'ics-table-row--selected'
+                              : ''
+                          }
+                          onClick={() => handleTableSelect(table)}
+                          onKeyDown={(e) => handleTableRowKeyDown(e, table)}
+                        >
+                          <td class="ics-table__cell--center" onClick={(e: Event) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={tableListSelection.isSelected(tableKey)}
+                              onChange={() => tableListSelection.toggle(tableKey)}
+                            />
+                          </td>
+                          <td>{table.table_name}</td>
+                          <td>{table.category_name}</td>
+                          <td>{table.table_type === 'header' ? t('search.browser.header') : t('search.browser.line')}</td>
+                          <td>{table.row_count.toLocaleString()}</td>
+                          <td>{table.column_count}</td>
+                          <td>{formatDateTime(table.created_at)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination
+                currentPage={tableListPagination.currentPage}
+                totalPages={tableListPagination.totalPages}
+                totalItems={tableListPagination.totalItems}
+                pageSize={tableListPageSize}
+                pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
+                onPageSizeChange={setTableListPageSize}
+                goToPageInput={tableListPagination.goToPageInput}
+                onPageChange={tableListPagination.goToPage}
+                onGoToPageInputChange={tableListPagination.setGoToPageInput}
+                onGoToPage={tableListPagination.handleGoToPage}
+                rangeStart={tableListRangeStart}
+                rangeEnd={tableListRangeEnd}
+                showGoToPage={false}
+                isFirstPage={tableListPagination.isFirstPage}
+                isLastPage={tableListPagination.isLastPage}
+                position="bottom"
+                show
+                summaryPlacement="controls"
+              />
+            </>
+          ) : (
+            <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noTableList')}</p>
+          )}
         </div>
       </div>
 

@@ -3,8 +3,8 @@
  * 読み込み/保存/接続テストのフローを提供。
  */
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
-import { Upload, KeyRound, CheckCircle, XCircle } from 'lucide-react';
+
+import { Upload, KeyRound, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { apiGet, apiPost } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
@@ -57,9 +57,7 @@ function statusLabel(status: string): string {
   return isConfiguredStatus(status) ? t('common.configured') : t('common.notConfigured');
 }
 
-function getStatusClassName(status: string): string {
-  return isConfiguredStatus(status) ? 'ics-status-healthy' : 'ics-status-unknown';
-}
+
 
 function readTextFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -279,13 +277,14 @@ export function ApplicationSettings() {
             <span class="oj-typography-heading-xs">{t('settings.oci.authSettingsTitle')}</span>
           </div>
           <div class="applicationSettingsView__headerActions">
-            <Button
-              label={isLoading ? t('settings.refreshing') : t('settings.refresh')}
-              variant="outlined"
-              size="sm"
-              onAction={() => { void loadSettings(); }}
-              isDisabled={isLoading || isSaving || isTesting}
-            />
+            <button
+              class="ics-btn"
+              onClick={() => { void loadSettings(); }}
+              disabled={isLoading || isSaving || isTesting}
+            >
+              <RefreshCw size={16} />
+              {isLoading ? t('settings.refreshing') : t('settings.refresh')}
+            </button>
           </div>
         </div>
         <div class="ics-card-body">
@@ -371,7 +370,7 @@ export function ApplicationSettings() {
               <div class="applicationSettingsView__privateKeyPreview">
                 <div class="applicationSettingsView__privateKeyPreviewHead">
                   <span>{t('settings.privateKey.loaded')}</span>
-                  <Button label={t('common.clear')} variant="outlined" size="sm" onAction={clearPrivateKey} />
+                  <button class="ics-btn" onClick={clearPrivateKey}>{t('common.clear')}</button>
                 </div>
                 <pre class="applicationSettingsView__privateKeyCode">{privateKeyPreview}{settings.key_content.length > 240 ? '...' : ''}</pre>
               </div>
@@ -385,17 +384,22 @@ export function ApplicationSettings() {
           </div>
 
           <div class="applicationSettingsView__actions">
-            <Button
-              label={isSaving ? t('settings.action.saving') : t('settings.action.save')}
-              onAction={() => { void handleSave(); }}
-              isDisabled={isLoading || isSaving || isTesting}
-            />
-            <Button
-              label={isTesting ? t('settings.action.testing') : t('settings.action.test')}
-              variant="outlined"
-              onAction={() => { void handleTestConnection(); }}
-              isDisabled={isLoading || isSaving || isTesting}
-            />
+            <div class="ics-action-bar">
+              <button
+                class="ics-btn ics-btn--primary"
+                onClick={() => { void handleSave(); }}
+                disabled={isLoading || isSaving || isTesting}
+              >
+                {isSaving ? t('settings.action.saving') : t('settings.action.save')}
+              </button>
+              <button
+                class="ics-btn"
+                onClick={() => { void handleTestConnection(); }}
+                disabled={isLoading || isSaving || isTesting}
+              >
+                {isTesting ? t('settings.action.testing') : t('settings.action.test')}
+              </button>
+            </div>
           </div>
           <p class="applicationSettingsView__hint">
             {t('settings.hint')}

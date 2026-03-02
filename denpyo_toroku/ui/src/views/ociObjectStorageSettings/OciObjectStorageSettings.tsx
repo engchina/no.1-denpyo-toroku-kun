@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
-import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
-import { HardDrive } from 'lucide-react';
+
+import { HardDrive, RefreshCw } from 'lucide-react';
 import { apiGet, apiPost } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -105,13 +105,14 @@ export function OciObjectStorageSettings() {
             <span class="oj-typography-heading-xs">{t('settings.storage.title')}</span>
           </div>
           <div class="applicationSettingsView__headerActions">
-            <Button
-              label={isLoading ? t('settings.refreshing') : t('settings.refresh')}
-              variant="outlined"
-              size="sm"
-              onAction={() => { void loadSettings(); }}
-              isDisabled={isLoading || isSaving}
-            />
+            <button
+              class="ics-btn"
+              onClick={() => { void loadSettings(); }}
+              disabled={isLoading || isSaving}
+            >
+              <RefreshCw size={16} />
+              {isLoading ? t('settings.refreshing') : t('settings.refresh')}
+            </button>
           </div>
         </div>
         <div class="ics-card-body">
@@ -146,11 +147,13 @@ export function OciObjectStorageSettings() {
             </label>
           </div>
           <div class="applicationSettingsView__actions">
-            <Button
-              label={isSaving ? t('settings.action.saving') : t('settings.action.save')}
-              onAction={() => { void handleSave(); }}
-              isDisabled={isLoading || isSaving}
-            />
+            <button
+              class="ics-btn ics-btn--primary"
+              onClick={() => { void handleSave(); }}
+              disabled={isLoading || isSaving}
+            >
+              {isSaving ? t('settings.action.saving') : t('settings.action.save')}
+            </button>
           </div>
         </div>
       </section>

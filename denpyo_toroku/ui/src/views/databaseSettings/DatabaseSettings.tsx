@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
-import { Upload, CheckCircle, XCircle, Database, Power, PowerOff, RefreshCw } from 'lucide-react';
+
+import { Upload, CheckCircle, XCircle, Database, RefreshCw } from 'lucide-react';
 import { StatusBadge, type StatusBadgeVariant } from '../../components/common/StatusBadge';
 import { apiGet, apiPost, apiPostWithTimeout } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
@@ -83,9 +83,7 @@ function statusLabel(status: string): string {
   return isConfiguredStatus(status) ? t('common.configured') : t('common.notConfigured');
 }
 
-function getStatusClassName(status: string): string {
-  return isConfiguredStatus(status) ? 'ics-status-healthy' : 'ics-status-unknown';
-}
+
 
 const ADB_LIFECYCLE_LABEL_KEYS: Record<string, Parameters<typeof t>[0]> = {
   AVAILABLE: 'settings.adb.lifecycle.AVAILABLE',
@@ -456,13 +454,14 @@ export function DatabaseSettings() {
             <span class="oj-typography-heading-xs">{t('settings.adb.title')}</span>
           </div>
           <div class="applicationSettingsView__headerActions">
-            <Button
-              label={adbIsLoading ? t('settings.adb.refreshing') : t('settings.adb.refresh')}
-              variant="outlined"
-              size="sm"
-              onAction={() => { void loadAdbInfo(); }}
-              isDisabled={adbIsLoading || adbIsStarting || adbIsStopping}
-            />
+            <button
+              class="ics-btn"
+              onClick={() => { void loadAdbInfo(); }}
+              disabled={adbIsLoading || adbIsStarting || adbIsStopping}
+            >
+              <RefreshCw size={16} />
+              {adbIsLoading ? t('settings.adb.refreshing') : t('settings.adb.refresh')}
+            </button>
             <StatusBadge variant={getAdbStatusVariant(adbInfo?.lifecycle_state)}>
               {adbInfo?.lifecycle_state ? getAdbLifecycleLabel(adbInfo.lifecycle_state) : t('settings.adb.statusUnknown')}
             </StatusBadge>
@@ -484,17 +483,22 @@ export function DatabaseSettings() {
           </div>
 
           <div class="applicationSettingsView__actions" style="margin-bottom: 20px;">
-            <Button
-              label={adbIsStarting ? t('settings.adb.action.starting') : t('settings.adb.action.start')}
-              onAction={() => { void handleAdbStart(); }}
-              isDisabled={adbIsLoading || adbIsStarting || adbIsStopping || !dbSettings.adb_ocid}
-            />
-            <Button
-              label={adbIsStopping ? t('settings.adb.action.stopping') : t('settings.adb.action.stop')}
-              variant="outlined"
-              onAction={() => { void handleAdbStop(); }}
-              isDisabled={adbIsLoading || adbIsStarting || adbIsStopping || !dbSettings.adb_ocid}
-            />
+            <div class="ics-action-bar">
+              <button
+                class="ics-btn"
+                onClick={() => { void handleAdbStart(); }}
+                disabled={adbIsLoading || adbIsStarting || adbIsStopping || !dbSettings.adb_ocid}
+              >
+                {adbIsStarting ? t('settings.adb.action.starting') : t('settings.adb.action.start')}
+              </button>
+              <button
+                class="ics-btn"
+                onClick={() => { void handleAdbStop(); }}
+                disabled={adbIsLoading || adbIsStarting || adbIsStopping || !dbSettings.adb_ocid}
+              >
+                {adbIsStopping ? t('settings.adb.action.stopping') : t('settings.adb.action.stop')}
+              </button>
+            </div>
           </div>
 
           {adbInfo?.display_name && (
@@ -540,20 +544,23 @@ export function DatabaseSettings() {
             <span class="oj-typography-heading-xs">{t('settings.db.title')}</span>
           </div>
           <div class="applicationSettingsView__headerActions">
-            <Button
-              label={dbIsLoading ? t('settings.refreshing') : t('settings.refresh')}
-              variant="outlined"
-              size="sm"
-              onAction={() => { void loadDatabaseSettings(); }}
-              isDisabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
-            />
-            <Button
-              label={dbIsRefreshingEnv ? t('settings.db.refreshingFromEnv') : t('settings.db.refreshFromEnv')}
-              variant="outlined"
-              size="sm"
-              onAction={() => { void handleDbRefreshFromEnv(); }}
-              isDisabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
-            />
+            <div class="ics-action-bar">
+              <button
+                class="ics-btn"
+                onClick={() => { void loadDatabaseSettings(); }}
+                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
+              >
+                <RefreshCw size={16} />
+                {dbIsLoading ? t('settings.refreshing') : t('settings.refresh')}
+              </button>
+              <button
+                class="ics-btn"
+                onClick={() => { void handleDbRefreshFromEnv(); }}
+                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
+              >
+                {dbIsRefreshingEnv ? t('settings.db.refreshingFromEnv') : t('settings.db.refreshFromEnv')}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -604,17 +611,22 @@ export function DatabaseSettings() {
           </div>
 
           <div class="applicationSettingsView__actions">
-            <Button
-              label={dbIsSaving ? t('settings.action.saving') : t('settings.db.action.save')}
-              onAction={() => { void handleDbSave(); }}
-              isDisabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
-            />
-            <Button
-              label={dbIsTesting ? t('settings.action.testing') : t('settings.db.action.test')}
-              variant="outlined"
-              onAction={() => { void handleDbTest(); }}
-              isDisabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
-            />
+            <div class="ics-action-bar">
+              <button
+                class="ics-btn ics-btn--primary"
+                onClick={() => { void handleDbSave(); }}
+                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
+              >
+                {dbIsSaving ? t('settings.action.saving') : t('settings.db.action.save')}
+              </button>
+              <button
+                class="ics-btn"
+                onClick={() => { void handleDbTest(); }}
+                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
+              >
+                {dbIsTesting ? t('settings.action.testing') : t('settings.db.action.test')}
+              </button>
+            </div>
           </div>
           <p class="applicationSettingsView__hint">{t('settings.db.hint')}</p>
         </div>

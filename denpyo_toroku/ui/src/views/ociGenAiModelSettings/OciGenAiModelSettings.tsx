@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
-import { Cpu, Bot, Network, Sparkles } from 'lucide-react';
+
+import { Cpu, Bot, Network, Sparkles, RefreshCw } from 'lucide-react';
 import { apiGet, apiPost } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -211,13 +211,14 @@ export function OciGenAiModelSettings() {
           </div>
 
           <div class="applicationSettingsView__heroMeta">
-            <Button
-              label={isLoading ? t('settings.refreshing') : t('settings.refresh')}
-              variant="outlined"
-              size="sm"
-              onAction={() => { void loadSettings(); }}
-              isDisabled={isLoading || isSaving}
-            />
+            <button
+              class="ics-btn"
+              onClick={() => { void loadSettings(); }}
+              disabled={isLoading || isSaving}
+            >
+              <RefreshCw size={16} />
+              {isLoading ? t('settings.refreshing') : t('settings.refresh')}
+            </button>
           </div>
         </div>
 
@@ -324,36 +325,40 @@ export function OciGenAiModelSettings() {
           <div class="applicationSettingsView__modelToolbar oj-sm-margin-2x-top">
             <div class="applicationSettingsView__modelToolbarGroup">
               <span class="applicationSettingsView__toolbarLabel"><Sparkles size={14} /> {t('settings.action.save')}</span>
-              <Button
-                label={isSaving ? t('settings.action.saving') : t('settings.action.save')}
-                onAction={() => { void handleSave(); }}
-                isDisabled={isActionLocked}
-              />
+              <button
+                class="ics-btn"
+                onClick={() => { void handleSave(); }}
+                disabled={isActionLocked}
+              >
+                {isSaving ? t('settings.action.saving') : t('settings.action.save')}
+              </button>
             </div>
 
             <div class="applicationSettingsView__modelToolbarGroup">
               <span class="applicationSettingsView__toolbarLabel"><Bot size={14} /> Model Test</span>
-              <Button
-                label={isLlmTesting ? t('settings.model.action.testingLlm') : t('settings.model.action.testLlm')}
-                variant="outlined"
-                size="sm"
-                onAction={() => { void handleModelTest('llm'); }}
-                isDisabled={isActionLocked}
-              />
-              <Button
-                label={isVlmTesting ? t('settings.model.action.testingVlm') : t('settings.model.action.testVlm')}
-                variant="outlined"
-                size="sm"
-                onAction={() => { void handleModelTest('vlm'); }}
-                isDisabled={isActionLocked}
-              />
-              <Button
-                label={isEmbeddingTesting ? t('settings.model.action.testingEmbedding') : t('settings.model.action.testEmbedding')}
-                variant="outlined"
-                size="sm"
-                onAction={() => { void handleModelTest('embedding'); }}
-                isDisabled={isActionLocked}
-              />
+              <div class="ics-action-bar">
+                <button
+                  class="ics-btn"
+                  onClick={() => { void handleModelTest('llm'); }}
+                  disabled={isActionLocked}
+                >
+                  {isLlmTesting ? t('settings.model.action.testingLlm') : t('settings.model.action.testLlm')}
+                </button>
+                <button
+                  class="ics-btn"
+                  onClick={() => { void handleModelTest('vlm'); }}
+                  disabled={isActionLocked}
+                >
+                  {isVlmTesting ? t('settings.model.action.testingVlm') : t('settings.model.action.testVlm')}
+                </button>
+                <button
+                  class="ics-btn"
+                  onClick={() => { void handleModelTest('embedding'); }}
+                  disabled={isActionLocked}
+                >
+                  {isEmbeddingTesting ? t('settings.model.action.testingEmbedding') : t('settings.model.action.testEmbedding')}
+                </button>
+              </div>
             </div>
           </div>
 
