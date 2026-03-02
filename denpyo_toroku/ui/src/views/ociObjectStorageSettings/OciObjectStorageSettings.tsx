@@ -148,7 +148,7 @@ export function OciObjectStorageSettings() {
           </div>
           <div class="applicationSettingsView__actions">
             <button
-              class="ics-btn ics-btn--primary"
+              class="ics-ops-btn ics-ops-btn--primary"
               onClick={() => { void handleSave(); }}
               disabled={isLoading || isSaving}
             >

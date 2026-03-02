@@ -212,12 +212,12 @@ export function OciGenAiModelSettings() {
 
           <div class="applicationSettingsView__heroMeta">
             <button
-              class="ics-btn"
+              class="ics-ops-btn ics-ops-btn--primary"
               onClick={() => { void loadSettings(); }}
               disabled={isLoading || isSaving}
             >
-              <RefreshCw size={16} />
-              {isLoading ? t('settings.refreshing') : t('settings.refresh')}
+              <RefreshCw size={14} class={isLoading ? 'ics-spin' : ''} />
+              <span>{isLoading ? t('settings.refreshing') : t('settings.refresh')}</span>
             </button>
           </div>
         </div>
@@ -326,7 +326,7 @@ export function OciGenAiModelSettings() {
             <div class="applicationSettingsView__modelToolbarGroup">
               <span class="applicationSettingsView__toolbarLabel"><Sparkles size={14} /> {t('settings.action.save')}</span>
               <button
-                class="ics-btn"
+                class="ics-ops-btn ics-ops-btn--primary"
                 onClick={() => { void handleSave(); }}
                 disabled={isActionLocked}
               >
@@ -338,21 +338,21 @@ export function OciGenAiModelSettings() {
               <span class="applicationSettingsView__toolbarLabel"><Bot size={14} /> Model Test</span>
               <div class="ics-action-bar">
                 <button
-                  class="ics-btn"
+                  class="ics-ops-btn ics-ops-btn--ghost"
                   onClick={() => { void handleModelTest('llm'); }}
                   disabled={isActionLocked}
                 >
                   {isLlmTesting ? t('settings.model.action.testingLlm') : t('settings.model.action.testLlm')}
                 </button>
                 <button
-                  class="ics-btn"
+                  class="ics-ops-btn ics-ops-btn--ghost"
                   onClick={() => { void handleModelTest('vlm'); }}
                   disabled={isActionLocked}
                 >
                   {isVlmTesting ? t('settings.model.action.testingVlm') : t('settings.model.action.testVlm')}
                 </button>
                 <button
-                  class="ics-btn"
+                  class="ics-ops-btn ics-ops-btn--ghost"
                   onClick={() => { void handleModelTest('embedding'); }}
                   disabled={isActionLocked}
                 >

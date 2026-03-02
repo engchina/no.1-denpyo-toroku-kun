@@ -485,14 +485,14 @@ export function DatabaseSettings() {
           <div class="applicationSettingsView__actions" style="margin-bottom: 20px;">
             <div class="ics-action-bar">
               <button
-                class="ics-btn"
+                class="ics-ops-btn ics-ops-btn--primary"
                 onClick={() => { void handleAdbStart(); }}
                 disabled={adbIsLoading || adbIsStarting || adbIsStopping || !dbSettings.adb_ocid}
               >
                 {adbIsStarting ? t('settings.adb.action.starting') : t('settings.adb.action.start')}
               </button>
               <button
-                class="ics-btn"
+                class="ics-ops-btn ics-ops-btn--ghost"
                 onClick={() => { void handleAdbStop(); }}
                 disabled={adbIsLoading || adbIsStarting || adbIsStopping || !dbSettings.adb_ocid}
               >
@@ -613,14 +613,14 @@ export function DatabaseSettings() {
           <div class="applicationSettingsView__actions">
             <div class="ics-action-bar">
               <button
-                class="ics-btn ics-btn--primary"
+                class="ics-ops-btn ics-ops-btn--primary"
                 onClick={() => { void handleDbSave(); }}
                 disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
               >
                 {dbIsSaving ? t('settings.action.saving') : t('settings.db.action.save')}
               </button>
               <button
-                class="ics-btn"
+                class="ics-ops-btn ics-ops-btn--ghost"
                 onClick={() => { void handleDbTest(); }}
                 disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
               >

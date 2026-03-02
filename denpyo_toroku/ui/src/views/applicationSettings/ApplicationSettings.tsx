@@ -386,14 +386,14 @@ export function ApplicationSettings() {
           <div class="applicationSettingsView__actions">
             <div class="ics-action-bar">
               <button
-                class="ics-btn ics-btn--primary"
+                class="ics-ops-btn ics-ops-btn--primary"
                 onClick={() => { void handleSave(); }}
                 disabled={isLoading || isSaving || isTesting}
               >
                 {isSaving ? t('settings.action.saving') : t('settings.action.save')}
               </button>
               <button
-                class="ics-btn"
+                class="ics-ops-btn ics-ops-btn--ghost"
                 onClick={() => { void handleTestConnection(); }}
                 disabled={isLoading || isSaving || isTesting}
               >

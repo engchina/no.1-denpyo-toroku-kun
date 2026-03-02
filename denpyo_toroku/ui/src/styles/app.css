@@ -5550,17 +5550,28 @@ html[dir="rtl"] .oracle-icon {
     background: linear-gradient(135deg, #206ab7 0%, #1a4f8e 100%);
     border-color: #194f8e;
     color: #fff;
+    transition: all 0.2s ease;
+}
+
+.ics-ops-btn--primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #2779d1 0%, #1f5ca3 100%);
+    border-color: #1c5294;
+    box-shadow: 0 4px 12px rgba(32, 106, 183, 0.2);
+    transform: translateY(-1px);
 }
 
 .ics-ops-btn--ghost {
     background: #fff;
     border-color: #d3deea;
     color: #2a5586;
+    transition: all 0.2s ease;
 }
 
 .ics-ops-btn--ghost:hover:not(:disabled) {
     background: #f3f8ff;
     border-color: #b6c9de;
+    color: #1a4f8e;
+    box-shadow: 0 2px 8px rgba(42, 85, 134, 0.08);
 }
 
 .ics-ops-btn--accent {
@@ -6919,13 +6930,27 @@ html[dir="rtl"] .oracle-icon {
 /* ─── Toast Notification ──────────────────────────────────────────────────── */
 
 @keyframes ics-toast-slide-in {
-    from { transform: translateX(100%); opacity: 0; }
-    to   { transform: translateX(0);    opacity: 1; }
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
 }
 
 @keyframes ics-toast-slide-out {
-    from { transform: translateX(0);    opacity: 1; }
-    to   { transform: translateX(100%); opacity: 0; }
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
 }
 
 .ics-toast-container {

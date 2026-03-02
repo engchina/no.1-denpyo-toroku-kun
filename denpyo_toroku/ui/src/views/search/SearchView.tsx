@@ -238,7 +238,7 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
         <div class="ics-search-actions">
           <button
             type="button"
-            class="ics-btn ics-btn--primary"
+            class="ics-ops-btn ics-ops-btn--primary"
             onClick={handleSearch}
             disabled={!query.trim() || noTables || isLoading}
           >
