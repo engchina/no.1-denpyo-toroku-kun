@@ -455,12 +455,12 @@ export function DatabaseSettings() {
           </div>
           <div class="applicationSettingsView__headerActions">
             <button
-              class="ics-btn"
+              class="ics-ops-btn ics-ops-btn--ghost"
               onClick={() => { void loadAdbInfo(); }}
               disabled={adbIsLoading || adbIsStarting || adbIsStopping}
             >
-              <RefreshCw size={16} />
-              {adbIsLoading ? t('settings.adb.refreshing') : t('settings.adb.refresh')}
+              <RefreshCw size={14} class={adbIsLoading ? 'ics-spin' : ''} />
+              <span>{adbIsLoading ? t('settings.adb.refreshing') : t('settings.adb.refresh')}</span>
             </button>
             <StatusBadge variant={getAdbStatusVariant(adbInfo?.lifecycle_state)}>
               {adbInfo?.lifecycle_state ? getAdbLifecycleLabel(adbInfo.lifecycle_state) : t('settings.adb.statusUnknown')}
@@ -546,19 +546,19 @@ export function DatabaseSettings() {
           <div class="applicationSettingsView__headerActions">
             <div class="ics-action-bar">
               <button
-                class="ics-btn"
+                class="ics-ops-btn ics-ops-btn--ghost"
                 onClick={() => { void loadDatabaseSettings(); }}
                 disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
               >
-                <RefreshCw size={16} />
-                {dbIsLoading ? t('settings.refreshing') : t('settings.refresh')}
+                <RefreshCw size={14} class={dbIsLoading ? 'ics-spin' : ''} />
+                <span>{dbIsLoading ? t('settings.refreshing') : t('settings.refresh')}</span>
               </button>
               <button
-                class="ics-btn"
+                class="ics-ops-btn ics-ops-btn--ghost"
                 onClick={() => { void handleDbRefreshFromEnv(); }}
                 disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
               >
-                {dbIsRefreshingEnv ? t('settings.db.refreshingFromEnv') : t('settings.db.refreshFromEnv')}
+                <span>{dbIsRefreshingEnv ? t('settings.db.refreshingFromEnv') : t('settings.db.refreshFromEnv')}</span>
               </button>
             </div>
           </div>

@@ -278,12 +278,12 @@ export function ApplicationSettings() {
           </div>
           <div class="applicationSettingsView__headerActions">
             <button
-              class="ics-btn"
+              class="ics-ops-btn ics-ops-btn--ghost"
               onClick={() => { void loadSettings(); }}
               disabled={isLoading || isSaving || isTesting}
             >
-              <RefreshCw size={16} />
-              {isLoading ? t('settings.refreshing') : t('settings.refresh')}
+              <RefreshCw size={14} class={isLoading ? 'ics-spin' : ''} />
+              <span>{isLoading ? t('settings.refreshing') : t('settings.refresh')}</span>
             </button>
           </div>
         </div>
