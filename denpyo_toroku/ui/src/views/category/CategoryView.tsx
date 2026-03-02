@@ -62,6 +62,7 @@ import {
   FileText,
   Table2,
   ImageIcon,
+  ArrowLeft,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
@@ -911,7 +912,6 @@ type CategoryViewMode = 'samples' | 'management';
 export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) {
   const dispatch = useAppDispatch();
   const { requestConfirm, confirmToast } = useToastConfirm();
-  const analysisPanelRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const initialSearchParams = getCurrentSearchParams();
@@ -1154,12 +1154,6 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     });
   }, []);
 
-  // 分析結果が届いたらパネルへスクロール
-  useEffect(() => {
-    if (categoryAnalysisResult && analysisPanelRef.current) {
-      analysisPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, [categoryAnalysisResult]);
 
   // ── File selection ──────────────────────────────────────────────────────────
 
@@ -1736,6 +1730,41 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     });
   }, [previewTableName, previewRowSelection.selectedCount, previewRowSelection.selectedIds, requestConfirm, requestCategoryPreview, dispatch, previewRowSelection]);
 
+  // ─── Result sub-page mode: 分析結果を別ページとして表示 ───
+  const isResultSubPage = mode === 'samples' && !!resultFileId && !!categoryAnalysisResult;
+
+  if (isResultSubPage) {
+    return (
+      <div class="ics-dashboard ics-dashboard--enhanced">
+        {/* Sub-page Hero Header */}
+        <section class="ics-ops-hero">
+          <div class="ics-ops-hero__header">
+            <div>
+              <h2>{t('category.sample.title')}</h2>
+              <p class="ics-ops-hero__subtitle">{t('category.sample.subtitle')}</p>
+            </div>
+            <div class="ics-ops-hero__controls">
+              <button class="ics-ops-btn ics-ops-btn--ghost" onClick={handleDesignerClose}>
+                <ArrowLeft size={14} />
+                <span>{t('analysis.backToList')}</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* TableDesignerPanel as full sub-page content */}
+        <TableDesignerPanel
+          analysisResult={categoryAnalysisResult}
+          onConfirm={handleCreateCategory}
+          onClose={handleDesignerClose}
+          isCreating={isCategoryCreating}
+        />
+
+        {confirmToast}
+      </div>
+    );
+  }
+
   return (
     <div class="ics-dashboard ics-dashboard--enhanced">
       {/* Page Header */}
@@ -1977,17 +2006,6 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
             </div>
           )}
 
-          {/* ═══ Section: AI分析結果 テーブルデザイナー（インラインパネル） ═══ */}
-          {categoryAnalysisResult && (
-            <div ref={analysisPanelRef}>
-              <TableDesignerPanel
-                analysisResult={categoryAnalysisResult}
-                onConfirm={handleCreateCategory}
-                onClose={handleDesignerClose}
-                isCreating={isCategoryCreating}
-              />
-            </div>
-          )}
         </>
       )}
 
