@@ -55,6 +55,7 @@ _DB_REQUIRED_WALLET_FILES = ("cwallet.sso", "ewallet.pem", "sqlnet.ora", "tnsnam
 _DB_UNNECESSARY_WALLET_FILES = ("README", "keystore.jks", "truststore.jks", "ojdbc.properties", "ewallet.p12")
 _DB_TEST_TIMEOUT_SECONDS = 15  # DB接続テストの最大待機時間（秒）
 _DB_TEST_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="db_test_")
+_ANALYSIS_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="analysis_job_")
 _OCI_KEY_PATTERN = re.compile(
     r"-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----"
 )
@@ -1749,6 +1750,9 @@ def get_file_detail(file_id: int):
             "file_type": file_record.get("content_type", ""),
             "file_size": file_record.get("file_size", 0),
             "status": file_record.get("status", ""),
+            "analysis_kind": file_record.get("analysis_kind", ""),
+            "has_analysis_result": bool(file_record.get("has_analysis_result")),
+            "analyzed_at": file_record.get("analyzed_at", ""),
             "uploaded_by": file_record.get("uploaded_by", ""),
             "uploaded_at": file_record.get("uploaded_at", ""),
         })
@@ -1756,6 +1760,32 @@ def get_file_detail(file_id: int):
     except Exception as e:
         logging.error("ファイル詳細取得エラー (id=%s): %s", file_id, e, exc_info=True)
         g.response.add_error_message(f"ファイル詳細の取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/files/<int:file_id>/analysis-result", methods=["GET"])
+def get_file_analysis_result(file_id: int):
+    """保存済みの AI 分析結果を取得"""
+    try:
+        db_service = DatabaseService()
+        file_record = db_service.get_file_by_id(file_id)
+        if not file_record:
+            g.response.add_error_message("ファイルが見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        analysis_result = db_service.get_analysis_result(file_id)
+        if not analysis_result:
+            if file_record.get("status") == "ANALYZING":
+                g.response.add_error_message("AI分析はまだ完了していません")
+                return jsonify(g.response.get_result()), 409
+            g.response.add_error_message("分析結果がありません")
+            return jsonify(g.response.get_result()), 404
+
+        g.response.set_data(analysis_result)
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("分析結果取得エラー (id=%s): %s", file_id, e, exc_info=True)
+        g.response.add_error_message(f"分析結果の取得に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
 
 
@@ -1767,30 +1797,9 @@ def preview_file(file_id: int):
 
     try:
         db_service = DatabaseService()
-        upload_kind = _normalize_text(request.args.get("upload_kind"), "").lower()
-        if upload_kind not in ("raw", "category"):
-            upload_kind = ""
-
-        if upload_kind == "category":
-            slips_rows = db_service.get_slips_category_files_by_ids([file_id])
-            slips_row = slips_rows[0] if slips_rows else None
-            file_record = {
-                "id": slips_row.get("id"),
-                "original_file_name": slips_row.get("file_name", ""),
-                "object_storage_path": slips_row.get("object_name", ""),
-                "content_type": slips_row.get("content_type", "application/octet-stream"),
-            } if slips_row else None
-        elif upload_kind == "raw":
-            slips_rows = db_service.get_slips_raw_files_by_ids([file_id])
-            slips_row = slips_rows[0] if slips_rows else None
-            file_record = {
-                "id": slips_row.get("id"),
-                "original_file_name": slips_row.get("file_name", ""),
-                "object_storage_path": slips_row.get("object_name", ""),
-                "content_type": slips_row.get("content_type", "application/octet-stream"),
-            } if slips_row else None
-        else:
-            file_record = db_service.get_file_by_id(file_id)
+        # フロントエンドは常に DENPYO_FILES.ID を送信するため、
+        # upload_kind に関わらず DENPYO_FILES から取得する
+        file_record = db_service.get_file_by_id(file_id)
 
         if not file_record:
             g.response.add_error_message("ファイルが見つかりません")
@@ -2013,6 +2022,309 @@ def bulk_delete_files():
     return jsonify(g.response.get_result())
 
 
+def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> None:
+    """本登録用伝票の AI 分析をバックグラウンド実行する"""
+    from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
+    from denpyo_toroku.app.services.document_processor import DocumentProcessor
+    from denpyo_toroku.app.services.ai_service import AIService
+
+    db_service = DatabaseService()
+
+    try:
+        category = db_service.get_category_by_id(category_id)
+        if not category:
+            raise ValueError("指定カテゴリが見つかりません")
+        if not category.get("is_active", False):
+            raise ValueError("指定カテゴリは無効です")
+
+        table_schema = db_service.get_category_table_schema(category_id)
+        if not table_schema:
+            logging.warning(
+                "カテゴリ構造の取得に失敗したため、テーブル名のみで分析を継続します (category_id=%s)",
+                category_id,
+            )
+            table_schema = {
+                "header_table_name": category.get("header_table_name", ""),
+                "line_table_name": category.get("line_table_name", ""),
+                "header_columns": [],
+                "line_columns": [],
+            }
+
+        file_record = db_service.get_file_by_id(file_id)
+        if not file_record:
+            raise ValueError("ファイルが見つかりません")
+
+        storage_path = file_record.get("object_storage_path", "")
+        if not storage_path:
+            raise ValueError("ストレージパスが設定されていません")
+
+        storage_service = OCIStorageService()
+        file_data = storage_service.download_file(storage_path)
+        if not file_data:
+            raise ValueError("Object Storage からファイルをダウンロードできませんでした")
+
+        doc_processor = DocumentProcessor()
+        images = doc_processor.prepare_for_ai(file_data, file_record.get("original_file_name", ""))
+        if not images:
+            raise ValueError("ファイルをAI分析用に変換できませんでした")
+
+        image_data, content_type = images[0]
+        ai_service = AIService()
+
+        suffix = ".jpg" if content_type in ("image/jpeg", "image/jpg") else ".png"
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(image_data)
+
+            ocr_result = ai_service.extract_text_from_images([tmp_path])
+            if not ocr_result.get("success"):
+                raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
+            extracted_text = ocr_result.get("extracted_text", "")
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception as cleanup_error:
+                    logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", tmp_path, cleanup_error)
+
+        extraction = ai_service.extract_data_from_text(
+            ocr_text=extracted_text,
+            category=category.get("category_name", ""),
+            table_schema={
+                "header_table_name": table_schema.get("header_table_name", ""),
+                "line_table_name": table_schema.get("line_table_name", ""),
+                "header_columns": table_schema.get("header_columns", []),
+                "line_columns": table_schema.get("line_columns", []),
+            },
+        )
+        if not extraction.get("success"):
+            raise ValueError(extraction.get("message", "フィールド抽出に失敗しました"))
+
+        result = {
+            "file_id": str(file_id),
+            "file_name": file_record.get("original_file_name", ""),
+            "status": "ANALYZED",
+            "category_id": category_id,
+            "classification": {
+                "category": category.get("category_name", ""),
+                "confidence": 1.0,
+                "description": "選択カテゴリを適用",
+                "has_line_items": len(table_schema.get("line_columns", [])) > 0,
+            },
+            "extraction": {
+                "header_fields": extraction.get("header_fields", []),
+                "line_fields": extraction.get("line_fields", []),
+                "line_count": extraction.get("line_count", 0),
+                "raw_lines": extraction.get("raw_lines", []),
+            },
+            "ddl_suggestion": {
+                "table_prefix": category.get("category_name_en", "") or "",
+                "header_table_name": table_schema.get("header_table_name", ""),
+                "line_table_name": table_schema.get("line_table_name", ""),
+                "header_ddl": "",
+                "line_ddl": "",
+            },
+            "table_schema": {
+                "header_table_name": table_schema.get("header_table_name", ""),
+                "line_table_name": table_schema.get("line_table_name", ""),
+                "header_columns": table_schema.get("header_columns", []),
+                "line_columns": table_schema.get("line_columns", []),
+            },
+        }
+
+        if not db_service.save_analysis_result(file_id, "raw", result):
+            raise RuntimeError("分析結果の保存に失敗しました")
+
+        db_service.update_file_status(file_id, "ANALYZED")
+        db_service.log_activity(
+            activity_type="ANALYZE_COMPLETE",
+            description=(
+                f"ファイル '{file_record.get('original_file_name', '')}' の分析が完了"
+                f"（カテゴリ: {category.get('category_name', '')}）"
+            ),
+            file_id=file_id,
+            user_name=user_name,
+        )
+    except Exception as e:
+        logging.error("AI分析エラー (file_id=%s): %s", file_id, e, exc_info=True)
+        db_service.update_file_status(file_id, "ERROR")
+        db_service.log_activity(
+            activity_type="ANALYZE_ERROR",
+            description=f"分析エラー: {str(e)[:200]}",
+            file_id=file_id,
+            user_name=user_name,
+        )
+
+
+def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_name: str) -> None:
+    """分類用サンプル伝票の AI 分析をバックグラウンド実行する"""
+    from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
+    from denpyo_toroku.app.services.document_processor import DocumentProcessor
+    from denpyo_toroku.app.services.ai_service import AIService
+
+    db_service = DatabaseService()
+    storage_service = OCIStorageService()
+    doc_processor = DocumentProcessor()
+    ai_service = AIService()
+    tmp_filepaths: List[str] = []
+
+    try:
+        file_records = db_service.get_files_by_ids(file_ids)
+        if not file_records:
+            raise ValueError("指定されたファイルが見つかりません")
+
+        processed_file_ids: List[int] = []
+        for rec in file_records:
+            object_name = rec.get("object_name", "")
+            file_data = storage_service.download_file(object_name)
+            if not file_data:
+                logging.warning("ファイルダウンロード失敗: %s", object_name)
+                continue
+
+            images = doc_processor.prepare_for_ai(file_data, rec.get("original_file_name", ""))
+            if not images:
+                logging.warning("AI分析用画像の生成に失敗: %s", object_name)
+                continue
+
+            for image_data, img_content_type in images:
+                suffix = ".jpg" if img_content_type in ("image/jpeg", "image/jpg") else ".png"
+                fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+                with os.fdopen(fd, "wb") as f:
+                    f.write(image_data)
+                tmp_filepaths.append(tmp_path)
+            if rec.get("id"):
+                processed_file_ids.append(rec.get("id"))
+
+        if not tmp_filepaths:
+            raise ValueError("処理できる画像ファイルがありませんでした")
+
+        ocr_result = ai_service.extract_text_from_images(tmp_filepaths)
+        if not ocr_result.get("success"):
+            raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
+
+        extracted_text = ocr_result.get("extracted_text", "")
+        schema_result = ai_service.generate_sql_schema_from_text(extracted_text, analysis_mode)
+        if not schema_result.get("success"):
+            raise ValueError(f"AIによるスキーマ設計に失敗しました: {schema_result.get('message')}")
+
+        def _merge_fields(fields_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            seen: Dict[str, Dict[str, Any]] = {}
+            required_count: Dict[str, int] = {}
+            appear_count: Dict[str, int] = {}
+            for field in fields_list:
+                raw_key = (field.get("field_name_en") or "").strip()
+                if not raw_key:
+                    continue
+                key = raw_key.upper().replace(" ", "_").replace("-", "_")
+                data_type = (field.get("data_type") or "VARCHAR2").upper()
+                if data_type not in ("VARCHAR2", "NUMBER", "DATE", "TIMESTAMP", "CLOB"):
+                    data_type = "VARCHAR2"
+
+                if key not in seen:
+                    max_length = None
+                    if data_type == "VARCHAR2":
+                        try:
+                            max_length = int(field.get("max_length")) if field.get("max_length") else 100
+                        except (TypeError, ValueError):
+                            max_length = 100
+                    seen[key] = {
+                        "column_name": key,
+                        "column_name_jp": field.get("field_name") or raw_key,
+                        "data_type": data_type,
+                        "max_length": max_length,
+                        "precision": None,
+                        "scale": None,
+                        "is_nullable": True,
+                        "is_primary_key": False,
+                    }
+                    appear_count[key] = 1
+                    required_count[key] = 1 if field.get("is_required") else 0
+                    continue
+
+                existing_type = seen[key].get("data_type", "VARCHAR2")
+                if existing_type != data_type:
+                    seen[key]["data_type"] = "VARCHAR2"
+                    if not seen[key].get("max_length"):
+                        seen[key]["max_length"] = 100
+                    data_type = "VARCHAR2"
+
+                if data_type == "VARCHAR2":
+                    existing_len = seen[key].get("max_length") or 100
+                    try:
+                        new_len = int(field.get("max_length")) if field.get("max_length") else 100
+                    except (TypeError, ValueError):
+                        new_len = 100
+                    seen[key]["max_length"] = max(existing_len, new_len)
+                appear_count[key] += 1
+                if field.get("is_required"):
+                    required_count[key] += 1
+
+            for key in seen:
+                if required_count.get(key, 0) == appear_count.get(key, 0) and appear_count.get(key, 0) > 0:
+                    seen[key]["is_nullable"] = False
+
+            return list(seen.values())
+
+        header_columns = _merge_fields(schema_result.get("header_fields", []))
+        if not header_columns:
+            raise ValueError("分析できるファイルがありませんでした")
+
+        line_columns = _merge_fields(schema_result.get("line_fields", [])) if analysis_mode == "header_line" else []
+        category_guess = (schema_result.get("document_type_ja") or "").strip() or "伝票"
+        category_map = {
+            "請求書": "invoice",
+            "領収書": "receipt",
+            "納品書": "delivery_note",
+            "注文書": "purchase_order",
+            "見積書": "quotation",
+            "発注書": "order_sheet",
+        }
+        llm_doc_type_en = re.sub(
+            r"[^a-z0-9_]+",
+            "_",
+            (schema_result.get("document_type_en") or "").strip().lower(),
+        ).strip("_")
+        category_guess_en = llm_doc_type_en or category_map.get(category_guess, "slip")
+        analyzed_file_ids = list(dict.fromkeys(processed_file_ids))
+        result = {
+            "category_guess": category_guess,
+            "category_guess_en": category_guess_en,
+            "analysis_mode": analysis_mode,
+            "header_columns": header_columns,
+            "line_columns": line_columns,
+            "analyzed_file_ids": analyzed_file_ids,
+        }
+
+        for file_id in list(dict.fromkeys(file_ids)):
+            if not db_service.save_analysis_result(file_id, "category", result):
+                raise RuntimeError(f"分析結果の保存に失敗しました (file_id={file_id})")
+            db_service.update_file_status(file_id, "ANALYZED")
+            db_service.log_activity(
+                activity_type="CATEGORY_ANALYZE_COMPLETE",
+                description=f"分類用サンプル伝票の分析が完了しました (file_id={file_id})",
+                file_id=file_id,
+                user_name=user_name,
+            )
+    except Exception as e:
+        logging.error("分類用サンプル伝票のAI分析エラー (file_ids=%s): %s", file_ids, e, exc_info=True)
+        for file_id in file_ids:
+            db_service.update_file_status(file_id, "ERROR")
+            db_service.log_activity(
+                activity_type="CATEGORY_ANALYZE_ERROR",
+                description=f"分類用サンプル伝票の分析エラー: {str(e)[:200]}",
+                file_id=file_id,
+                user_name=user_name,
+            )
+    finally:
+        for path in tmp_filepaths:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception as cleanup_error:
+                logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", path, cleanup_error)
+
+
 @api_blueprint.route("/api/v1/files/<int:file_id>/analyze", methods=["POST"])
 def analyze_file(file_id: int):
     """伝票ファイルをAI分析する（カテゴリ指定 + フィールド抽出）"""
@@ -2026,6 +2338,7 @@ def analyze_file(file_id: int):
 
     try:
         body = request.get_json(silent=True) or {}
+        run_async = _to_bool(body.get("async"), False)
         raw_category_id = body.get("category_id")
         try:
             category_id = int(raw_category_id)
@@ -2068,6 +2381,23 @@ def analyze_file(file_id: int):
                 "message": f"このファイルは分析できません（現在のステータス: {current_status}）"
             })
             return jsonify(g.response.get_result()), 400
+
+        if run_async:
+            db_service.update_file_status(file_id, "ANALYZING")
+            db_service.log_activity(
+                activity_type="ANALYZE_START",
+                description=f"ファイル '{file_record.get('original_file_name', '')}' の分析を開始",
+                file_id=file_id,
+                user_name=user,
+            )
+            _ANALYSIS_EXECUTOR.submit(_queue_raw_file_analysis, file_id, category_id, user)
+            g.response.set_data({
+                "file_id": str(file_id),
+                "status": "ANALYZING",
+                "queued": True,
+                "message": "AI分析を受け付けました",
+            })
+            return jsonify(g.response.get_result()), 202
 
         # 3. ステータスを ANALYZING に更新
         db_service.update_file_status(file_id, "ANALYZING")
@@ -2200,6 +2530,9 @@ def analyze_file(file_id: int):
                 "line_columns": table_schema.get("line_columns", []),
             },
         }
+
+        if not db_service.save_analysis_result(file_id, "raw", result):
+            raise RuntimeError("分析結果の保存に失敗しました")
 
         g.response.set_data(result)
         return jsonify(g.response.get_result())
@@ -2476,6 +2809,7 @@ def analyze_slips_for_category():
     body = request.get_json(silent=True) or {}
     file_ids = body.get("file_ids", [])
     analysis_mode = body.get("analysis_mode", "header_line")
+    run_async = _to_bool(body.get("async"), False)
 
     if not isinstance(file_ids, list) or not (1 <= len(file_ids) <= 5):
         g.response.add_error_message("file_idsは1〜5件のIDリストを指定してください")
@@ -2490,8 +2824,34 @@ def analyze_slips_for_category():
         analysis_mode = "header_line"
 
     db_service = DatabaseService()
-    file_records = db_service.get_slips_category_files_by_ids(normalized_file_ids)
+    for file_id in normalized_file_ids:
+        db_service.update_file_status(file_id, "ANALYZING")
+        db_service.log_activity(
+            activity_type="CATEGORY_ANALYZE_START",
+            description=f"分類用サンプル伝票の分析を開始しました (file_id={file_id})",
+            file_id=file_id,
+            user_name=session.get("user", ""),
+        )
+
+    if run_async:
+        _ANALYSIS_EXECUTOR.submit(
+            _queue_category_slip_analysis,
+            normalized_file_ids,
+            analysis_mode,
+            session.get("user", ""),
+        )
+        g.response.set_data({
+            "queued": True,
+            "status": "ANALYZING",
+            "file_ids": normalized_file_ids,
+            "message": "AI分析を受け付けました",
+        })
+        return jsonify(g.response.get_result()), 202
+
+    file_records = db_service.get_files_by_ids(normalized_file_ids)
     if not file_records:
+        for file_id in normalized_file_ids:
+            db_service.update_file_status(file_id, "ERROR")
         g.response.add_error_message("指定されたファイルが見つかりません")
         return jsonify(g.response.get_result()), 404
 
@@ -2505,7 +2865,7 @@ def analyze_slips_for_category():
     tmp_filepaths = []
     processed_file_ids: List[int] = []
     schema_result: Dict[str, Any] = {}
-    
+
     try:
         # 1. すべてのファイルをダウンロードし、OCR用に画像化して /tmp に保存
         for rec in file_records:
@@ -2516,7 +2876,7 @@ def analyze_slips_for_category():
                     logging.warning("ファイルダウンロード失敗: %s", object_name)
                     continue
 
-                images = doc_processor.prepare_for_ai(file_data, rec.get("file_name", ""))
+                images = doc_processor.prepare_for_ai(file_data, rec.get("original_file_name", ""))
                 if not images:
                     logging.warning("AI分析用画像の生成に失敗: %s", object_name)
                     continue
@@ -2534,20 +2894,26 @@ def analyze_slips_for_category():
                 continue
 
         if not tmp_filepaths:
+            for file_id in normalized_file_ids:
+                db_service.update_file_status(file_id, "ERROR")
             g.response.add_error_message("処理できる画像ファイルがありませんでした")
             return jsonify(g.response.get_result()), 500
 
         # 2. VLMで画像からテキストを抽出（OCRの代替）
         ocr_result = ai_service.extract_text_from_images(tmp_filepaths)
         if not ocr_result.get("success"):
+            for file_id in normalized_file_ids:
+                db_service.update_file_status(file_id, "ERROR")
             g.response.add_error_message(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
             return jsonify(g.response.get_result()), 500
-            
+
         extracted_text = ocr_result.get("extracted_text", "")
 
         # 3. LLMで抽出テキストからスキーマ（JSON）を生成
         schema_result = ai_service.generate_sql_schema_from_text(extracted_text, analysis_mode)
         if not schema_result.get("success"):
+            for file_id in normalized_file_ids:
+                db_service.update_file_status(file_id, "ERROR")
             g.response.add_error_message(f"AIによるスキーマ設計に失敗しました: {schema_result.get('message')}")
             return jsonify(g.response.get_result()), 500
             
@@ -2568,6 +2934,8 @@ def analyze_slips_for_category():
 
 
     if not all_header_fields:
+        for file_id in normalized_file_ids:
+            db_service.update_file_status(file_id, "ERROR")
         g.response.add_error_message("分析できるファイルがありませんでした")
         return jsonify(g.response.get_result()), 500
 
@@ -2664,6 +3032,12 @@ def analyze_slips_for_category():
         "line_columns": line_columns,
         "analyzed_file_ids": analyzed_file_ids,
     }
+    for file_id in normalized_file_ids:
+        if not db_service.save_analysis_result(file_id, "category", result):
+            db_service.update_file_status(file_id, "ERROR")
+            g.response.add_error_message(f"分析結果の保存に失敗しました (file_id={file_id})")
+            return jsonify(g.response.get_result()), 500
+        db_service.update_file_status(file_id, "ANALYZED")
     g.response.set_data(result)
     return jsonify(g.response.get_result())
 

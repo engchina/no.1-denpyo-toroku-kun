@@ -3,6 +3,7 @@
  * ページングが必要な画面で再利用可能
  */
 import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { t } from '../i18n';
 
 export interface PaginationProps {
@@ -137,15 +138,8 @@ export function Pagination({
             {summaryText}
           </span>
         )}
-        <Button
-          label={t('common.previous')}
-          variant="outlined"
-          size="sm"
-          onAction={() => onPageChange(currentPage - 1)}
-          isDisabled={isFirstPage}
-        />
         {showGoToPage && (
-          <div class="oj-flex oj-sm-align-items-center ics-pagination__goto">
+          <div class="oj-flex oj-sm-align-items-center ics-pagination__goto oj-sm-margin-4x-end">
             <span class="oj-typography-body-sm oj-text-color-secondary ics-pagination__gotoLabel">
               {t('common.page')}
             </span>
@@ -168,13 +162,26 @@ export function Pagination({
             />
           </div>
         )}
-        <Button
-          label={t('common.next')}
-          variant="outlined"
-          size="sm"
-          onAction={() => onPageChange(currentPage + 1)}
-          isDisabled={isLastPage}
-        />
+        <div class="ics-pagination-group">
+          <button
+            class="ics-pagination-btn ics-pagination-btn--prev"
+            onClick={() => onPageChange(currentPage - 1)}
+            disabled={isFirstPage}
+            type="button"
+          >
+            <ChevronLeft size={16} />
+            <span>{t('common.previous')}</span>
+          </button>
+          <button
+            class="ics-pagination-btn ics-pagination-btn--next"
+            onClick={() => onPageChange(currentPage + 1)}
+            disabled={isLastPage}
+            type="button"
+          >
+            <span>{t('common.next')}</span>
+            <ChevronRight size={16} />
+          </button>
+        </div>
       </div>
     </nav>
   );

@@ -5995,28 +5995,62 @@ html[dir="rtl"] .oracle-icon {
     outline-offset: -2px;
 }
 
+.ics-pagination-group {
+    display: inline-flex;
+    align-items: center;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    border-radius: 6px;
+}
+
 .ics-pagination-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
+    gap: 4px;
     height: 32px;
+    padding: 0 12px;
     background: #fff;
     border: 1px solid #d1d5db;
-    border-radius: 6px;
-    color: #374151;
+    color: #4b5563;
+    font-size: 0.88rem;
+    font-weight: 500;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
+}
+
+.ics-pagination-btn--prev {
+    border-top-left-radius: 6px;
+    border-bottom-left-radius: 6px;
+    padding-left: 10px;
+}
+
+.ics-pagination-btn--next {
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+    border-left: none;
+    padding-right: 10px;
+}
+
+.ics-pagination-btn:focus-visible {
+    outline: 2px solid var(--aai-primary-lines-2);
+    outline-offset: -1px;
+    z-index: 1;
 }
 
 .ics-pagination-btn:hover:not(:disabled) {
-    background: #f3f4f6;
-    border-color: #9ca3af;
+    background: #f9fafb;
+    color: #111827;
 }
 
 .ics-pagination-btn:disabled {
-    opacity: 0.4;
+    opacity: 0.5;
     cursor: not-allowed;
+    background: #f3f4f6;
+    color: #9ca3af;
+}
+
+.ics-pagination-btn svg {
+    flex-shrink: 0;
 }
 
 .ics-pagination-info {

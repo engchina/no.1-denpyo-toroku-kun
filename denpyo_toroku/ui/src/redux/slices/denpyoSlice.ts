@@ -15,6 +15,7 @@ import type {
   FileUploadResponse,
   FileStatus,
   AnalysisResult,
+  AnalysisQueuedResponse,
   RegistrationRequest,
   RegistrationResponse,
   DenpyoCategory,
@@ -26,7 +27,8 @@ import type {
   TableBrowseResult,
   CategoryAnalysisResult,
   CategoryCreateRequest,
-  CategoryCreateResponse
+  CategoryCreateResponse,
+  StoredAnalysisResultResponse
 } from '../../types/denpyoTypes';
 import { apiGet, apiPost, apiPostWithTimeout, apiUpload, apiDelete, apiPut, apiPatch } from '../../utils/apiUtils';
 
@@ -137,9 +139,17 @@ export const bulkDeleteFiles = createAsyncThunk(
 export const analyzeFile = createAsyncThunk(
   'denpyo/analyzeFile',
   async (params: { fileId: string; categoryId: number }) => {
-    return await apiPost<AnalysisResult>(`/api/v1/files/${params.fileId}/analyze`, {
-      category_id: params.categoryId
+    return await apiPost<AnalysisQueuedResponse>(`/api/v1/files/${params.fileId}/analyze`, {
+      category_id: params.categoryId,
+      async: true,
     });
+  }
+);
+
+export const fetchAnalysisResult = createAsyncThunk(
+  'denpyo/fetchAnalysisResult',
+  async (fileId: string) => {
+    return await apiGet<StoredAnalysisResultResponse<AnalysisResult>>(`/api/v1/files/${fileId}/analysis-result`);
   }
 );
 
@@ -200,11 +210,17 @@ export const fetchSlipsCategoryFiles = createAsyncThunk(
 export const analyzeSlipsForCategory = createAsyncThunk(
   'denpyo/analyzeSlipsForCategory',
   async (params: { fileIds: number[]; analysisMode: 'header_only' | 'header_line' }) => {
-    return await apiPostWithTimeout<CategoryAnalysisResult>(
+    return await apiPost<AnalysisQueuedResponse>(
       '/api/v1/categories/analyze-slips',
-      { file_ids: params.fileIds, analysis_mode: params.analysisMode },
-      120000
+      { file_ids: params.fileIds, analysis_mode: params.analysisMode, async: true },
     );
+  }
+);
+
+export const fetchCategoryAnalysisResult = createAsyncThunk(
+  'denpyo/fetchCategoryAnalysisResult',
+  async (fileId: string) => {
+    return await apiGet<StoredAnalysisResultResponse<CategoryAnalysisResult>>(`/api/v1/files/${fileId}/analysis-result`);
   }
 );
 
@@ -420,7 +436,6 @@ const denpyoSlice = createSlice({
       .addCase(analyzeFile.pending, (state, action) => {
         state.isAnalyzing = true;
         state.analyzingFileId = action.meta.arg.fileId;
-        state.analysisResult = null;
         // fileList内のステータスをANALYZINGに更新
         const file = state.fileList.files.find(
           f => String(f.file_id) === String(action.meta.arg.fileId)
@@ -429,13 +444,12 @@ const denpyoSlice = createSlice({
       })
       .addCase(analyzeFile.fulfilled, (state, action) => {
         state.isAnalyzing = false;
-        state.analysisResult = action.payload;
         state.analyzingFileId = null;
-        // fileList内のステータスをANALYZEDに更新
+        // 非同期実行のため、完了までは ANALYZING のまま維持する
         const file = state.fileList.files.find(
-          f => String(f.file_id) === String(action.payload.file_id)
+          f => String(f.file_id) === String(action.meta.arg.fileId)
         );
-        if (file) file.status = 'ANALYZED';
+        if (file) file.status = 'ANALYZING';
       })
       .addCase(analyzeFile.rejected, (state, action) => {
         state.isAnalyzing = false;
@@ -448,6 +462,28 @@ const denpyoSlice = createSlice({
           if (file) file.status = 'ERROR';
         }
         state.analyzingFileId = null;
+      });
+
+    builder
+      .addCase(fetchAnalysisResult.pending, (state) => {
+        state.isAnalyzing = true;
+        state.analysisResult = null;
+      })
+      .addCase(fetchAnalysisResult.fulfilled, (state, action) => {
+        state.isAnalyzing = false;
+        state.analysisResult = action.payload.result;
+        state.analyzingFileId = null;
+        const file = state.fileList.files.find(
+          f => String(f.file_id) === String(action.payload.result.file_id)
+        );
+        if (file) {
+          file.status = action.payload.result.status;
+          file.has_analysis_result = true;
+        }
+      })
+      .addCase(fetchAnalysisResult.rejected, (state, action) => {
+        state.isAnalyzing = false;
+        state.error = action.error.message || '分析結果の取得に失敗しました';
       });
 
     // Register File
@@ -533,15 +569,40 @@ const denpyoSlice = createSlice({
     builder
       .addCase(analyzeSlipsForCategory.pending, (state) => {
         state.isCategoryAnalyzing = true;
-        state.categoryAnalysisResult = null;
       })
       .addCase(analyzeSlipsForCategory.fulfilled, (state, action) => {
         state.isCategoryAnalyzing = false;
-        state.categoryAnalysisResult = action.payload;
+        const targetIds = new Set((action.meta.arg.fileIds || []).map(id => String(id)));
+        state.slipsCategoryFiles = state.slipsCategoryFiles.map(file => (
+          targetIds.has(String(file.file_id))
+            ? { ...file, status: 'ANALYZING' }
+            : file
+        ));
       })
       .addCase(analyzeSlipsForCategory.rejected, (state, action) => {
         state.isCategoryAnalyzing = false;
         state.error = action.error.message || 'AI分析に失敗しました';
+      });
+
+    builder
+      .addCase(fetchCategoryAnalysisResult.pending, (state) => {
+        state.isCategoryAnalyzing = true;
+        state.categoryAnalysisResult = null;
+      })
+      .addCase(fetchCategoryAnalysisResult.fulfilled, (state, action) => {
+        state.isCategoryAnalyzing = false;
+        state.categoryAnalysisResult = action.payload.result;
+        const matchedIds = new Set((action.payload.result.analyzed_file_ids || []).map(id => String(id)));
+        const requestedFileId = String(action.meta.arg);
+        state.slipsCategoryFiles = state.slipsCategoryFiles.map(file => (
+          matchedIds.has(String(file.file_id)) || String(file.file_id) === requestedFileId
+            ? { ...file, status: 'ANALYZED', has_analysis_result: true }
+            : file
+        ));
+      })
+      .addCase(fetchCategoryAnalysisResult.rejected, (state, action) => {
+        state.isCategoryAnalyzing = false;
+        state.error = action.error.message || '分析結果の取得に失敗しました';
       });
 
     builder

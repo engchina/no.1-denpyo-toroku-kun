@@ -19,6 +19,7 @@ import {
   bulkDeleteFiles,
   fetchSlipsCategoryFiles,
   analyzeSlipsForCategory,
+  fetchCategoryAnalysisResult,
   createCategoryWithTables,
   clearCategoryAnalysis,
   setSlipsCategoryPage,
@@ -31,8 +32,10 @@ import { usePagination } from '../../hooks/usePagination';
 import { useSelection } from '../../hooks/useSelection';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
+import { APP_ROUTES } from '../../constants/routes';
 import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
 import { apiPost } from '../../utils/apiUtils';
+import { useLocation, useNavigate } from 'react-router-dom';
 import type {
   DenpyoCategory,
   DenpyoFile,
@@ -64,6 +67,7 @@ import {
   ArrowDown,
   CheckCircle2,
   MinusCircle,
+  FileSearch,
 } from 'lucide-react';
 import { StatusBadge } from '../../components/common/StatusBadge';
 
@@ -167,6 +171,40 @@ function formatCellValue(value: any): string {
     return JSON.stringify(value);
   }
   return String(value);
+}
+
+function FileStatusBadge({ status }: { status: DenpyoFile['status'] }) {
+  const variantMap: Record<DenpyoFile['status'], 'info' | 'warning' | 'success' | 'primary' | 'error'> = {
+    UPLOADED: 'info',
+    ANALYZING: 'warning',
+    ANALYZED: 'success',
+    REGISTERED: 'primary',
+    ERROR: 'error',
+  };
+  const iconMap: Record<DenpyoFile['status'], any> = {
+    UPLOADED: FileText,
+    ANALYZING: Loader2,
+    ANALYZED: CheckCircle2,
+    REGISTERED: Database,
+    ERROR: MinusCircle,
+  };
+  const labelMap: Record<DenpyoFile['status'], Parameters<typeof t>[0]> = {
+    UPLOADED: 'fileList.status.uploaded',
+    ANALYZING: 'fileList.status.analyzing',
+    ANALYZED: 'fileList.status.analyzed',
+    REGISTERED: 'fileList.status.registered',
+    ERROR: 'fileList.status.error',
+  };
+  const Icon = iconMap[status] || FileText;
+  return (
+    <StatusBadge variant={variantMap[status] || 'info'} icon={status === 'ANALYZING' ? () => <Icon size={14} class="ics-spin" /> : Icon}>
+      {t(labelMap[status] || 'fileList.status.uploaded')}
+    </StatusBadge>
+  );
+}
+
+function hasViewableResult(file: Pick<DenpyoFile, 'status' | 'has_analysis_result'>): boolean {
+  return Boolean(file.has_analysis_result) || file.status === 'ANALYZED' || file.status === 'REGISTERED';
 }
 
 // ─── Category Edit Modal (existing CRUD) ─────────────────────────────────────
@@ -869,7 +907,10 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const dispatch = useAppDispatch();
   const { requestConfirm, confirmToast } = useToastConfirm();
   const analysisPanelRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
   const initialSearchParams = getCurrentSearchParams();
+  const resultFileId = new URLSearchParams(location.search).get('resultFileId');
 
   // Redux state
   const categories = useAppSelector(state => state.denpyo.categories);
@@ -1036,6 +1077,21 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     }
     loadCategories();
   }, [mode, isSamplesQueryReady, loadSlipsFiles, loadCategories]);
+
+  useEffect(() => {
+    if (mode !== 'samples' || !isSamplesQueryReady) return;
+    const hasAnalyzingFiles = slipsCategoryFiles.some(file => file.status === 'ANALYZING');
+    if (!hasAnalyzingFiles) return;
+    const timer = window.setInterval(() => {
+      loadSlipsFiles();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [isSamplesQueryReady, loadSlipsFiles, mode, slipsCategoryFiles]);
+
+  useEffect(() => {
+    if (mode !== 'samples' || !resultFileId) return;
+    dispatch(fetchCategoryAnalysisResult(resultFileId));
+  }, [dispatch, mode, resultFileId]);
 
   useEffect(() => {
     if (mode !== 'samples' || !isSamplesQueryReady) return;
@@ -1260,6 +1316,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
 
   const handleAnalysisModeConfirm = async (mode: 'header_only' | 'header_line') => {
     setShowAnalysisModeModal(false);
+    dispatch(clearCategoryAnalysis());
     try {
       await dispatch(
         analyzeSlipsForCategory({
@@ -1267,6 +1324,14 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
           analysisMode: mode,
         })
       ).unwrap();
+      loadSlipsFiles();
+      dispatch(
+        addNotification({
+          type: 'success',
+          message: t('category.notify.analyzeQueued'),
+          autoClose: true,
+        })
+      );
     } catch {
       dispatch(
         addNotification({
@@ -1281,7 +1346,25 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const handleDesignerClose = () => {
     dispatch(clearCategoryAnalysis());
     setSelectedFileIds(new Set());
+    if (mode === 'samples' && resultFileId) {
+      navigate(APP_ROUTES.categorySamples, { replace: true });
+    }
   };
+
+  const handleViewCategoryResult = useCallback(async (fileId: string) => {
+    try {
+      await dispatch(fetchCategoryAnalysisResult(fileId)).unwrap();
+      navigate(`${APP_ROUTES.categorySamples}?resultFileId=${encodeURIComponent(fileId)}`);
+    } catch (e: any) {
+      dispatch(
+        addNotification({
+          type: 'error',
+          message: e?.message || t('analysis.noStoredResult'),
+          autoClose: true,
+        })
+      );
+    }
+  }, [dispatch, navigate]);
 
   const handleCreateCategory = async (req: CategoryCreateRequest) => {
     try {
@@ -1295,6 +1378,9 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       );
       dispatch(clearCategoryAnalysis());
       setSelectedFileIds(new Set());
+      if (mode === 'samples' && resultFileId) {
+        navigate(APP_ROUTES.categorySamples, { replace: true });
+      }
     } catch {
       dispatch(
         addNotification({
@@ -1730,6 +1816,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                               {renderSlipsSortIcon('file_size')}
                             </button>
                           </th>
+                          <th>{t('fileList.col.status')}</th>
                           <th>
                             <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleSlipsSort('uploaded_at')}>
                               {t('category.slipsFiles.colUploadedAt')}
@@ -1774,6 +1861,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                 <code class="ics-code">{file.file_type || t('upload.kind.category')}</code>
                               </td>
                               <td>{formatFileSize(file.file_size)}</td>
+                              <td><FileStatusBadge status={file.status} /></td>
                               <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
                               <td class="ics-fileListView__actions" onClick={(e: Event) => e.stopPropagation()}>
                                 <button
@@ -1786,12 +1874,21 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                 </button>
                                 <button
                                   type="button"
+                                  class="ics-ops-btn ics-ops-btn--ghost"
+                                  onClick={() => handleViewCategoryResult(fileId)}
+                                  title={t('fileList.viewResult')}
+                                  disabled={!hasViewableResult(file)}
+                                >
+                                  <FileSearch size={14} />
+                                </button>
+                                <button
+                                  type="button"
                                   class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
                                   onClick={() => handleAnalyzeSingleFile(fileId)}
-                                  disabled={isCategoryAnalyzing || !!categoryAnalysisResult}
+                                  disabled={isCategoryAnalyzing || !['UPLOADED', 'ERROR'].includes(file.status)}
                                   title={t('fileList.analyzeFile')}
                                 >
-                                  {isCategoryAnalyzing
+                                  {isCategoryAnalyzing && selectedFileIds.has(fileId)
                                     ? <Loader2 size={14} class="ics-spin" />
                                     : <Sparkles size={14} />
                                   }

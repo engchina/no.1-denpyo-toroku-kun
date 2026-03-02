@@ -58,6 +58,7 @@ export interface DenpyoFile {
   uploaded_at: string;
   uploaded_by?: string;
   status: FileStatus;
+  has_analysis_result?: boolean;
   category_id?: string;
   category_name?: string;
   registered_at?: string;
@@ -174,6 +175,20 @@ export interface AnalysisResult {
   extraction: FieldExtraction;
   ddl_suggestion: DDLSuggestion;
   table_schema?: CategoryTableSchema;
+}
+
+export interface AnalysisQueuedResponse {
+  file_id?: string;
+  file_ids?: number[];
+  status: FileStatus;
+  queued: boolean;
+  message?: string;
+}
+
+export interface StoredAnalysisResultResponse<T> {
+  analysis_kind: 'raw' | 'category' | string;
+  result: T;
+  analyzed_at?: string;
 }
 
 // --- 登録 ---

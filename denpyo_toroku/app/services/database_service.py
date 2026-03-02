@@ -10,6 +10,7 @@ Oracle ADB (Autonomous Database) との連携を管理します。
 参考: no.1-semantic-doc-search/backend/app/services/database_service.py
 """
 import logging
+import json
 import os
 import re
 import time
@@ -38,6 +39,9 @@ _MANAGEMENT_TABLES_DDL = [
         CONTENT_TYPE VARCHAR2(100),
         FILE_SIZE NUMBER,
         STATUS VARCHAR2(50) DEFAULT 'UPLOADED',
+        ANALYSIS_KIND VARCHAR2(30),
+        ANALYSIS_RESULT CLOB,
+        ANALYZED_AT TIMESTAMP,
         UPLOADED_BY VARCHAR2(100),
         UPLOADED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -124,10 +128,19 @@ CREATE TABLE SLIPS_CATEGORY (
     FILE_NAME VARCHAR2(512) NOT NULL,
     FILE_SIZE_BYTES NUMBER,
     CONTENT_TYPE VARCHAR2(100),
+    STATUS VARCHAR2(20) DEFAULT 'UPLOADED',
+    ANALYSIS_RESULT CLOB,
+    ANALYZED_AT TIMESTAMP,
     CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT UQ_SLIPS_CATEGORY_OBJECT UNIQUE (NAMESPACE, BUCKET_NAME, OBJECT_NAME)
 )
 """
+
+_SLIPS_CATEGORY_ALTER_DDLS = [
+    "ALTER TABLE SLIPS_CATEGORY ADD (STATUS VARCHAR2(20) DEFAULT 'UPLOADED')",
+    "ALTER TABLE SLIPS_CATEGORY ADD (ANALYSIS_RESULT CLOB)",
+    "ALTER TABLE SLIPS_CATEGORY ADD (ANALYZED_AT TIMESTAMP)",
+]
 
 SLIPS_CATEGORY_INDEX_DDL = """
 CREATE INDEX IDX_SLIPS_CATEGORY_BUCKET ON SLIPS_CATEGORY(BUCKET_NAME, NAMESPACE)
@@ -292,12 +305,52 @@ class DatabaseService:
                             if "ORA-00955" not in str(e):
                                 logger.error("管理テーブル DDL 実行エラー: %s", e, exc_info=True)
                                 return False
+                    self._ensure_table_columns(
+                        cursor,
+                        "DENPYO_FILES",
+                        [
+                            ("ANALYSIS_KIND", "ANALYSIS_KIND VARCHAR2(30)"),
+                            ("ANALYSIS_RESULT", "ANALYSIS_RESULT CLOB"),
+                            ("ANALYZED_AT", "ANALYZED_AT TIMESTAMP"),
+                        ],
+                    )
                 conn.commit()
             self._management_tables_initialized = True
             return True
         except Exception as e:
             logger.error("管理テーブル初期化エラー: %s", e, exc_info=True)
             return False
+
+    def _ensure_table_columns(
+        self,
+        cursor,
+        table_name: str,
+        column_definitions: List[tuple[str, str]],
+    ) -> None:
+        """既存テーブルに不足カラムがあれば追加する"""
+        cursor.execute(
+            "SELECT COLUMN_NAME FROM USER_TAB_COLUMNS WHERE TABLE_NAME = :1",
+            [table_name.upper()],
+        )
+        existing_columns = {str(row[0]).upper() for row in cursor.fetchall()}
+        for column_name, column_ddl in column_definitions:
+            if column_name.upper() in existing_columns:
+                continue
+            try:
+                cursor.execute(f"ALTER TABLE {table_name.upper()} ADD ({column_ddl})")
+                logger.info("テーブル %s にカラムを追加しました: %s", table_name.upper(), column_name.upper())
+            except Exception as e:
+                error_str = str(e)
+                if "ORA-01430" in error_str:
+                    continue
+                logger.error(
+                    "テーブル %s へのカラム追加エラー (%s): %s",
+                    table_name.upper(),
+                    column_name.upper(),
+                    e,
+                    exc_info=True,
+                )
+                raise
 
     def execute_ddl(self, ddl_statement: str) -> Dict[str, Any]:
         """動的DDLを実行（AI提案のテーブル作成用）"""
@@ -334,6 +387,13 @@ class DatabaseService:
                             if "ORA-00955" not in str(e):
                                 logger.error("SLIPS テーブル DDL 実行エラー: %s", e, exc_info=True)
                                 return False
+                    # 既存テーブルにカラム追加（ORA-01430 は無視）
+                    for alter_ddl in _SLIPS_CATEGORY_ALTER_DDLS:
+                        try:
+                            cursor.execute(alter_ddl)
+                        except Exception as e:
+                            if "ORA-01430" not in str(e):
+                                logger.warning("SLIPS_CATEGORY ALTER エラー (無視可): %s", e)
                 conn.commit()
             self._slips_tables_initialized = True
             return True
@@ -823,6 +883,45 @@ class DatabaseService:
         except Exception as e:
             logger.error("SLIPS_CATEGORY ファイル取得エラー (ids=%s): %s", ids, e, exc_info=True)
             return []
+
+    def update_category_file_status(self, file_id: int, status: str) -> bool:
+        """SLIPS_CATEGORY のステータスを更新"""
+        if not self._ensure_slips_tables():
+            return False
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE SLIPS_CATEGORY SET STATUS = :1 WHERE ID = :2",
+                        [status, file_id],
+                    )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error("SLIPS_CATEGORY ステータス更新エラー (id=%s): %s", file_id, e, exc_info=True)
+            return False
+
+    def save_category_analysis_result(self, file_id: int, analysis_result: Dict[str, Any]) -> bool:
+        """SLIPS_CATEGORY の分析結果を保存"""
+        if not self._ensure_slips_tables():
+            return False
+        try:
+            payload = json.dumps(analysis_result, ensure_ascii=False)
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """UPDATE SLIPS_CATEGORY
+                           SET ANALYSIS_RESULT = :1,
+                               ANALYZED_AT = CURRENT_TIMESTAMP,
+                               STATUS = 'ANALYZED'
+                         WHERE ID = :2""",
+                        [payload, file_id],
+                    )
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error("SLIPS_CATEGORY 分析結果保存エラー (id=%s): %s", file_id, e, exc_info=True)
+            return False
 
     def get_slips_raw_files_by_ids(self, ids: List[int]) -> List[Dict[str, Any]]:
         """IDのリストでSLIPS_RAWレコードを取得（OCI Object Storage パス付き）"""
@@ -1385,6 +1484,8 @@ class DatabaseService:
         upload_kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """ファイル一覧を取得（DENPYO_FILES 基準）"""
+        if not self._ensure_management_tables():
+            return []
         kind = (upload_kind or "").strip().lower()
         raw_prefix = (os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw").strip("/")
         category_prefix = (os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category").strip("/")
@@ -1400,7 +1501,8 @@ class DatabaseService:
 
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    query = """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT
+                    query = """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT,
+                                      CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT
                                FROM DENPYO_FILES WHERE 1=1"""
                     params = []
 
@@ -1428,6 +1530,7 @@ class DatabaseService:
                             "status": row[5],
                             "uploaded_by": row[6] or "",
                             "uploaded_at": str(row[7]) if row[7] else "",
+                            "has_analysis_result": bool(row[8]),
                         })
                     return files
         except Exception as e:
@@ -1436,6 +1539,8 @@ class DatabaseService:
 
     def get_files_count(self, status: str = None, upload_kind: Optional[str] = None) -> int:
         """ファイル総件数を取得（DENPYO_FILES 基準）"""
+        if not self._ensure_management_tables():
+            return 0
         kind = (upload_kind or "").strip().lower()
         raw_prefix = (os.environ.get("OCI_SLIPS_RAW_PREFIX", "denpyo-raw") or "denpyo-raw").strip("/")
         category_prefix = (os.environ.get("OCI_SLIPS_CATEGORY_PREFIX", "denpyo-category") or "denpyo-category").strip("/")
@@ -1470,12 +1575,16 @@ class DatabaseService:
 
     def get_file_by_id(self, file_id: int) -> Optional[Dict[str, Any]]:
         """IDでファイルレコードを取得"""
+        if not self._ensure_management_tables():
+            return None
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
                         """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, OBJECT_STORAGE_PATH,
-                                  CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT
+                                  CONTENT_TYPE, FILE_SIZE, STATUS, ANALYSIS_KIND, UPLOADED_BY, UPLOADED_AT,
+                                  CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT,
+                                  ANALYZED_AT
                         FROM DENPYO_FILES WHERE ID = :1""",
                         [file_id]
                     )
@@ -1490,11 +1599,103 @@ class DatabaseService:
                         "content_type": row[4],
                         "file_size": row[5],
                         "status": row[6],
-                        "uploaded_by": row[7],
-                        "uploaded_at": str(row[8]) if row[8] else "",
+                        "analysis_kind": row[7],
+                        "uploaded_by": row[8],
+                        "uploaded_at": str(row[9]) if row[9] else "",
+                        "has_analysis_result": bool(row[10]),
+                        "analyzed_at": str(row[11]) if row[11] else "",
                     }
         except Exception as e:
             logger.error("ファイル取得エラー (id=%s): %s", file_id, e, exc_info=True)
+            return None
+
+    def get_files_by_ids(self, ids: List[int]) -> List[Dict[str, Any]]:
+        """IDのリストでDENPYO_FILESレコードを取得"""
+        if not ids:
+            return []
+        if not self._ensure_management_tables():
+            return []
+        try:
+            placeholders = ",".join([f":{i+1}" for i in range(len(ids))])
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        f"""SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, OBJECT_STORAGE_PATH,
+                                   CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT
+                        FROM DENPYO_FILES
+                        WHERE ID IN ({placeholders})
+                        ORDER BY UPLOADED_AT DESC""",
+                        ids,
+                    )
+                    result = []
+                    for row in cursor.fetchall():
+                        result.append({
+                            "id": row[0],
+                            "file_name": row[1],
+                            "original_file_name": row[2],
+                            "object_name": row[3],
+                            "content_type": row[4] or "image/jpeg",
+                            "file_size": row[5],
+                            "status": row[6],
+                            "uploaded_by": row[7],
+                            "uploaded_at": str(row[8]) if row[8] else "",
+                        })
+                    return result
+        except Exception as e:
+            logger.error("DENPYO_FILES ファイル取得エラー (ids=%s): %s", ids, e, exc_info=True)
+            return []
+
+    def save_analysis_result(self, file_id: int, analysis_kind: str, analysis_result: Dict[str, Any]) -> bool:
+        """分析結果 JSON を保存し、分析完了日時を更新"""
+        if not self._ensure_management_tables():
+            return False
+
+        try:
+            payload = json.dumps(analysis_result, ensure_ascii=False)
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """UPDATE DENPYO_FILES
+                           SET ANALYSIS_KIND = :1,
+                               ANALYSIS_RESULT = :2,
+                               ANALYZED_AT = CURRENT_TIMESTAMP,
+                               UPDATED_AT = CURRENT_TIMESTAMP
+                         WHERE ID = :3""",
+                        [analysis_kind, payload, file_id],
+                    )
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error("分析結果保存エラー (id=%s): %s", file_id, e, exc_info=True)
+            return False
+
+    def get_analysis_result(self, file_id: int) -> Optional[Dict[str, Any]]:
+        """保存済み分析結果を取得"""
+        if not self._ensure_management_tables():
+            return None
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT ANALYSIS_KIND, ANALYSIS_RESULT, ANALYZED_AT
+                             FROM DENPYO_FILES
+                            WHERE ID = :1""",
+                        [file_id],
+                    )
+                    row = cursor.fetchone()
+                    if not row or row[1] is None:
+                        return None
+
+                    raw_payload = row[1].read() if hasattr(row[1], "read") else row[1]
+                    parsed_result = json.loads(raw_payload)
+                    return {
+                        "analysis_kind": row[0] or "",
+                        "result": parsed_result,
+                        "analyzed_at": str(row[2]) if row[2] else "",
+                    }
+        except Exception as e:
+            logger.error("分析結果取得エラー (id=%s): %s", file_id, e, exc_info=True)
             return None
 
     def delete_file_record(self, file_id: int) -> Dict[str, Any]:

@@ -9,6 +9,7 @@ import {
   deleteFile,
   bulkDeleteFiles,
   analyzeFile,
+  fetchAnalysisResult,
   fetchCategories,
   setFileListPage,
   setFileListPageSize,
@@ -38,7 +39,8 @@ import {
   X,
   UploadCloud,
   Database as DatabaseIcon,
-  XCircle
+  XCircle,
+  FileSearch
 } from 'lucide-react';
 import { StatusBadge } from '../../components/common/StatusBadge';
 
@@ -104,6 +106,10 @@ function FileStatusBadge({ status }: { status: FileStatus }) {
   );
 }
 
+function hasViewableResult(file: { status: FileStatus; has_analysis_result?: boolean }): boolean {
+  return Boolean(file.has_analysis_result) || file.status === 'ANALYZED' || file.status === 'REGISTERED';
+}
+
 export function ListView() {
   const dispatch = useAppDispatch();
   const { requestConfirm, confirmToast } = useToastConfirm();
@@ -134,6 +140,16 @@ export function ListView() {
     if (!isQueryReady) return;
     loadFiles();
   }, [isQueryReady, loadFiles]);
+
+  useEffect(() => {
+    if (!isQueryReady) return;
+    const hasAnalyzingFiles = files.some(file => file.status === 'ANALYZING');
+    if (!hasAnalyzingFiles) return;
+    const timer = window.setInterval(() => {
+      loadFiles();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [files, isQueryReady, loadFiles]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -256,10 +272,10 @@ export function ListView() {
         categoryId: selectedCategoryId
       })).unwrap();
       closeAnalyzeModal();
-      navigate(APP_ROUTES.analysis);
+      loadFiles();
       dispatch(addNotification({
         type: 'success',
-        message: t('fileList.notify.analyzeOk'),
+        message: t('fileList.notify.analyzeQueued'),
         autoClose: true
       }));
     } catch (e: any) {
@@ -269,7 +285,20 @@ export function ListView() {
         autoClose: true
       }));
     }
-  }, [analyzeTarget, closeAnalyzeModal, dispatch, selectedCategoryId]);
+  }, [analyzeTarget, closeAnalyzeModal, dispatch, loadFiles, selectedCategoryId]);
+
+  const handleViewResult = useCallback(async (fileId: string) => {
+    try {
+      await dispatch(fetchAnalysisResult(fileId)).unwrap();
+      navigate(`${APP_ROUTES.analysis}?fileId=${encodeURIComponent(fileId)}`);
+    } catch (e: any) {
+      dispatch(addNotification({
+        type: 'error',
+        message: e?.message || t('analysis.noStoredResult'),
+        autoClose: true
+      }));
+    }
+  }, [dispatch, navigate]);
 
   const handleStatusChange = useCallback((e: Event) => {
     const value = (e.target as HTMLSelectElement).value;
@@ -569,20 +598,27 @@ export function ListView() {
                           >
                             <Eye size={14} />
                           </button>
-                          {(file.status === 'UPLOADED' || file.status === 'ERROR') && (
-                            <button
-                              type="button"
-                              class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
-                              onClick={() => handleAnalyze(String(file.file_id), file.file_name)}
-                              disabled={isAnalyzing}
-                              title={t('fileList.analyzeFile')}
-                            >
-                              {isAnalyzing && String(analyzingFileId) === String(file.file_id)
-                                ? <Loader2 size={14} class="ics-spin" />
-                                : <Sparkles size={14} />
-                              }
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            class="ics-ops-btn ics-ops-btn--ghost"
+                            onClick={() => handleViewResult(String(file.file_id))}
+                            title={t('fileList.viewResult')}
+                            disabled={!hasViewableResult(file)}
+                          >
+                            <FileSearch size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
+                            onClick={() => handleAnalyze(String(file.file_id), file.file_name)}
+                            disabled={isAnalyzing || !['UPLOADED', 'ERROR'].includes(file.status)}
+                            title={t('fileList.analyzeFile')}
+                          >
+                            {isAnalyzing && String(analyzingFileId) === String(file.file_id)
+                              ? <Loader2 size={14} class="ics-spin" />
+                              : <Sparkles size={14} />
+                            }
+                          </button>
                           <button
                             type="button"
                             class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"

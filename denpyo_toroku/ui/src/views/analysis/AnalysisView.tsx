@@ -2,10 +2,10 @@
  * AnalysisView - AI分析結果・データ登録確認画面 (SCR-003)
  * 伝票分類のDBテーブル構造に基づいて抽出データを確認する
  */
-import { useCallback } from 'preact/hooks';
+import { useCallback, useEffect } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
-import { clearAnalysisResult } from '../../redux/slices/denpyoSlice';
-import { useNavigate } from 'react-router-dom';
+import { clearAnalysisResult, fetchAnalysisResult } from '../../redux/slices/denpyoSlice';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { APP_ROUTES } from '../../constants/routes';
 import { t } from '../../i18n';
 import type { TableColumnInfo, ExtractedField } from '../../types/denpyoTypes';
@@ -170,6 +170,14 @@ export function AnalysisView() {
   const analysisResult = useAppSelector(state => state.denpyo.analysisResult);
   const isAnalyzing = useAppSelector(state => state.denpyo.isAnalyzing);
   const navigate = useNavigate();
+  const location = useLocation();
+  const fileId = new URLSearchParams(location.search).get('fileId');
+
+  useEffect(() => {
+    if (!fileId) return;
+    if (analysisResult && String(analysisResult.file_id) === String(fileId)) return;
+    dispatch(fetchAnalysisResult(fileId));
+  }, [analysisResult, dispatch, fileId]);
 
   const handleBack = useCallback(() => {
     dispatch(clearAnalysisResult());

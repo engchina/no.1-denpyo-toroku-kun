@@ -310,6 +310,7 @@ export const ja = {
   'fileList.noFiles': 'ファイルがありません。アップロード画面からファイルを追加してください。',
   'fileList.emptyHint': 'アップロード後、この一覧に伝票ファイルが表示されます。',
   'fileList.previewFile': 'ファイルをプレビュー',
+  'fileList.viewResult': '分析結果を表示',
   'fileList.deleteFile': 'ファイルを削除',
   'fileList.bulkDelete': '一括削除',
   'fileList.selectedCount': '選択中：{count}件',
@@ -333,6 +334,7 @@ export const ja = {
   'fileList.analyze.required': '伝票分類を選択してください',
   'fileList.analyze.noActiveCategory': '有効な伝票分類がありません。先に伝票分類管理で作成してください。',
   'fileList.notify.analyzeOk': 'AI分析が完了しました',
+  'fileList.notify.analyzeQueued': 'AI分析を開始しました。完了後は操作列から結果を確認できます。',
   'fileList.notify.analyzeFailed': 'AI分析に失敗しました',
 
   'analysis.title': 'AI分析結果',
@@ -340,6 +342,7 @@ export const ja = {
   'analysis.analyzing': 'AI分析を実行中です。しばらくお待ちください…',
   'analysis.backToList': '一覧に戻る',
   'analysis.noResult': '分析結果がありません',
+  'analysis.noStoredResult': 'このファイルの分析結果は保存されていません。必要であればもう一度 AI 分析を実行してください。',
   'analysis.classification.category': '伝票分類',
   'analysis.classification.confidence': '確信度',
   'analysis.classification.hasLineItems': '明細行',
@@ -443,6 +446,7 @@ export const ja = {
   'category.notify.deleteFailed': '伝票分類の削除に失敗しました',
   'category.notify.created': '「{name}」伝票分類を作成しました',
   'category.notify.createFailed': '伝票分類の作成に失敗しました',
+  'category.notify.analyzeQueued': 'AI分析を開始しました。完了後は操作列から結果を確認できます。',
   'category.notify.analyzeFailed': 'AI 分析に失敗しました',
   'common.saving': '保存中…',
 
