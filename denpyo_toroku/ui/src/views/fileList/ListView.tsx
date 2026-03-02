@@ -605,15 +605,6 @@ export function ListView() {
                           </button>
                           <button
                             type="button"
-                            class="ics-ops-btn ics-ops-btn--ghost"
-                            onClick={() => handleViewResult(String(file.file_id))}
-                            title={t('fileList.viewResult')}
-                            disabled={!hasViewableResult(file)}
-                          >
-                            <FileSearch size={14} />
-                          </button>
-                          <button
-                            type="button"
                             class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
                             onClick={() => handleAnalyze(String(file.file_id), file.file_name)}
                             disabled={isAnalyzing || !['UPLOADED', 'ERROR'].includes(file.status)}
@@ -623,6 +614,15 @@ export function ListView() {
                               ? <Loader2 size={14} class="ics-spin" />
                               : <Sparkles size={14} />
                             }
+                          </button>
+                          <button
+                            type="button"
+                            class="ics-ops-btn ics-ops-btn--ghost"
+                            onClick={() => handleViewResult(String(file.file_id))}
+                            title={t('fileList.viewResult')}
+                            disabled={!hasViewableResult(file)}
+                          >
+                            <FileSearch size={14} />
                           </button>
                           <button
                             type="button"

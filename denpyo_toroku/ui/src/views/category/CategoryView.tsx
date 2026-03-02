@@ -1908,15 +1908,6 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                 </button>
                                 <button
                                   type="button"
-                                  class="ics-ops-btn ics-ops-btn--ghost"
-                                  onClick={() => handleViewCategoryResult(fileId)}
-                                  title={t('fileList.viewResult')}
-                                  disabled={!hasViewableResult(file)}
-                                >
-                                  <FileSearch size={14} />
-                                </button>
-                                <button
-                                  type="button"
                                   class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
                                   onClick={() => handleAnalyzeSingleFile(fileId)}
                                   disabled={isCategoryAnalyzing || !['UPLOADED', 'ERROR'].includes(file.status)}
@@ -1926,6 +1917,15 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                     ? <Loader2 size={14} class="ics-spin" />
                                     : <Sparkles size={14} />
                                   }
+                                </button>
+                                <button
+                                  type="button"
+                                  class="ics-ops-btn ics-ops-btn--ghost"
+                                  onClick={() => handleViewCategoryResult(fileId)}
+                                  title={t('fileList.viewResult')}
+                                  disabled={!hasViewableResult(file)}
+                                >
+                                  <FileSearch size={14} />
                                 </button>
                                 <button
                                   type="button"
