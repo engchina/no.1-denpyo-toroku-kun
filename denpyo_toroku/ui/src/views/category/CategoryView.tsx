@@ -207,6 +207,11 @@ function hasViewableResult(file: Pick<DenpyoFile, 'status' | 'has_analysis_resul
   return Boolean(file.has_analysis_result) || file.status === 'ANALYZED' || file.status === 'REGISTERED';
 }
 
+function isImageFile(fileName: string | null | undefined): boolean {
+  if (!fileName) return false;
+  return /\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(fileName);
+}
+
 // ─── Category Edit Modal (existing CRUD) ─────────────────────────────────────
 
 function EditModal({
@@ -886,10 +891,10 @@ function TableDesignerPanel({
               </button>
             </div>
             <div class="ics-modal__body ics-fileListView__previewBody">
-              <iframe
+              <img
                 src={`/studio/api/v1/files/${previewFileId}/preview?upload_kind=category`}
-                title="分析画像プレビュー"
-                class="ics-fileListView__previewFrame"
+                alt="分析画像プレビュー"
+                class="ics-fileListView__previewImage"
               />
             </div>
           </div>
@@ -1954,11 +1959,19 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                   </button>
                 </div>
                 <div class="ics-modal__body ics-fileListView__previewBody">
-                  <iframe
-                    src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=category`}
-                    title={previewTarget.fileName || t('fileList.previewFile')}
-                    class="ics-fileListView__previewFrame"
-                  />
+                  {isImageFile(previewTarget.fileName) ? (
+                    <img
+                      src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=category`}
+                      alt={previewTarget.fileName || t('fileList.previewFile')}
+                      class="ics-fileListView__previewImage"
+                    />
+                  ) : (
+                    <iframe
+                      src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=category`}
+                      title={previewTarget.fileName || t('fileList.previewFile')}
+                      class="ics-fileListView__previewFrame"
+                    />
+                  )}
                 </div>
               </div>
             </div>

@@ -110,6 +110,11 @@ function hasViewableResult(file: { status: FileStatus; has_analysis_result?: boo
   return Boolean(file.has_analysis_result) || file.status === 'ANALYZED' || file.status === 'REGISTERED';
 }
 
+function isImageFile(fileName: string | null | undefined): boolean {
+  if (!fileName) return false;
+  return /\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(fileName);
+}
+
 export function ListView() {
   const dispatch = useAppDispatch();
   const { requestConfirm, confirmToast } = useToastConfirm();
@@ -680,11 +685,19 @@ export function ListView() {
               </button>
             </div>
             <div class="ics-modal__body ics-fileListView__previewBody">
-              <iframe
-                src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=raw`}
-                title={previewTarget.fileName || t('fileList.previewFile')}
-                class="ics-fileListView__previewFrame"
-              />
+              {isImageFile(previewTarget.fileName) ? (
+                <img
+                  src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=raw`}
+                  alt={previewTarget.fileName || t('fileList.previewFile')}
+                  class="ics-fileListView__previewImage"
+                />
+              ) : (
+                <iframe
+                  src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=raw`}
+                  title={previewTarget.fileName || t('fileList.previewFile')}
+                  class="ics-fileListView__previewFrame"
+                />
+              )}
             </div>
           </div>
         </div>
