@@ -324,6 +324,13 @@ export interface NLSearchRequest {
   category_id?: number;
 }
 
+export interface NLSearchEngineMeta {
+  profile_name?: string;
+  team_name?: string;
+  api_format?: string;
+  use_comments?: boolean;
+}
+
 export interface NLSearchResponse {
   generated_sql: string;
   explanation: string;
@@ -333,6 +340,8 @@ export interface NLSearchResponse {
     total: number;
   };
   error?: string;
+  engine?: 'select_ai_agent' | 'direct_llm';
+  engine_meta?: NLSearchEngineMeta;
 }
 
 export interface TableBrowseResult {

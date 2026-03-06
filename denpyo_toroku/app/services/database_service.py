@@ -14,6 +14,7 @@ import json
 import os
 import re
 import time
+import hashlib
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
@@ -161,6 +162,26 @@ CREATE INDEX IDX_SLIPS_CATEGORY_BUCKET ON SLIPS_CATEGORY(BUCKET_NAME, NAMESPACE)
 _SYSTEM_ID_COLUMN_NAME = "ID"
 _SYSTEM_ID_COLUMN_MAX_LENGTH = 32
 _SYSTEM_ID_COLUMN_COMMENT = "ID"
+
+_SELECT_AI_CREDENTIAL_PREFIX = "DTAICR_"
+_SELECT_AI_PROFILE_PREFIX = "DTAIPR_"
+_SELECT_AI_TOOL_PREFIX = "DTAITL_"
+_SELECT_AI_AGENT_PREFIX = "DTAIAG_"
+_SELECT_AI_TASK_PREFIX = "DTAITS_"
+_SELECT_AI_TEAM_PREFIX = "DTAITM_"
+_SELECT_AI_MAX_IDENTIFIER_LENGTH = 30
+_SELECT_AI_DEFAULT_RESPONSE_LANGUAGE = "日本語"
+_SELECT_AI_AGENT_ROLE = (
+    "You are the Denpyo registration application's Oracle data search agent. "
+    "Translate user questions into one safe Oracle SELECT statement by using the SQL tool. "
+    "Never invent tables or columns."
+)
+_SELECT_AI_TASK_INSTRUCTION = (
+    "Use the SQL tool to create exactly one Oracle SELECT statement for the user's request. "
+    "Return strict JSON only with keys sql and explanation. "
+    "sql must be a single SELECT statement without markdown, comments, or trailing narration. "
+    "explanation must be concise and written in Japanese."
+)
 
 
 class DatabaseService:
@@ -1495,6 +1516,416 @@ END;"""
     _TABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
     _TABLE_BROWSER_TARGETS = ("SLIPS_RAW", "SLIPS_CATEGORY")
 
+    @staticmethod
+    def _coerce_db_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if hasattr(value, "read"):
+            return str(value.read() or "")
+        return str(value)
+
+    @staticmethod
+    def _build_allowed_table_set_from_entries(table_entries: List[Dict[str, Any]]) -> set:
+        allowed = set()
+        for entry in table_entries:
+            header_table_name = str(entry.get("header_table_name") or "").upper()
+            line_table_name = str(entry.get("line_table_name") or "").upper()
+            if header_table_name:
+                allowed.add(header_table_name)
+            if line_table_name:
+                allowed.add(line_table_name)
+        return allowed
+
+    @staticmethod
+    def _build_select_ai_identifier(prefix: str, fingerprint: str) -> str:
+        normalized_prefix = re.sub(r"[^A-Z0-9_]", "_", (prefix or "").upper())
+        digest = hashlib.sha1((fingerprint or "").encode("utf-8")).hexdigest().upper()[:12]
+        identifier = f"{normalized_prefix}{digest}"
+        return identifier[:_SELECT_AI_MAX_IDENTIFIER_LENGTH]
+
+    @classmethod
+    def _build_select_ai_asset_names(cls, config_fingerprint: str) -> Dict[str, str]:
+        return {
+            "credential_name": cls._build_select_ai_identifier(_SELECT_AI_CREDENTIAL_PREFIX, f"cred:{config_fingerprint}"),
+            "profile_name": cls._build_select_ai_identifier(_SELECT_AI_PROFILE_PREFIX, f"profile:{config_fingerprint}"),
+            "tool_name": cls._build_select_ai_identifier(_SELECT_AI_TOOL_PREFIX, f"tool:{config_fingerprint}"),
+            "agent_name": cls._build_select_ai_identifier(_SELECT_AI_AGENT_PREFIX, f"agent:{config_fingerprint}"),
+            "task_name": cls._build_select_ai_identifier(_SELECT_AI_TASK_PREFIX, f"task:{config_fingerprint}"),
+            "team_name": cls._build_select_ai_identifier(_SELECT_AI_TEAM_PREFIX, f"team:{config_fingerprint}"),
+        }
+
+    @staticmethod
+    def _build_select_ai_profile_attributes(
+        *,
+        credential_name: str,
+        model_name: str,
+        region: str,
+        compartment_id: str,
+        object_list: List[Dict[str, str]],
+        use_comments: bool,
+        api_format: str = "",
+    ) -> str:
+        attributes: Dict[str, Any] = {
+            "provider": "oci",
+            "credential_name": credential_name,
+            "model": model_name,
+            "region": region,
+            "oci_compartment_id": compartment_id,
+            "object_list": object_list,
+            "comments": bool(use_comments),
+        }
+        normalized_api_format = str(api_format or "").strip().upper()
+        if normalized_api_format:
+            attributes["oci_apiformat"] = normalized_api_format
+        return json.dumps(attributes, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _build_select_ai_tool_attributes(profile_name: str) -> str:
+        return json.dumps({
+            "tool_type": "SQL",
+            "tool_params": {
+                "profile_name": profile_name,
+            },
+        }, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _build_select_ai_agent_attributes(profile_name: str) -> str:
+        return json.dumps({
+            "profile_name": profile_name,
+            "role": _SELECT_AI_AGENT_ROLE,
+        }, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _build_select_ai_task_attributes(tool_name: str, response_language: str = _SELECT_AI_DEFAULT_RESPONSE_LANGUAGE) -> str:
+        instruction = (
+            f"{_SELECT_AI_TASK_INSTRUCTION} "
+            f"The explanation value must be written in {response_language}."
+        )
+        return json.dumps({
+            "instruction": instruction,
+            "tools": [tool_name],
+            "enable_human_tool": False,
+        }, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _build_select_ai_team_attributes(agent_name: str, task_name: str) -> str:
+        return json.dumps({
+            "agents": [
+                {
+                    "name": agent_name,
+                    "task": task_name,
+                }
+            ],
+            "process": "sequential",
+        }, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _extract_json_payload(text: str) -> Dict[str, Any]:
+        source = (text or "").strip()
+        if not source:
+            return {}
+
+        source = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", source)
+        source = re.sub(r"\s*```$", "", source)
+
+        try:
+            parsed = json.loads(source)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            pass
+
+        match = re.search(r"\{[\s\S]*\}", source)
+        if not match:
+            return {}
+
+        try:
+            parsed = json.loads(match.group(0))
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+    @staticmethod
+    def _extract_select_statement(text: str) -> str:
+        match = re.search(r"\bSELECT\b[\s\S]*", text or "", flags=re.IGNORECASE)
+        if not match:
+            return ""
+        candidate = match.group(0).strip()
+        if candidate.endswith(";"):
+            candidate = candidate[:-1].rstrip()
+        return candidate
+
+    @staticmethod
+    def _normalize_generated_select(sql: str) -> str:
+        candidate = (sql or "").strip()
+        while candidate.endswith(";"):
+            candidate = candidate[:-1].rstrip()
+        return candidate
+
+    def _object_exists(self, cursor, sql: str, params: Dict[str, Any]) -> bool:
+        cursor.execute(sql, params)
+        row = cursor.fetchone()
+        return bool(row and int(row[0] or 0) > 0)
+
+    def _get_current_schema_name(self, cursor) -> str:
+        cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
+        row = cursor.fetchone()
+        return str((row[0] if row else "") or "").upper()
+
+    def _ensure_select_ai_credential(
+        self,
+        cursor,
+        *,
+        credential_name: str,
+        oci_auth_config: Dict[str, str],
+    ) -> None:
+        if self._object_exists(
+            cursor,
+            "SELECT COUNT(*) FROM USER_CREDENTIALS WHERE UPPER(CREDENTIAL_NAME) = :credential_name",
+            {"credential_name": credential_name.upper()},
+        ):
+            return
+
+        cursor.execute(
+            """
+            BEGIN
+                DBMS_CLOUD.CREATE_CREDENTIAL(
+                    credential_name => :credential_name,
+                    user_ocid => :user_ocid,
+                    tenancy_ocid => :tenancy_ocid,
+                    private_key => :private_key,
+                    fingerprint => :fingerprint
+                );
+            END;
+            """,
+            {
+                "credential_name": credential_name,
+                "user_ocid": oci_auth_config["user"],
+                "tenancy_ocid": oci_auth_config["tenancy"],
+                "private_key": oci_auth_config["key_content"],
+                "fingerprint": oci_auth_config["fingerprint"],
+            },
+        )
+
+    def _ensure_select_ai_profile(
+        self,
+        cursor,
+        *,
+        profile_name: str,
+        attributes_json: str,
+    ) -> None:
+        if self._object_exists(
+            cursor,
+            "SELECT COUNT(*) FROM USER_CLOUD_AI_PROFILES WHERE UPPER(PROFILE_NAME) = :profile_name",
+            {"profile_name": profile_name.upper()},
+        ):
+            return
+
+        cursor.execute(
+            """
+            BEGIN
+                DBMS_CLOUD_AI.CREATE_PROFILE(
+                    profile_name => :profile_name,
+                    attributes => :attributes
+                );
+            END;
+            """,
+            {
+                "profile_name": profile_name,
+                "attributes": attributes_json,
+            },
+        )
+
+    def _ensure_select_ai_tool(
+        self,
+        cursor,
+        *,
+        tool_name: str,
+        attributes_json: str,
+    ) -> None:
+        if self._object_exists(
+            cursor,
+            "SELECT COUNT(*) FROM USER_AI_AGENT_TOOLS WHERE UPPER(TOOL_NAME) = :tool_name",
+            {"tool_name": tool_name.upper()},
+        ):
+            return
+
+        cursor.execute(
+            """
+            BEGIN
+                DBMS_CLOUD_AI_AGENT.CREATE_TOOL(
+                    tool_name => :tool_name,
+                    attributes => :attributes
+                );
+            END;
+            """,
+            {
+                "tool_name": tool_name,
+                "attributes": attributes_json,
+            },
+        )
+
+    def _ensure_select_ai_agent(
+        self,
+        cursor,
+        *,
+        agent_name: str,
+        attributes_json: str,
+    ) -> None:
+        if self._object_exists(
+            cursor,
+            "SELECT COUNT(*) FROM USER_AI_AGENTS WHERE UPPER(AGENT_NAME) = :agent_name",
+            {"agent_name": agent_name.upper()},
+        ):
+            return
+
+        cursor.execute(
+            """
+            BEGIN
+                DBMS_CLOUD_AI_AGENT.CREATE_AGENT(
+                    agent_name => :agent_name,
+                    attributes => :attributes
+                );
+            END;
+            """,
+            {
+                "agent_name": agent_name,
+                "attributes": attributes_json,
+            },
+        )
+
+    def _ensure_select_ai_task(
+        self,
+        cursor,
+        *,
+        task_name: str,
+        attributes_json: str,
+    ) -> None:
+        if self._object_exists(
+            cursor,
+            "SELECT COUNT(*) FROM USER_AI_AGENT_TASKS WHERE UPPER(TASK_NAME) = :task_name",
+            {"task_name": task_name.upper()},
+        ):
+            return
+
+        cursor.execute(
+            """
+            BEGIN
+                DBMS_CLOUD_AI_AGENT.CREATE_TASK(
+                    task_name => :task_name,
+                    attributes => :attributes
+                );
+            END;
+            """,
+            {
+                "task_name": task_name,
+                "attributes": attributes_json,
+            },
+        )
+
+    def _ensure_select_ai_team(
+        self,
+        cursor,
+        *,
+        team_name: str,
+        attributes_json: str,
+    ) -> None:
+        if self._object_exists(
+            cursor,
+            "SELECT COUNT(*) FROM USER_AI_AGENT_TEAMS WHERE UPPER(TEAM_NAME) = :team_name",
+            {"team_name": team_name.upper()},
+        ):
+            return
+
+        cursor.execute(
+            """
+            BEGIN
+                DBMS_CLOUD_AI_AGENT.CREATE_TEAM(
+                    team_name => :team_name,
+                    attributes => :attributes
+                );
+            END;
+            """,
+            {
+                "team_name": team_name,
+                "attributes": attributes_json,
+            },
+        )
+
+    def _ensure_select_ai_agent_assets(
+        self,
+        cursor,
+        *,
+        allowed_table_names: set,
+        oci_auth_config: Dict[str, str],
+        model_settings: Dict[str, Any],
+    ) -> Dict[str, str]:
+        if not allowed_table_names:
+            raise ValueError("検索可能なテーブルがありません")
+
+        llm_model_id = str(model_settings.get("llm_model_id") or "").strip()
+        compartment_id = str(model_settings.get("compartment_id") or "").strip()
+        region = str(oci_auth_config.get("region") or "").strip()
+        if not all([llm_model_id, compartment_id, region]):
+            raise ValueError("Select AI Agent の実行に必要な OCI / GenAI 設定が不足しています")
+
+        schema_name = self._get_current_schema_name(cursor)
+        object_list = [{"owner": schema_name, "name": table_name} for table_name in sorted(allowed_table_names)]
+        config_payload = {
+            "model": llm_model_id,
+            "compartment_id": compartment_id,
+            "region": region,
+            "api_format": str(model_settings.get("select_ai_oci_apiformat") or "").strip().upper(),
+            "use_comments": bool(model_settings.get("select_ai_use_comments", True)),
+            "objects": object_list,
+            "oci_user": str(oci_auth_config.get("user") or "").strip(),
+            "oci_tenancy": str(oci_auth_config.get("tenancy") or "").strip(),
+            "oci_fingerprint": str(oci_auth_config.get("fingerprint") or "").strip(),
+        }
+        config_fingerprint = hashlib.sha1(
+            json.dumps(config_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest().upper()
+        asset_names = self._build_select_ai_asset_names(config_fingerprint)
+
+        self._ensure_select_ai_credential(
+            cursor,
+            credential_name=asset_names["credential_name"],
+            oci_auth_config=oci_auth_config,
+        )
+        self._ensure_select_ai_profile(
+            cursor,
+            profile_name=asset_names["profile_name"],
+            attributes_json=self._build_select_ai_profile_attributes(
+                credential_name=asset_names["credential_name"],
+                model_name=llm_model_id,
+                region=region,
+                compartment_id=compartment_id,
+                object_list=object_list,
+                use_comments=bool(model_settings.get("select_ai_use_comments", True)),
+                api_format=str(model_settings.get("select_ai_oci_apiformat") or "").strip(),
+            ),
+        )
+        self._ensure_select_ai_tool(
+            cursor,
+            tool_name=asset_names["tool_name"],
+            attributes_json=self._build_select_ai_tool_attributes(asset_names["profile_name"]),
+        )
+        self._ensure_select_ai_agent(
+            cursor,
+            agent_name=asset_names["agent_name"],
+            attributes_json=self._build_select_ai_agent_attributes(asset_names["profile_name"]),
+        )
+        self._ensure_select_ai_task(
+            cursor,
+            task_name=asset_names["task_name"],
+            attributes_json=self._build_select_ai_task_attributes(asset_names["tool_name"]),
+        )
+        self._ensure_select_ai_team(
+            cursor,
+            team_name=asset_names["team_name"],
+            attributes_json=self._build_select_ai_team_attributes(asset_names["agent_name"], asset_names["task_name"]),
+        )
+        return asset_names
+
     def get_allowed_table_names(self) -> List[Dict[str, Any]]:
         """DENPYO_CATEGORIES から有効なユーザーテーブル名を取得"""
         try:
@@ -1736,12 +2167,12 @@ END;"""
         if unauthorized:
             raise ValueError(f"許可されていないテーブルが参照されています: {', '.join(unauthorized)}")
 
-    def execute_select_query(self, sql: str, max_rows: int = 500) -> Dict[str, Any]:
+    def execute_select_query(self, sql: str, max_rows: int = 500, allowed_tables: Optional[set] = None) -> Dict[str, Any]:
         """SELECT 文のみ実行（安全なクエリ実行）"""
         try:
             # セキュリティ検証
             self._validate_select_only(sql)
-            allowed = self._get_allowed_table_set()
+            allowed = allowed_tables or self._get_allowed_table_set()
             if not allowed:
                 return {"success": False, "message": "検索可能なテーブルがありません", "columns": [], "rows": [], "total": 0}
             self._validate_tables_in_whitelist(sql, allowed)
@@ -1767,6 +2198,122 @@ END;"""
         except Exception as e:
             logger.error("クエリ実行エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"クエリ実行エラー: {str(e)}", "columns": [], "rows": [], "total": 0}
+
+    def run_select_ai_agent_search(
+        self,
+        *,
+        query: str,
+        allowed_table_entries: List[Dict[str, Any]],
+        oci_auth_config: Dict[str, str],
+        model_settings: Dict[str, Any],
+        max_rows: int = 500,
+    ) -> Dict[str, Any]:
+        """Oracle Select AI Agent を利用して自然言語検索を実行する。"""
+        if not query or not query.strip():
+            return {"success": False, "message": "検索クエリが空です"}
+
+        allowed_tables = self._build_allowed_table_set_from_entries(allowed_table_entries)
+        if not allowed_tables:
+            return {"success": False, "message": "検索可能なテーブルがありません"}
+
+        if not all([
+            oci_auth_config.get("user"),
+            oci_auth_config.get("tenancy"),
+            oci_auth_config.get("fingerprint"),
+            oci_auth_config.get("key_content"),
+            oci_auth_config.get("region"),
+        ]):
+            return {"success": False, "message": "OCI 認証情報が不足しています"}
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    asset_names = self._ensure_select_ai_agent_assets(
+                        cursor,
+                        allowed_table_names=allowed_tables,
+                        oci_auth_config=oci_auth_config,
+                        model_settings=model_settings,
+                    )
+                    conn.commit()
+
+                    cursor.execute(
+                        """
+                        SELECT DBMS_CLOUD_AI_AGENT.RUN_TEAM(
+                            team_name => :team_name,
+                            user_prompt => :user_prompt
+                        )
+                        FROM DUAL
+                        """,
+                        {
+                            "team_name": asset_names["team_name"],
+                            "user_prompt": query.strip(),
+                        },
+                    )
+                    row = cursor.fetchone()
+
+            raw_response = self._coerce_db_text(row[0] if row else "")
+            parsed = self._extract_json_payload(raw_response)
+            generated_sql = self._normalize_generated_select(
+                str(parsed.get("sql") or parsed.get("generated_sql") or "").strip()
+            )
+            if not generated_sql:
+                generated_sql = self._normalize_generated_select(self._extract_select_statement(raw_response))
+
+            explanation = str(parsed.get("explanation") or "").strip()
+            if not generated_sql:
+                return {
+                    "success": False,
+                    "message": "Select AI Agent 応答から SQL を取得できませんでした",
+                    "raw_response": raw_response,
+                }
+
+            exec_result = self.execute_select_query(
+                generated_sql,
+                max_rows=max_rows,
+                allowed_tables=allowed_tables,
+            )
+            if not exec_result.get("success"):
+                return {
+                    "success": False,
+                    "message": exec_result.get("message", "クエリ実行に失敗しました"),
+                    "generated_sql": generated_sql,
+                    "explanation": explanation,
+                    "raw_response": raw_response,
+                    "engine": "select_ai_agent",
+                    "engine_meta": {
+                        "profile_name": asset_names["profile_name"],
+                        "team_name": asset_names["team_name"],
+                        "api_format": str(model_settings.get("select_ai_oci_apiformat") or "").strip().upper(),
+                        "use_comments": bool(model_settings.get("select_ai_use_comments", True)),
+                    },
+                }
+
+            return {
+                "success": True,
+                "generated_sql": generated_sql,
+                "explanation": explanation,
+                "results": {
+                    "columns": exec_result.get("columns", []),
+                    "rows": exec_result.get("rows", []),
+                    "total": exec_result.get("total", 0),
+                },
+                "engine": "select_ai_agent",
+                "engine_meta": {
+                    "profile_name": asset_names["profile_name"],
+                    "team_name": asset_names["team_name"],
+                    "api_format": str(model_settings.get("select_ai_oci_apiformat") or "").strip().upper(),
+                    "use_comments": bool(model_settings.get("select_ai_use_comments", True)),
+                },
+            }
+        except Exception as e:
+            error_message = str(e)
+            if "DBMS_CLOUD_AI" in error_message or "DBMS_CLOUD_AI_AGENT" in error_message or "ORA-01031" in error_message:
+                error_message = (
+                    "Select AI Agent の実行に失敗しました。DBMS_CLOUD / DBMS_CLOUD_AI / "
+                    "DBMS_CLOUD_AI_AGENT の利用権限を確認してください: %s" % str(e)
+                )
+            logger.error("Select AI Agent 自然言語検索エラー: %s", error_message, exc_info=True)
+            return {"success": False, "message": error_message}
 
     def get_table_data(self, table_name: str, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
         """テーブルデータをページング付きで取得"""

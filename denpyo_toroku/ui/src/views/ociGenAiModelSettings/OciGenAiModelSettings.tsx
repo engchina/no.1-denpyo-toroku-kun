@@ -17,6 +17,9 @@ interface OciModelSettingsForm {
   llm_model_id: string;
   vlm_model_id: string;
   embedding_model_id: string;
+  select_ai_enabled: boolean;
+  select_ai_oci_apiformat: string;
+  select_ai_use_comments: boolean;
   llm_max_tokens: number;
   llm_temperature: number;
 }
@@ -43,6 +46,9 @@ const EMPTY_SETTINGS: OciModelSettingsForm = {
   llm_model_id: DEFAULT_LLM_MODEL,
   vlm_model_id: DEFAULT_VLM_MODEL,
   embedding_model_id: DEFAULT_EMBEDDING_MODEL,
+  select_ai_enabled: true,
+  select_ai_oci_apiformat: '',
+  select_ai_use_comments: true,
   llm_max_tokens: 65536,
   llm_temperature: 0.0
 };
@@ -87,11 +93,15 @@ export function OciGenAiModelSettings() {
 
   const updateField = useCallback(
     (field: keyof OciModelSettingsForm) => (event: Event) => {
-      const target = event.target as HTMLInputElement;
+      const target = event.target as HTMLInputElement | HTMLSelectElement;
       setSettings(prev => {
-        let val: string | number = target.value;
+        let val: string | number | boolean = target.value;
         if (field === 'llm_max_tokens' || field === 'llm_temperature') {
           val = Number(val);
+        } else if (target instanceof HTMLInputElement && target.type === 'checkbox') {
+          val = target.checked;
+        } else if (field === 'select_ai_oci_apiformat') {
+          val = String(val).toUpperCase();
         }
         return { ...prev, [field]: val };
       });
@@ -239,6 +249,12 @@ export function OciGenAiModelSettings() {
             <div class="applicationSettingsView__heroMetricLabel">Embedding</div>
             <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{settings.embedding_model_id || DEFAULT_EMBEDDING_MODEL}</div>
           </div>
+          <div class="applicationSettingsView__heroMetric">
+            <div class="applicationSettingsView__heroMetricLabel">{t('settings.model.selectAi.summaryLabel')}</div>
+            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">
+              {settings.select_ai_enabled ? t('settings.model.selectAi.engine.agent') : t('settings.model.selectAi.engine.direct')}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -319,6 +335,54 @@ export function OciGenAiModelSettings() {
                 value={settings.llm_temperature}
                 onInput={updateField('llm_temperature')}
               />
+            </label>
+
+            <div class="applicationSettingsView__field applicationSettingsView__field--wide applicationSettingsView__field--section">
+              <div class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.title')}</div>
+              <p class="applicationSettingsView__hint applicationSettingsView__hint--flush">
+                {t('settings.model.selectAi.subtitle')}
+              </p>
+            </div>
+
+            <label class="applicationSettingsView__field applicationSettingsView__field--wide applicationSettingsView__toggleField">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.enable')}</span>
+              <span class="applicationSettingsView__toggleRow">
+                <input
+                  type="checkbox"
+                  checked={settings.select_ai_enabled}
+                  onChange={updateField('select_ai_enabled')}
+                />
+                <span class="applicationSettingsView__toggleText">
+                  {settings.select_ai_enabled ? t('settings.model.selectAi.engine.agent') : t('settings.model.selectAi.engine.direct')}
+                </span>
+              </span>
+            </label>
+
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.apiFormat')}</span>
+              <select
+                class="ics-input applicationSettingsView__modelInput"
+                value={settings.select_ai_oci_apiformat}
+                onChange={updateField('select_ai_oci_apiformat')}
+              >
+                <option value="">{t('settings.model.selectAi.apiFormatAuto')}</option>
+                <option value="GENERIC">GENERIC</option>
+                <option value="COHERE">COHERE</option>
+              </select>
+            </label>
+
+            <label class="applicationSettingsView__field applicationSettingsView__toggleField">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.useComments')}</span>
+              <span class="applicationSettingsView__toggleRow">
+                <input
+                  type="checkbox"
+                  checked={settings.select_ai_use_comments}
+                  onChange={updateField('select_ai_use_comments')}
+                />
+                <span class="applicationSettingsView__toggleText">
+                  {settings.select_ai_use_comments ? t('common.enabled') : t('common.disabled')}
+                </span>
+              </span>
             </label>
           </div>
 

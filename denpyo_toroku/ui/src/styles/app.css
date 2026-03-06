@@ -1835,6 +1835,27 @@ html[dir="rtl"] .oracle-icon {
     color: var(--aai-neutral-dark-1);
 }
 
+.applicationSettingsView__field--section {
+    padding-top: 6px;
+    border-top: 1px solid #e4ebf3;
+}
+
+.applicationSettingsView__toggleField {
+    justify-content: space-between;
+}
+
+.applicationSettingsView__toggleRow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+}
+
+.applicationSettingsView__toggleText {
+    font-size: 0.85rem;
+    color: var(--aai-neutral-dark-1);
+}
+
 .applicationSettingsView__privateKeySection {
     margin-top: 16px;
     display: flex;
@@ -1932,6 +1953,10 @@ html[dir="rtl"] .oracle-icon {
     color: var(--aai-neutral-solid-1);
 }
 
+.applicationSettingsView__hint--flush {
+    margin-top: 0;
+}
+
 .applicationSettingsView__successText {
     margin: 0;
     color: var(--aai-accent2-dark-1);
@@ -1964,7 +1989,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView--model .applicationSettingsView__heroMetrics--model {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .applicationSettingsView--model .applicationSettingsView__heroMetricValue--compact {
@@ -6087,6 +6112,63 @@ html[dir="rtl"] .oracle-icon {
     display: inline-flex;
     align-items: center;
     gap: 8px;
+}
+
+.ics-search-chipList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.ics-search-chip {
+    padding: 6px 12px;
+    border: 1px solid #d5dfeb;
+    border-radius: 999px;
+    background: #fff;
+    color: #35506f;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.ics-search-chip:hover:not(:disabled) {
+    background: #eef5ff;
+    border-color: #9cb8d9;
+}
+
+.ics-search-chip:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.ics-search-engineStrip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    margin-bottom: 12px;
+}
+
+.ics-search-engineStrip__label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #5a6c82;
+}
+
+.ics-search-engineBadge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #e6f1ff;
+    color: #0e4a8a;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.ics-search-engineMeta {
+    font-size: 0.78rem;
+    color: #67788e;
 }
 
 /* SQL display */

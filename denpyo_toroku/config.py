@@ -67,6 +67,9 @@ class AppConfig:
         config.get("ai", "llm_temperature", fallback="0.0")
     ))
     EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
+    SELECT_AI_ENABLED = os.environ.get("SELECT_AI_ENABLED", "true").strip().lower() in ("1", "true", "yes", "y", "on")
+    SELECT_AI_OCI_API_FORMAT = os.environ.get("SELECT_AI_OCI_API_FORMAT", "")
+    SELECT_AI_USE_COMMENTS = os.environ.get("SELECT_AI_USE_COMMENTS", "true").strip().lower() in ("1", "true", "yes", "y", "on")
 
     # Storage limits
     UPLOAD_MAX_SIZE_MB = int(os.environ.get(

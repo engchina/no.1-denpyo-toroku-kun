@@ -172,6 +172,11 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
   const [query, setQuery] = useState('');
   const [categoryId, setCategoryId] = useState<number | undefined>(undefined);
   const [copied, setCopied] = useState(false);
+  const quickPrompts = [
+    t('search.nl.quickPrompt.topAmount'),
+    t('search.nl.quickPrompt.byVendor'),
+    t('search.nl.quickPrompt.latestReceipt'),
+  ];
 
   const handleSearch = useCallback(() => {
     if (!query.trim()) return;
@@ -232,6 +237,23 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
           />
         </div>
 
+        <div class="ics-form-group">
+          <label class="ics-form-label">{t('search.nl.quickPrompts')}</label>
+          <div class="ics-search-chipList">
+            {quickPrompts.map(prompt => (
+              <button
+                key={prompt}
+                type="button"
+                class="ics-search-chip"
+                onClick={() => setQuery(prompt)}
+                disabled={isLoading}
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Search button */}
         <div class="ics-search-actions">
           <button
@@ -262,6 +284,23 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
       {/* Results */}
       {result && (
         <div class="ics-nl-results oj-sm-margin-6x-top">
+          <div class="ics-search-engineStrip">
+            <span class="ics-search-engineStrip__label">{t('search.nl.engineLabel')}</span>
+            <span class="ics-search-engineBadge">
+              {result.engine === 'direct_llm' ? t('search.nl.engine.directLlm') : t('search.nl.engine.selectAiAgent')}
+            </span>
+            {result.engine_meta?.api_format && (
+              <span class="ics-search-engineMeta">
+                {t('search.nl.meta.apiFormat').replace('{value}', result.engine_meta.api_format)}
+              </span>
+            )}
+            {typeof result.engine_meta?.use_comments === 'boolean' && (
+              <span class="ics-search-engineMeta">
+                {result.engine_meta.use_comments ? t('search.nl.meta.commentsOn') : t('search.nl.meta.commentsOff')}
+              </span>
+            )}
+          </div>
+
           {/* Generated SQL */}
           {result.generated_sql && (
             <div class="ics-form-group">

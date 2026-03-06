@@ -153,6 +153,18 @@ def _runtime_oci_defaults() -> Dict[str, str]:
             os.environ.get("EMBEDDING_MODEL_ID"),
             _normalize_text(getattr(AppConfig, "EMBEDDING_MODEL_ID", ""), "cohere.embed-v4.0"),
         ),
+        "select_ai_enabled": _to_bool(
+            os.environ.get("SELECT_AI_ENABLED", getattr(AppConfig, "SELECT_AI_ENABLED", True)),
+            default=True,
+        ),
+        "select_ai_oci_apiformat": _normalize_text(
+            os.environ.get("SELECT_AI_OCI_API_FORMAT"),
+            _normalize_text(getattr(AppConfig, "SELECT_AI_OCI_API_FORMAT", "")),
+        ),
+        "select_ai_use_comments": _to_bool(
+            os.environ.get("SELECT_AI_USE_COMMENTS", getattr(AppConfig, "SELECT_AI_USE_COMMENTS", True)),
+            default=True,
+        ),
         "llm_max_tokens": int(
             os.environ.get("LLM_MAX_TOKENS", getattr(AppConfig, "LLM_MAX_TOKENS", 65536))
         ),
@@ -272,6 +284,9 @@ def _load_oci_settings_snapshot() -> Dict[str, Any]:
             "llm_model_id": defaults["llm_model_id"],
             "vlm_model_id": defaults["vlm_model_id"],
             "embedding_model_id": defaults["embedding_model_id"],
+            "select_ai_enabled": defaults["select_ai_enabled"],
+            "select_ai_oci_apiformat": defaults["select_ai_oci_apiformat"],
+            "select_ai_use_comments": defaults["select_ai_use_comments"],
             "llm_max_tokens": defaults["llm_max_tokens"],
             "llm_temperature": defaults["llm_temperature"],
             "namespace": defaults["namespace"],
@@ -330,6 +345,9 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     os.environ["LLM_MODEL_ID"] = settings["llm_model_id"]
     os.environ["VLM_MODEL_ID"] = settings["vlm_model_id"]
     os.environ["EMBEDDING_MODEL_ID"] = settings["embedding_model_id"]
+    os.environ["SELECT_AI_ENABLED"] = "true" if settings["select_ai_enabled"] else "false"
+    os.environ["SELECT_AI_OCI_API_FORMAT"] = settings["select_ai_oci_apiformat"]
+    os.environ["SELECT_AI_USE_COMMENTS"] = "true" if settings["select_ai_use_comments"] else "false"
     os.environ["LLM_MAX_TOKENS"] = str(settings["llm_max_tokens"])
     os.environ["LLM_TEMPERATURE"] = str(settings["llm_temperature"])
     os.environ["OCI_NAMESPACE"] = settings["namespace"]
@@ -342,6 +360,9 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     AppConfig.LLM_MODEL_ID = settings["llm_model_id"]
     AppConfig.VLM_MODEL_ID = settings["vlm_model_id"]
     AppConfig.EMBEDDING_MODEL_ID = settings["embedding_model_id"]
+    AppConfig.SELECT_AI_ENABLED = bool(settings["select_ai_enabled"])
+    AppConfig.SELECT_AI_OCI_API_FORMAT = settings["select_ai_oci_apiformat"]
+    AppConfig.SELECT_AI_USE_COMMENTS = bool(settings["select_ai_use_comments"])
     AppConfig.LLM_MAX_TOKENS = int(settings["llm_max_tokens"])
     AppConfig.LLM_TEMPERATURE = float(settings["llm_temperature"])
     AppConfig.OCI_NAMESPACE = settings["namespace"]
@@ -453,6 +474,18 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             current_settings.get("embedding_model_id", "cohere.embed-v4.0"),
         )
         or "cohere.embed-v4.0",
+        "select_ai_enabled": _to_bool(
+            settings_payload.get("select_ai_enabled"),
+            default=bool(current_settings.get("select_ai_enabled", True)),
+        ),
+        "select_ai_oci_apiformat": _normalize_text(
+            settings_payload.get("select_ai_oci_apiformat"),
+            current_settings.get("select_ai_oci_apiformat", ""),
+        ).upper(),
+        "select_ai_use_comments": _to_bool(
+            settings_payload.get("select_ai_use_comments"),
+            default=bool(current_settings.get("select_ai_use_comments", True)),
+        ),
         "llm_max_tokens": int(
             settings_payload.get("llm_max_tokens", current_settings.get("llm_max_tokens", 65536))
         ),
@@ -479,6 +512,9 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             "LLM_MODEL_ID": settings_for_env["llm_model_id"],
             "VLM_MODEL_ID": settings_for_env["vlm_model_id"],
             "EMBEDDING_MODEL_ID": settings_for_env["embedding_model_id"],
+            "SELECT_AI_ENABLED": "true" if settings_for_env["select_ai_enabled"] else "false",
+            "SELECT_AI_OCI_API_FORMAT": settings_for_env["select_ai_oci_apiformat"],
+            "SELECT_AI_USE_COMMENTS": "true" if settings_for_env["select_ai_use_comments"] else "false",
             "LLM_MAX_TOKENS": str(settings_for_env["llm_max_tokens"]),
             "LLM_TEMPERATURE": str(settings_for_env["llm_temperature"]),
             "OCI_NAMESPACE": settings_for_env["namespace"],
@@ -3345,8 +3381,6 @@ def get_table_browser_tables():
 @api_blueprint.route("/api/v1/search/nl", methods=["POST"])
 def natural_language_search():
     """自然言語検索（NL -> SQL -> 実行）"""
-    from denpyo_toroku.app.services.ai_service import AIService
-
     try:
         data = request.get_json(silent=True) or {}
         query = (data.get("query") or "").strip()
@@ -3357,7 +3391,6 @@ def natural_language_search():
             return jsonify(g.response.get_result()), 400
 
         db_service = DatabaseService()
-        ai_service = AIService()
 
         # 許可テーブル一覧を取得
         allowed_tables = db_service.get_allowed_table_names()
@@ -3371,6 +3404,54 @@ def natural_language_search():
             if not allowed_tables:
                 g.response.add_error_message("指定されたカテゴリに検索可能なテーブルがありません")
                 return jsonify(g.response.get_result()), 400
+
+        allowed_table_set = db_service._build_allowed_table_set_from_entries(allowed_tables)
+        settings_snapshot = _load_oci_settings_snapshot()
+        settings = settings_snapshot.get("settings", {})
+
+        if _to_bool(settings.get("select_ai_enabled"), default=True):
+            oci_auth_config = _build_oci_test_config(settings)
+            select_ai_result = db_service.run_select_ai_agent_search(
+                query=query,
+                allowed_table_entries=allowed_tables,
+                oci_auth_config=oci_auth_config,
+                model_settings=settings,
+                max_rows=500,
+            )
+            if not select_ai_result.get("success"):
+                if select_ai_result.get("generated_sql"):
+                    g.response.set_data({
+                        "generated_sql": select_ai_result.get("generated_sql", ""),
+                        "explanation": select_ai_result.get("explanation", ""),
+                        "results": {
+                            "columns": [],
+                            "rows": [],
+                            "total": 0
+                        },
+                        "error": select_ai_result.get("message", "クエリ実行に失敗しました"),
+                        "engine": select_ai_result.get("engine", "select_ai_agent"),
+                        "engine_meta": select_ai_result.get("engine_meta", {}),
+                    })
+                    return jsonify(g.response.get_result())
+
+                g.response.add_error_message(select_ai_result.get("message", "Select AI Agent での検索に失敗しました"))
+                return jsonify(g.response.get_result()), 400
+
+            g.response.set_data({
+                "generated_sql": select_ai_result.get("generated_sql", ""),
+                "explanation": select_ai_result.get("explanation", ""),
+                "results": {
+                    "columns": select_ai_result.get("results", {}).get("columns", []),
+                    "rows": select_ai_result.get("results", {}).get("rows", []),
+                    "total": select_ai_result.get("results", {}).get("total", 0),
+                },
+                "engine": select_ai_result.get("engine", "select_ai_agent"),
+                "engine_meta": select_ai_result.get("engine_meta", {}),
+            })
+            return jsonify(g.response.get_result())
+
+        from denpyo_toroku.app.services.ai_service import AIService
+        ai_service = AIService()
 
         # 各テーブルのカラム情報を取得
         table_schemas = []
@@ -3404,7 +3485,11 @@ def natural_language_search():
         explanation = ai_result.get("explanation", "")
 
         # 生成された SQL を実行
-        exec_result = db_service.execute_select_query(generated_sql, max_rows=500)
+        exec_result = db_service.execute_select_query(
+            generated_sql,
+            max_rows=500,
+            allowed_tables=allowed_table_set,
+        )
         if not exec_result.get("success"):
             g.response.set_data({
                 "generated_sql": generated_sql,
@@ -3414,7 +3499,9 @@ def natural_language_search():
                     "rows": [],
                     "total": 0
                 },
-                "error": exec_result.get("message", "クエリ実行に失敗しました")
+                "error": exec_result.get("message", "クエリ実行に失敗しました"),
+                "engine": "direct_llm",
+                "engine_meta": {},
             })
             return jsonify(g.response.get_result())
 
@@ -3425,7 +3512,9 @@ def natural_language_search():
                 "columns": exec_result.get("columns", []),
                 "rows": exec_result.get("rows", []),
                 "total": exec_result.get("total", 0)
-            }
+            },
+            "engine": "direct_llm",
+            "engine_meta": {},
         })
         return jsonify(g.response.get_result())
 
