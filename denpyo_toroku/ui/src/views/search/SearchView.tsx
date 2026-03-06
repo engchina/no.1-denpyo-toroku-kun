@@ -867,7 +867,7 @@ function TableBrowserTab({
             )}
 
             {!isLoading && result && (
-              <div class="ics-browser-results oj-sm-margin-4x-top">
+              <div class="ics-browser-results">
                 {result.rows && result.rows.length > 0 ? (
                   <>
                     <ResultsTable
