@@ -144,10 +144,8 @@ export function SearchView() {
             />
           ) : (
             <TableBrowserTab
-              searchableTables={searchableTables}
               tableBrowserTables={tableBrowserTables}
               isLoading={isTableBrowsing}
-              isTablesLoading={isSearchableTablesLoading}
               isTableListLoading={isTableBrowserTablesLoading}
               result={tableBrowseResult}
             />
@@ -315,19 +313,15 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface TableBrowserTabProps {
-  searchableTables: SearchableTable[];
   tableBrowserTables: TableBrowserTable[];
   isLoading: boolean;
-  isTablesLoading: boolean;
   isTableListLoading: boolean;
   result: TableBrowseResult | null;
 }
 
 function TableBrowserTab({
-  searchableTables,
   tableBrowserTables,
   isLoading,
-  isTablesLoading,
   isTableListLoading,
   result
 }: TableBrowserTabProps) {
@@ -490,7 +484,7 @@ function TableBrowserTab({
     }
   }, [dispatch, selectedTable, page, dataPageSize]);
 
-  const noTables = !isTablesLoading && searchableTables.length === 0;
+  const noTables = !isTableListLoading && tableBrowserTables.length === 0;
   const totalPages = result?.total_pages || 1;
 
   const handleRefreshTables = useCallback(() => {

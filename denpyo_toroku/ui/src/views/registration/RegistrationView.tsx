@@ -134,6 +134,8 @@ export function RegistrationView() {
       category_name_en: currentAnalysisResult.ddl_suggestion.table_prefix || '',
       header_table_name: headerTableName.trim(),
       line_table_name: lineTableName.trim(),
+      header_ddl: currentAnalysisResult.ddl_suggestion.header_ddl || '',
+      line_ddl: currentAnalysisResult.ddl_suggestion.line_ddl || '',
       ai_confidence: currentAnalysisResult.classification.confidence,
       line_count: normalizedLineRows.length,
       header_fields: headerFields,

@@ -606,7 +606,8 @@ END;"""
             "success": True,
             "header_inserted": 0,
             "line_inserted": 0,
-            "message": ""
+            "message": "",
+            "errors": [],
         }
 
         try:
@@ -645,8 +646,10 @@ END;"""
                                 cursor.execute(insert_sql, header_vals)
                                 result["header_inserted"] = cursor.rowcount
                             except Exception as e:
-                                logger.warning("ヘッダーINSERTエラー: %s", e)
-                                result["message"] += f"ヘッダーINSERTエラー: {str(e)}. "
+                                error_message = f"ヘッダーINSERTエラー: {str(e)}"
+                                logger.warning(error_message)
+                                result["success"] = False
+                                result["errors"].append(error_message)
 
                     # --- 明細データ INSERT ---
                     if line_table_name and raw_lines:
@@ -672,15 +675,26 @@ END;"""
                                     cursor.execute(insert_sql, line_vals)
                                     line_inserted += cursor.rowcount
                                 except Exception as e:
-                                    logger.warning("明細INSERTエラー (line): %s", e)
+                                    error_message = f"明細INSERTエラー: {str(e)}"
+                                    logger.warning("%s (line=%s)", error_message, line)
+                                    result["success"] = False
+                                    result["errors"].append(error_message)
 
                         result["line_inserted"] = line_inserted
 
                 conn.commit()
 
-            if result["header_inserted"] > 0 or result["line_inserted"] > 0:
+            if result["errors"]:
+                if result["header_inserted"] > 0 or result["line_inserted"] > 0:
+                    result["message"] = (
+                        f"ヘッダー: {result['header_inserted']}件, 明細: {result['line_inserted']}件を登録しました。"
+                        f" 一部でエラーが発生しました: {' / '.join(result['errors'])}"
+                    )
+                else:
+                    result["message"] = " / ".join(result["errors"])
+            elif result["header_inserted"] > 0 or result["line_inserted"] > 0:
                 result["message"] = f"ヘッダー: {result['header_inserted']}件, 明細: {result['line_inserted']}件を登録しました"
-            elif not result["message"]:
+            else:
                 result["message"] = "登録対象データがありませんでした"
 
             return result
@@ -1509,7 +1523,55 @@ END;"""
 
     def get_table_browser_tables(self) -> List[Dict[str, Any]]:
         """テーブルブラウザ用の一覧情報を取得（行数・作成日時など）"""
-        safe_table_names = [name for name in self._TABLE_BROWSER_TARGETS if self._is_safe_table_name(name)]
+        table_entries: List[Dict[str, Any]] = [
+            {
+                "table_name": "SLIPS_RAW",
+                "table_type": "header",
+                "category_id": 0,
+                "category_name": "SLIPS",
+            },
+            {
+                "table_name": "SLIPS_CATEGORY",
+                "table_type": "header",
+                "category_id": 0,
+                "category_name": "SLIPS",
+            },
+        ]
+
+        for entry in self.get_allowed_table_names():
+            header_table_name = (entry.get("header_table_name") or "").upper()
+            line_table_name = (entry.get("line_table_name") or "").upper()
+            if self._is_safe_table_name(header_table_name):
+                table_entries.append({
+                    "table_name": header_table_name,
+                    "table_type": "header",
+                    "category_id": int(entry.get("category_id") or 0),
+                    "category_name": entry.get("category_name") or "",
+                })
+            if self._is_safe_table_name(line_table_name):
+                table_entries.append({
+                    "table_name": line_table_name,
+                    "table_type": "line",
+                    "category_id": int(entry.get("category_id") or 0),
+                    "category_name": entry.get("category_name") or "",
+                })
+
+        normalized_entries: List[Dict[str, Any]] = []
+        safe_table_names: List[str] = []
+        seen_table_names = set()
+        for entry in table_entries:
+            table_name = (entry.get("table_name") or "").upper()
+            if not self._is_safe_table_name(table_name) or table_name in seen_table_names:
+                continue
+            seen_table_names.add(table_name)
+            safe_table_names.append(table_name)
+            normalized_entries.append({
+                "table_name": table_name,
+                "table_type": entry.get("table_type", "header"),
+                "category_id": int(entry.get("category_id") or 0),
+                "category_name": entry.get("category_name") or "",
+            })
+
         if not safe_table_names:
             return []
 
@@ -1576,16 +1638,14 @@ END;"""
             return []
 
         result: List[Dict[str, Any]] = []
-        for table_name in safe_table_names:
+        for entry in normalized_entries:
+            table_name = entry["table_name"]
             # 未作成テーブルは表示対象外（エラーにはしない）
             if table_name not in existing_table_names:
                 continue
             meta = meta_map.get(table_name, {})
             result.append({
-                "table_name": table_name,
-                "table_type": "header",
-                "category_id": 0,
-                "category_name": "SLIPS",
+                **entry,
                 "row_count": meta.get("row_count", 0),
                 "estimated_rows": meta.get("estimated_rows", 0),
                 "column_count": meta.get("column_count", 0),

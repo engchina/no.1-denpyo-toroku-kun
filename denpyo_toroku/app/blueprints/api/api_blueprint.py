@@ -2688,7 +2688,31 @@ def register_file(file_id: int):
                 raw_lines=raw_lines
             )
             if not insert_result.get("success", True):
-                logging.warning("データINSERT警告: %s", insert_result.get("message", ""))
+                g.response.set_data({
+                    "success": False,
+                    "message": insert_result.get("message", "データINSERTに失敗しました"),
+                    "header_inserted": insert_result.get("header_inserted", 0),
+                    "line_inserted": insert_result.get("line_inserted", 0),
+                })
+                return jsonify(g.response.get_result()), 400
+
+            expected_line_count = len(raw_lines or [])
+            if header_fields and int(insert_result.get("header_inserted", 0) or 0) <= 0:
+                g.response.set_data({
+                    "success": False,
+                    "message": insert_result.get("message", "ヘッダーデータが登録されませんでした"),
+                    "header_inserted": insert_result.get("header_inserted", 0),
+                    "line_inserted": insert_result.get("line_inserted", 0),
+                })
+                return jsonify(g.response.get_result()), 400
+            if expected_line_count and int(insert_result.get("line_inserted", 0) or 0) != expected_line_count:
+                g.response.set_data({
+                    "success": False,
+                    "message": insert_result.get("message", "明細データの一部または全部の登録に失敗しました"),
+                    "header_inserted": insert_result.get("header_inserted", 0),
+                    "line_inserted": insert_result.get("line_inserted", 0),
+                })
+                return jsonify(g.response.get_result()), 400
 
         # --- カテゴリ確定 ---
         resolved_category_id = None
