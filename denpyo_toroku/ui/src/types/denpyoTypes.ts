@@ -249,7 +249,7 @@ export type SlipsCategoryFile = DenpyoFile;
 export interface TableColumnDef {
   column_name: string;        // English name (Oracle column name), e.g. INVOICE_DATE
   column_name_jp: string;     // Japanese label
-  data_type: 'VARCHAR2' | 'NUMBER' | 'DATE' | 'TIMESTAMP' | 'CLOB';
+  data_type: 'VARCHAR2' | 'NUMBER' | 'DATE' | 'TIMESTAMP';
   max_length?: number;        // for VARCHAR2
   precision?: number;         // for NUMBER
   scale?: number;             // for NUMBER

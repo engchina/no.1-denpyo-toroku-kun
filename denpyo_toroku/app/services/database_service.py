@@ -40,7 +40,7 @@ _MANAGEMENT_TABLES_DDL = [
         FILE_SIZE NUMBER,
         STATUS VARCHAR2(50) DEFAULT 'UPLOADED',
         ANALYSIS_KIND VARCHAR2(30),
-        ANALYSIS_RESULT CLOB,
+        ANALYSIS_RESULT BLOB,
         ANALYZED_AT TIMESTAMP,
         UPLOADED_BY VARCHAR2(100),
         UPLOADED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -58,7 +58,10 @@ _MANAGEMENT_TABLES_DDL = [
         IS_ACTIVE NUMBER(1) DEFAULT 1,
         CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT UQ_CATEGORY_NAME UNIQUE (CATEGORY_NAME)
+        CONSTRAINT UQ_CATEGORY_NAME UNIQUE (CATEGORY_NAME),
+        CONSTRAINT UQ_CAT_NAME_EN UNIQUE (CATEGORY_NAME_EN),
+        CONSTRAINT UQ_CAT_HDR_TBL UNIQUE (HEADER_TABLE_NAME),
+        CONSTRAINT UQ_CAT_LINE_TBL UNIQUE (LINE_TABLE_NAME)
     )
     """,
     """
@@ -88,6 +91,15 @@ _MANAGEMENT_TABLES_DDL = [
         REGISTRATION_ID NUMBER,
         USER_NAME VARCHAR2(100),
         CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE DENPYO_ID_SEQUENCES (
+        TABLE_NAME VARCHAR2(128) NOT NULL,
+        SEQ_DATE CHAR(8) NOT NULL,
+        LAST_VALUE NUMBER NOT NULL,
+        UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT PK_DENPYO_ID_SEQUENCES PRIMARY KEY (TABLE_NAME, SEQ_DATE)
     )
     """,
 ]
@@ -129,7 +141,7 @@ CREATE TABLE SLIPS_CATEGORY (
     FILE_SIZE_BYTES NUMBER,
     CONTENT_TYPE VARCHAR2(100),
     STATUS VARCHAR2(20) DEFAULT 'UPLOADED',
-    ANALYSIS_RESULT CLOB,
+    ANALYSIS_RESULT BLOB,
     ANALYZED_AT TIMESTAMP,
     CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT UQ_SLIPS_CATEGORY_OBJECT UNIQUE (NAMESPACE, BUCKET_NAME, OBJECT_NAME)
@@ -138,13 +150,17 @@ CREATE TABLE SLIPS_CATEGORY (
 
 _SLIPS_CATEGORY_ALTER_DDLS = [
     "ALTER TABLE SLIPS_CATEGORY ADD (STATUS VARCHAR2(20) DEFAULT 'UPLOADED')",
-    "ALTER TABLE SLIPS_CATEGORY ADD (ANALYSIS_RESULT CLOB)",
+    "ALTER TABLE SLIPS_CATEGORY ADD (ANALYSIS_RESULT BLOB)",
     "ALTER TABLE SLIPS_CATEGORY ADD (ANALYZED_AT TIMESTAMP)",
 ]
 
 SLIPS_CATEGORY_INDEX_DDL = """
 CREATE INDEX IDX_SLIPS_CATEGORY_BUCKET ON SLIPS_CATEGORY(BUCKET_NAME, NAMESPACE)
 """
+
+_SYSTEM_ID_COLUMN_NAME = "ID"
+_SYSTEM_ID_COLUMN_MAX_LENGTH = 32
+_SYSTEM_ID_COLUMN_COMMENT = "ID"
 
 
 class DatabaseService:
@@ -310,10 +326,11 @@ class DatabaseService:
                         "DENPYO_FILES",
                         [
                             ("ANALYSIS_KIND", "ANALYSIS_KIND VARCHAR2(30)"),
-                            ("ANALYSIS_RESULT", "ANALYSIS_RESULT CLOB"),
+                            ("ANALYSIS_RESULT", "ANALYSIS_RESULT BLOB"),
                             ("ANALYZED_AT", "ANALYZED_AT TIMESTAMP"),
                         ],
                     )
+                    self._ensure_blob_column(cursor, "DENPYO_FILES", "ANALYSIS_RESULT")
                 conn.commit()
             self._management_tables_initialized = True
             return True
@@ -352,12 +369,89 @@ class DatabaseService:
                 )
                 raise
 
+    def _get_column_data_type(self, cursor, table_name: str, column_name: str) -> str:
+        cursor.execute(
+            """SELECT DATA_TYPE
+                 FROM USER_TAB_COLUMNS
+                WHERE TABLE_NAME = :1
+                  AND COLUMN_NAME = :2""",
+            [table_name.upper(), column_name.upper()],
+        )
+        row = cursor.fetchone()
+        return str(row[0]).upper() if row and row[0] else ""
+
+    def _ensure_blob_column(self, cursor, table_name: str, column_name: str) -> None:
+        table_name = table_name.upper()
+        column_name = column_name.upper()
+        existing_type = self._get_column_data_type(cursor, table_name, column_name)
+        if existing_type == "BLOB":
+            return
+        if not existing_type:
+            cursor.execute(f"ALTER TABLE {table_name} ADD ({column_name} BLOB)")
+            return
+        if existing_type != "CLOB":
+            logger.warning(
+                "テーブル %s.%s は BLOB/CLOB 以外の型です: %s",
+                table_name,
+                column_name,
+                existing_type,
+            )
+            return
+
+        temp_column = f"{column_name}_TMP"
+        temp_type = self._get_column_data_type(cursor, table_name, temp_column)
+        if not temp_type:
+            cursor.execute(f"ALTER TABLE {table_name} ADD ({temp_column} BLOB)")
+        elif temp_type != "BLOB":
+            raise ValueError(f"一時カラム {table_name}.{temp_column} の型が不正です: {temp_type}")
+
+        cursor.execute(
+            f"""
+DECLARE
+  v_dest BLOB;
+  v_dest_offset INTEGER;
+  v_src_offset INTEGER;
+  v_lang_ctx INTEGER;
+  v_warning INTEGER;
+BEGIN
+  FOR rec IN (
+    SELECT ROWID AS rid, {column_name} AS src_lob
+      FROM {table_name}
+     WHERE {column_name} IS NOT NULL
+  ) LOOP
+    DBMS_LOB.CREATETEMPORARY(v_dest, TRUE);
+    v_dest_offset := 1;
+    v_src_offset := 1;
+    v_lang_ctx := DBMS_LOB.DEFAULT_LANG_CTX;
+    v_warning := 0;
+    DBMS_LOB.CONVERTTOBLOB(
+      v_dest,
+      rec.src_lob,
+      DBMS_LOB.LOBMAXSIZE,
+      v_dest_offset,
+      v_src_offset,
+      NLS_CHARSET_ID('AL32UTF8'),
+      v_lang_ctx,
+      v_warning
+    );
+    UPDATE {table_name}
+       SET {temp_column} = v_dest
+     WHERE ROWID = rec.rid;
+    DBMS_LOB.FREETEMPORARY(v_dest);
+  END LOOP;
+END;"""
+        )
+        cursor.execute(f"ALTER TABLE {table_name} DROP COLUMN {column_name}")
+        cursor.execute(f"ALTER TABLE {table_name} RENAME COLUMN {temp_column} TO {column_name}")
+        logger.info("テーブル %s の %s を CLOB から BLOB に移行しました", table_name, column_name)
+
     def execute_ddl(self, ddl_statement: str) -> Dict[str, Any]:
         """動的DDLを実行（AI提案のテーブル作成用）"""
         try:
+            statement_to_execute = self._prepare_ddl_for_execution(ddl_statement)
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute(ddl_statement)
+                    cursor.execute(statement_to_execute)
                 conn.commit()
             return {"success": True, "message": "DDL実行完了"}
         except Exception as e:
@@ -366,6 +460,43 @@ class DatabaseService:
                 return {"success": True, "message": "テーブルは既に存在します"}
             logger.error("DDL実行エラー: %s", e, exc_info=True)
             return {"success": False, "message": str(e)}
+
+    @staticmethod
+    def _prepare_ddl_for_execution(ddl_statement: str) -> str:
+        """必要に応じて DDL を EXECUTE IMMEDIATE で包み、疑似レコードを bind と誤解されないようにする"""
+        normalized_statement = (ddl_statement or "").strip()
+        if not normalized_statement:
+            raise ValueError("DDL文が空です")
+        if DatabaseService._requires_execute_immediate_wrapper(normalized_statement):
+            return DatabaseService._build_execute_immediate_block(normalized_statement)
+        return normalized_statement
+
+    @staticmethod
+    def _requires_execute_immediate_wrapper(ddl_statement: str) -> bool:
+        upper_statement = ddl_statement.upper()
+        return (
+            "CREATE OR REPLACE TRIGGER" in upper_statement
+            or ":OLD." in upper_statement
+            or ":NEW." in upper_statement
+        )
+
+    @staticmethod
+    def _build_execute_immediate_block(ddl_statement: str) -> str:
+        delimiters = (
+            ("[", "]"),
+            ("{", "}"),
+            ("<", ">"),
+            ("(", ")"),
+            ("!", "!"),
+            ("~", "~"),
+            ("^", "^"),
+        )
+        for start_delimiter, end_delimiter in delimiters:
+            if start_delimiter not in ddl_statement and end_delimiter not in ddl_statement:
+                return f"BEGIN EXECUTE IMMEDIATE q'{start_delimiter}{ddl_statement}{end_delimiter}'; END;"
+
+        escaped_statement = ddl_statement.replace("'", "''")
+        return f"BEGIN EXECUTE IMMEDIATE '{escaped_statement}'; END;"
 
     def _ensure_slips_tables(self) -> bool:
         """SLIPS_RAW / SLIPS_CATEGORY テーブルとインデックスの存在を保証"""
@@ -394,6 +525,7 @@ class DatabaseService:
                         except Exception as e:
                             if "ORA-01430" not in str(e):
                                 logger.warning("SLIPS_CATEGORY ALTER エラー (無視可): %s", e)
+                    self._ensure_blob_column(cursor, "SLIPS_CATEGORY", "ANALYSIS_RESULT")
                 conn.commit()
             self._slips_tables_initialized = True
             return True
@@ -478,15 +610,29 @@ class DatabaseService:
         }
 
         try:
+            if not self._ensure_management_tables():
+                return {
+                    "success": False,
+                    "header_inserted": 0,
+                    "line_inserted": 0,
+                    "message": "管理テーブルの初期化に失敗しました",
+                }
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     # --- ヘッダーデータ INSERT ---
                     if header_table_name and header_fields:
+                        if not self._is_safe_table_name(header_table_name):
+                            raise ValueError(f"不正なテーブル名です: {header_table_name}")
                         header_cols = []
                         header_vals = []
+                        generated_header_id = self._generate_business_id(cursor, header_table_name)
+                        header_cols.append(_SYSTEM_ID_COLUMN_NAME)
+                        header_vals.append(generated_header_id)
                         for field in header_fields:
                             col_name = field.get("field_name_en", "").upper()
                             value = field.get("value")
+                            if col_name == _SYSTEM_ID_COLUMN_NAME:
+                                continue
                             if col_name and value is not None:
                                 header_cols.append(col_name)
                                 header_vals.append(value)
@@ -504,13 +650,18 @@ class DatabaseService:
 
                     # --- 明細データ INSERT ---
                     if line_table_name and raw_lines:
+                        if not self._is_safe_table_name(line_table_name):
+                            raise ValueError(f"不正なテーブル名です: {line_table_name}")
                         line_inserted = 0
                         for line in raw_lines:
-                            line_cols = []
-                            line_vals = []
+                            line_cols = [_SYSTEM_ID_COLUMN_NAME]
+                            line_vals = [self._generate_business_id(cursor, line_table_name)]
                             for col_name, value in line.items():
-                                if col_name and value is not None:
-                                    line_cols.append(col_name.upper())
+                                normalized_col_name = str(col_name or "").upper()
+                                if normalized_col_name == _SYSTEM_ID_COLUMN_NAME:
+                                    continue
+                                if normalized_col_name and value is not None:
+                                    line_cols.append(normalized_col_name)
                                     line_vals.append(value)
 
                             if line_cols:
@@ -794,6 +945,97 @@ class DatabaseService:
             logger.error("カテゴリ更新エラー (id=%s): %s", category_id, e, exc_info=True)
             return False
 
+    def find_category_conflicts(
+        self,
+        category_name: str,
+        category_name_en: str = "",
+        header_table_name: str = "",
+        line_table_name: str = "",
+        exclude_category_id: Optional[int] = None,
+    ) -> List[str]:
+        """カテゴリ名・英語名・テーブル名の重複を検出する"""
+        if not self._ensure_management_tables():
+            raise ConnectionError("管理テーブルの初期化に失敗しました")
+
+        category_name = (category_name or "").strip()
+        category_name_en = (category_name_en or "").strip()
+        header_table_name = (header_table_name or "").strip().upper()
+        line_table_name = (line_table_name or "").strip().upper()
+
+        conflicts: List[str] = []
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                owned_table_names = set()
+                if exclude_category_id is not None:
+                    cursor.execute(
+                        """SELECT HEADER_TABLE_NAME, LINE_TABLE_NAME
+                             FROM DENPYO_CATEGORIES
+                            WHERE ID = :1""",
+                        [exclude_category_id],
+                    )
+                    owned_row = cursor.fetchone()
+                    if owned_row:
+                        for table_name in owned_row:
+                            normalized_name = str(table_name or "").strip().upper()
+                            if normalized_name:
+                                owned_table_names.add(normalized_name)
+
+                if category_name:
+                    sql = "SELECT ID FROM DENPYO_CATEGORIES WHERE CATEGORY_NAME = :1"
+                    params: List[Any] = [category_name]
+                    if exclude_category_id is not None:
+                        sql += " AND ID <> :2"
+                        params.append(exclude_category_id)
+                    cursor.execute(sql, params)
+                    if cursor.fetchone():
+                        conflicts.append(f"伝票分類名 '{category_name}' は既に使用されています")
+
+                if category_name_en:
+                    sql = "SELECT ID FROM DENPYO_CATEGORIES WHERE UPPER(CATEGORY_NAME_EN) = :1"
+                    params = [category_name_en.upper()]
+                    if exclude_category_id is not None:
+                        sql += " AND ID <> :2"
+                        params.append(exclude_category_id)
+                    cursor.execute(sql, params)
+                    if cursor.fetchone():
+                        conflicts.append(f"伝票分類名（英語） '{category_name_en}' は既に使用されています")
+
+                requested_table_names = [name for name in (header_table_name, line_table_name) if name]
+                if requested_table_names:
+                    seen_names = set()
+                    for table_name in requested_table_names:
+                        if table_name in seen_names:
+                            conflicts.append(f"テーブル名 '{table_name}' が重複しています")
+                            continue
+                        seen_names.add(table_name)
+
+                        sql = """
+                            SELECT ID
+                              FROM DENPYO_CATEGORIES
+                             WHERE (UPPER(HEADER_TABLE_NAME) = :table_name
+                                OR UPPER(LINE_TABLE_NAME) = :table_name)
+                        """
+                        params: Dict[str, Any] = {"table_name": table_name}
+                        if exclude_category_id is not None:
+                            sql += " AND ID <> :exclude_category_id"
+                            params["exclude_category_id"] = exclude_category_id
+                        cursor.execute(sql, params)
+                        if cursor.fetchone():
+                            conflicts.append(f"テーブル名 '{table_name}' は既存カテゴリで使用されています")
+                            continue
+
+                        if table_name in owned_table_names:
+                            continue
+
+                        cursor.execute(
+                            "SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME = :1",
+                            [table_name],
+                        )
+                        if cursor.fetchone():
+                            conflicts.append(f"テーブル名 '{table_name}' は既にデータベース上に存在します")
+
+        return conflicts
+
     def toggle_category_active(self, category_id: int) -> Optional[bool]:
         """カテゴリの有効/無効を切り替え、新しい状態を返す"""
         try:
@@ -906,7 +1148,7 @@ class DatabaseService:
         if not self._ensure_slips_tables():
             return False
         try:
-            payload = json.dumps(analysis_result, ensure_ascii=False)
+            payload = json.dumps(analysis_result, ensure_ascii=False).encode("utf-8")
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
@@ -980,7 +1222,7 @@ class DatabaseService:
         """カラム定義リストからCREATE TABLE DDLを生成"""
         col_defs = []
         pk_cols = []
-        for col in columns:
+        for col in DatabaseService._normalize_designer_columns(columns):
             col_name = col.get("column_name", "").upper()
             if not col_name:
                 continue
@@ -1002,8 +1244,11 @@ class DatabaseService:
                     type_def = f"NUMBER({int(precision)})"
                 else:
                     type_def = "NUMBER"
-            elif data_type in ("DATE", "TIMESTAMP", "CLOB"):
+            elif data_type in ("DATE", "TIMESTAMP"):
                 type_def = data_type
+            elif data_type == "CLOB":
+                length = int(max_length) if max_length else 4000
+                type_def = f"VARCHAR2({length})"
             else:
                 type_def = "VARCHAR2(500)"
 
@@ -1018,6 +1263,117 @@ class DatabaseService:
 
         cols_sql = ",\n".join(col_defs)
         return f"CREATE TABLE {table_name.upper()} (\n{cols_sql}\n)"
+
+    @staticmethod
+    def _build_column_comment_ddls(table_name: str, columns: List[Dict[str, Any]]) -> List[str]:
+        """カラム定義リストから COMMENT ON COLUMN DDL を生成"""
+        table_name = (table_name or "").strip().upper()
+        if not table_name:
+            return []
+
+        ddls: List[str] = []
+        for col in DatabaseService._normalize_designer_columns(columns):
+            col_name = str(col.get("column_name") or "").strip().upper()
+            comment = str(col.get("column_name_jp") or col.get("comment") or "").strip()
+            if not col_name or not comment:
+                continue
+            ddls.append(
+                f"COMMENT ON COLUMN {table_name}.{col_name} IS '{_sql_literal(comment)}'"
+            )
+        return ddls
+
+    @staticmethod
+    def _system_id_column() -> Dict[str, Any]:
+        return {
+            "column_name": _SYSTEM_ID_COLUMN_NAME,
+            "column_name_jp": _SYSTEM_ID_COLUMN_COMMENT,
+            "data_type": "VARCHAR2",
+            "max_length": _SYSTEM_ID_COLUMN_MAX_LENGTH,
+            "is_nullable": False,
+            "is_primary_key": True,
+        }
+
+    @staticmethod
+    def _normalize_designer_columns(columns: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = [dict(DatabaseService._system_id_column())]
+        for raw_col in columns or []:
+            col_name = str(raw_col.get("column_name") or "").strip().upper()
+            if not col_name or col_name == _SYSTEM_ID_COLUMN_NAME:
+                continue
+            normalized.append(
+                {
+                    **raw_col,
+                    "column_name": col_name,
+                    "column_name_jp": str(raw_col.get("column_name_jp") or raw_col.get("comment") or "").strip(),
+                    "data_type": str(raw_col.get("data_type") or "VARCHAR2").strip().upper(),
+                    "is_nullable": bool(raw_col.get("is_nullable", True)),
+                    "is_primary_key": False,
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _build_id_prefix(table_name: str) -> str:
+        normalized_name = re.sub(r"[^A-Z0-9_]+", "_", (table_name or "").strip().upper()).strip("_")
+        if normalized_name.endswith("_H"):
+            base_name = normalized_name[:-2]
+            type_code = "H"
+        elif normalized_name.endswith("_L"):
+            base_name = normalized_name[:-2]
+            type_code = "L"
+        else:
+            base_name = normalized_name
+            type_code = "R"
+        base_name = (base_name or normalized_name or "DENPYO")[:12].strip("_") or "DENPYO"
+        return f"{base_name}-{type_code}"
+
+    @staticmethod
+    def _build_id_immutability_trigger_ddl(table_name: str) -> str:
+        normalized_table_name = (table_name or "").strip().upper()
+        trigger_name = f"TRG_{normalized_table_name[:20]}_ID_IMM"
+        return f"""
+CREATE OR REPLACE TRIGGER {trigger_name}
+BEFORE UPDATE OF {_SYSTEM_ID_COLUMN_NAME} ON {normalized_table_name}
+FOR EACH ROW
+BEGIN
+    IF NVL(:OLD.{_SYSTEM_ID_COLUMN_NAME}, ' ') <> NVL(:NEW.{_SYSTEM_ID_COLUMN_NAME}, ' ') THEN
+        RAISE_APPLICATION_ERROR(-20001, '{_SYSTEM_ID_COLUMN_NAME} は更新できません');
+    END IF;
+END;"""
+
+    def _generate_business_id(self, cursor, table_name: str) -> str:
+        normalized_table_name = (table_name or "").strip().upper()
+        if not normalized_table_name or not self._is_safe_table_name(normalized_table_name):
+            raise ValueError(f"不正なテーブル名です: {table_name}")
+
+        seq_date = time.strftime("%Y%m%d")
+        prefix = self._build_id_prefix(normalized_table_name)
+
+        while True:
+            next_value_var = cursor.var(int)
+            cursor.execute(
+                """UPDATE DENPYO_ID_SEQUENCES
+                      SET LAST_VALUE = LAST_VALUE + 1,
+                          UPDATED_AT = CURRENT_TIMESTAMP
+                    WHERE TABLE_NAME = :1
+                      AND SEQ_DATE = :2
+                RETURNING LAST_VALUE INTO :3""",
+                [normalized_table_name, seq_date, next_value_var],
+            )
+            if cursor.rowcount:
+                next_value = next_value_var.getvalue()[0]
+                return f"{prefix}-{seq_date}-{int(next_value):06d}"
+            try:
+                cursor.execute(
+                    """INSERT INTO DENPYO_ID_SEQUENCES (TABLE_NAME, SEQ_DATE, LAST_VALUE)
+                       VALUES (:1, :2, 1)""",
+                    [normalized_table_name, seq_date],
+                )
+                return f"{prefix}-{seq_date}-000001"
+            except Exception as e:
+                if "ORA-00001" in str(e):
+                    continue
+                raise
 
     def create_category_with_tables(
         self,
@@ -1045,11 +1401,30 @@ class DatabaseService:
             result["message"] = "ヘッダーテーブル名とカラム定義は必須です"
             return result
 
+        header_columns = self._normalize_designer_columns(header_columns)
+        line_columns = self._normalize_designer_columns(line_columns) if line_table_name and line_columns else []
+
+        conflicts = self.find_category_conflicts(
+            category_name=category_name,
+            category_name_en=category_name_en,
+            header_table_name=header_table_name,
+            line_table_name=line_table_name or "",
+        )
+        if conflicts:
+            result["message"] = " / ".join(conflicts)
+            return result
+
         # DDL生成
         header_ddl = self._build_ddl_from_columns(header_table_name, header_columns)
+        header_comment_ddls = self._build_column_comment_ddls(header_table_name, header_columns)
+        header_trigger_ddl = self._build_id_immutability_trigger_ddl(header_table_name)
         line_ddl = None
+        line_comment_ddls: List[str] = []
+        line_trigger_ddl = ""
         if line_table_name and line_columns:
             line_ddl = self._build_ddl_from_columns(line_table_name, line_columns)
+            line_comment_ddls = self._build_column_comment_ddls(line_table_name, line_columns)
+            line_trigger_ddl = self._build_id_immutability_trigger_ddl(line_table_name)
 
         # ヘッダーテーブル作成
         header_res = self.execute_ddl(header_ddl)
@@ -1057,6 +1432,15 @@ class DatabaseService:
             result["message"] = f"ヘッダーテーブル作成失敗: {header_res.get('message', '')}"
             return result
         result["header_table_created"] = True
+        for comment_ddl in header_comment_ddls:
+            comment_res = self.execute_ddl(comment_ddl)
+            if not comment_res.get("success"):
+                result["message"] = f"ヘッダーカラムコメント作成失敗: {comment_res.get('message', '')}"
+                return result
+        header_trigger_res = self.execute_ddl(header_trigger_ddl)
+        if not header_trigger_res.get("success"):
+            result["message"] = f"ヘッダーID更新禁止トリガー作成失敗: {header_trigger_res.get('message', '')}"
+            return result
 
         # 明細テーブル作成（任意）
         if line_ddl:
@@ -1065,6 +1449,15 @@ class DatabaseService:
                 result["message"] = f"明細テーブル作成失敗: {line_res.get('message', '')}"
                 return result
             result["line_table_created"] = True
+            for comment_ddl in line_comment_ddls:
+                comment_res = self.execute_ddl(comment_ddl)
+                if not comment_res.get("success"):
+                    result["message"] = f"明細カラムコメント作成失敗: {comment_res.get('message', '')}"
+                    return result
+            line_trigger_res = self.execute_ddl(line_trigger_ddl)
+            if not line_trigger_res.get("success"):
+                result["message"] = f"明細ID更新禁止トリガー作成失敗: {line_trigger_res.get('message', '')}"
+                return result
 
         # カテゴリレコード保存
         cat_id = self.upsert_category(
@@ -1651,7 +2044,7 @@ class DatabaseService:
             return False
 
         try:
-            payload = json.dumps(analysis_result, ensure_ascii=False)
+            payload = json.dumps(analysis_result, ensure_ascii=False).encode("utf-8")
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
@@ -1688,6 +2081,10 @@ class DatabaseService:
                         return None
 
                     raw_payload = row[1].read() if hasattr(row[1], "read") else row[1]
+                    if isinstance(raw_payload, memoryview):
+                        raw_payload = raw_payload.tobytes()
+                    if isinstance(raw_payload, bytes):
+                        raw_payload = raw_payload.decode("utf-8")
                     parsed_result = json.loads(raw_payload)
                     return {
                         "analysis_kind": row[0] or "",

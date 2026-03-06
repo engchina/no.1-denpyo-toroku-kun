@@ -2217,8 +2217,9 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
                 if not raw_key:
                     continue
                 key = raw_key.upper().replace(" ", "_").replace("-", "_")
-                data_type = (field.get("data_type") or "VARCHAR2").upper()
-                if data_type not in ("VARCHAR2", "NUMBER", "DATE", "TIMESTAMP", "CLOB"):
+                original_data_type = (field.get("data_type") or "VARCHAR2").upper()
+                data_type = original_data_type
+                if data_type not in ("VARCHAR2", "NUMBER", "DATE", "TIMESTAMP"):
                     data_type = "VARCHAR2"
 
                 if key not in seen:
@@ -2228,6 +2229,8 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
                             max_length = int(field.get("max_length")) if field.get("max_length") else 100
                         except (TypeError, ValueError):
                             max_length = 100
+                        if original_data_type == "CLOB" and not field.get("max_length"):
+                            max_length = 4000
                     seen[key] = {
                         "column_name": key,
                         "column_name_jp": field.get("field_name") or raw_key,
@@ -2255,6 +2258,8 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
                         new_len = int(field.get("max_length")) if field.get("max_length") else 100
                     except (TypeError, ValueError):
                         new_len = 100
+                    if original_data_type == "CLOB" and not field.get("max_length"):
+                        new_len = 4000
                     seen[key]["max_length"] = max(existing_len, new_len)
                 appear_count[key] += 1
                 if field.get("is_required"):
@@ -2780,19 +2785,35 @@ def register_file(file_id: int):
 # ========================================
 
 _CATEGORY_TABLE_NAME_PATTERN = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,127}$')
-_ALLOWED_COL_DATA_TYPES = {"VARCHAR2", "NUMBER", "DATE", "TIMESTAMP", "CLOB"}
+_ALLOWED_COL_DATA_TYPES = {"VARCHAR2", "NUMBER", "DATE", "TIMESTAMP"}
+_SYSTEM_CATEGORY_COLUMN_NAME = "ID"
+
+
+def _count_business_columns(columns: list) -> int:
+    return sum(
+        1
+        for col in columns or []
+        if (col.get("column_name") or "").strip().upper() != _SYSTEM_CATEGORY_COLUMN_NAME
+    )
 
 
 def _validate_column_defs(columns: list) -> Optional[str]:
     """カラム定義リストを検証し、問題があればエラーメッセージを返す"""
     if not columns:
         return "カラム定義が空です"
+    seen_names = set()
     for col in columns:
         col_name = (col.get("column_name") or "").strip()
         if not col_name:
             return "カラム名が未入力のカラムがあります"
         if not re.match(r'^[A-Za-z][A-Za-z0-9_]{0,127}$', col_name):
             return f"カラム名 '{col_name}' は英字始まりの英数字・アンダースコアのみ使用できます"
+        if col_name.upper() in seen_names:
+            return f"カラム名 '{col_name}' が重複しています"
+        seen_names.add(col_name.upper())
+        col_name_jp = (col.get("column_name_jp") or col.get("comment") or "").strip()
+        if not col_name_jp:
+            return f"カラム名 '{col_name}' の日本語名は必須です"
         data_type = (col.get("data_type") or "").strip().upper()
         if data_type not in _ALLOWED_COL_DATA_TYPES:
             return f"データ型 '{data_type}' は使用できません（使用可能: {', '.join(sorted(_ALLOWED_COL_DATA_TYPES))}）"
@@ -2951,8 +2972,9 @@ def analyze_slips_for_category():
                 continue
             # snake_case を大文字に統一（スペースはアンダースコアへ）
             key = raw_key.upper().replace(" ", "_").replace("-", "_")
-            dt = (f.get("data_type") or "VARCHAR2").upper()
-            if dt not in ("VARCHAR2", "NUMBER", "DATE", "TIMESTAMP", "CLOB"):
+            original_dt = (f.get("data_type") or "VARCHAR2").upper()
+            dt = original_dt
+            if dt not in ("VARCHAR2", "NUMBER", "DATE", "TIMESTAMP"):
                 dt = "VARCHAR2"
 
             if key not in seen:
@@ -2963,6 +2985,8 @@ def analyze_slips_for_category():
                         max_length = int(raw_len) if raw_len else 100
                     except (TypeError, ValueError):
                         max_length = 100
+                    if original_dt == "CLOB" and not raw_len:
+                        max_length = 4000
                 seen[key] = {
                     "column_name": key,
                     "column_name_jp": f.get("field_name") or raw_key,
@@ -2991,6 +3015,8 @@ def analyze_slips_for_category():
                         new_len = int(raw_new_len) if raw_new_len else 100
                     except (TypeError, ValueError):
                         new_len = 100
+                    if original_dt == "CLOB" and not raw_new_len:
+                        new_len = 4000
                     seen[key]["max_length"] = max(existing_len, new_len)
                 appear_count[key] += 1
                 if f.get("is_required"):
@@ -3059,6 +3085,9 @@ def create_category():
         if not category_name:
             g.response.add_error_message("カテゴリ名は必須です")
             return jsonify(g.response.get_result()), 400
+        if not category_name_en:
+            g.response.add_error_message("伝票分類名（英語）は必須です")
+            return jsonify(g.response.get_result()), 400
 
         if not header_table_name or not _CATEGORY_TABLE_NAME_PATTERN.match(header_table_name):
             g.response.add_error_message("ヘッダーテーブル名が無効です")
@@ -3067,6 +3096,9 @@ def create_category():
         col_err = _validate_column_defs(header_columns)
         if col_err:
             g.response.add_error_message(f"ヘッダーカラム定義エラー: {col_err}")
+            return jsonify(g.response.get_result()), 400
+        if _count_business_columns(header_columns) == 0:
+            g.response.add_error_message("ヘッダーテーブルに ID 以外のカラムを1つ以上定義してください")
             return jsonify(g.response.get_result()), 400
 
         if line_table_name:
@@ -3078,8 +3110,21 @@ def create_category():
                 if line_col_err:
                     g.response.add_error_message(f"明細カラム定義エラー: {line_col_err}")
                     return jsonify(g.response.get_result()), 400
+                if _count_business_columns(line_columns) == 0:
+                    g.response.add_error_message("明細テーブルに ID 以外のカラムを1つ以上定義してください")
+                    return jsonify(g.response.get_result()), 400
 
         db_service = DatabaseService()
+        conflicts = db_service.find_category_conflicts(
+            category_name=category_name,
+            category_name_en=category_name_en,
+            header_table_name=header_table_name,
+            line_table_name=line_table_name or "",
+        )
+        if conflicts:
+            g.response.add_error_message(" / ".join(conflicts))
+            return jsonify(g.response.get_result()), 409
+
         result = db_service.create_category_with_tables(
             category_name=category_name,
             category_name_en=category_name_en,
@@ -3091,8 +3136,10 @@ def create_category():
         )
 
         if not result.get("success"):
-            g.response.add_error_message(result.get("message", "カテゴリ作成に失敗しました"))
-            return jsonify(g.response.get_result()), 500
+            message = result.get("message", "カテゴリ作成に失敗しました")
+            g.response.add_error_message(message)
+            status_code = 409 if any(token in message for token in ("既に使用されています", "既存カテゴリ", "既にデータベース上", "重複")) else 500
+            return jsonify(g.response.get_result()), status_code
 
         g.response.set_data(result)
         return jsonify(g.response.get_result()), 201
@@ -3146,6 +3193,9 @@ def update_category(category_id: int):
         if not category_name:
             g.response.add_error_message("カテゴリ名は必須です")
             return jsonify(g.response.get_result()), 400
+        if not category_name_en:
+            g.response.add_error_message("伝票分類名（英語）は必須です")
+            return jsonify(g.response.get_result()), 400
 
         db_service = DatabaseService()
 
@@ -3153,6 +3203,17 @@ def update_category(category_id: int):
         if not existing:
             g.response.add_error_message("カテゴリが見つかりません")
             return jsonify(g.response.get_result()), 404
+
+        conflicts = db_service.find_category_conflicts(
+            category_name=category_name,
+            category_name_en=category_name_en,
+            header_table_name=existing.get("header_table_name", ""),
+            line_table_name=existing.get("line_table_name", ""),
+            exclude_category_id=category_id,
+        )
+        if conflicts:
+            g.response.add_error_message(" / ".join(conflicts))
+            return jsonify(g.response.get_result()), 409
 
         success = db_service.update_category(
             category_id, category_name, category_name_en, description

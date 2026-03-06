@@ -147,6 +147,10 @@ export function ListView() {
   }, [isQueryReady, loadFiles]);
 
   useEffect(() => {
+    void dispatch(fetchCategories());
+  }, [dispatch]);
+
+  useEffect(() => {
     if (!isQueryReady) return;
     const hasAnalyzingFiles = files.some(file => file.status === 'ANALYZING');
     if (!hasAnalyzingFiles) return;
@@ -241,20 +245,29 @@ export function ListView() {
     });
   }, [dispatch, files.length, page, loadFiles, requestConfirm]);
 
-  const handleAnalyze = useCallback((fileId: string, fileName: string) => {
-    const activeCategories = categories.filter(c => c.is_active);
-    if (activeCategories.length === 0) {
+  const handleAnalyze = useCallback(async (fileId: string, fileName: string) => {
+    try {
+      const latestCategories = await dispatch(fetchCategories()).unwrap();
+      const activeCategories = latestCategories.filter(c => c.is_active);
+      if (activeCategories.length === 0) {
+        dispatch(addNotification({
+          type: 'error',
+          message: t('fileList.analyze.noActiveCategory'),
+          autoClose: true
+        }));
+        return;
+      }
+
+      setAnalyzeTarget({ fileId, fileName });
+      setSelectedCategoryId(activeCategories[0]?.id ?? null);
+    } catch (e: any) {
       dispatch(addNotification({
         type: 'error',
-        message: t('fileList.analyze.noActiveCategory'),
+        message: e?.message || t('fileList.notify.analyzeFailed'),
         autoClose: true
       }));
-      return;
     }
-    setAnalyzeTarget({ fileId, fileName });
-    setSelectedCategoryId(activeCategories[0]?.id ?? null);
-    dispatch(fetchCategories());
-  }, [categories, dispatch]);
+  }, [dispatch]);
 
   const closeAnalyzeModal = useCallback(() => {
     setAnalyzeTarget(null);
@@ -295,7 +308,7 @@ export function ListView() {
   const handleViewResult = useCallback(async (fileId: string) => {
     try {
       await dispatch(fetchAnalysisResult(fileId)).unwrap();
-      navigate(`${APP_ROUTES.analysis}?fileId=${encodeURIComponent(fileId)}`);
+      navigate(`${APP_ROUTES.registration}?fileId=${encodeURIComponent(fileId)}`);
     } catch (e: any) {
       dispatch(addNotification({
         type: 'error',

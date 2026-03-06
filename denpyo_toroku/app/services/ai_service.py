@@ -1213,7 +1213,8 @@ Output only the extracted text with no additional commentary, explanations, or m
 - Use consistent Hepburn romanization rules (e.g., しょ→SHO, きゅう→KYUU, おう→OU).
 
 ### 3. Schema Design Rules
-- Choose appropriate Oracle data types: VARCHAR2, NUMBER, DATE, CLOB, etc.
+- Choose appropriate Oracle data types: VARCHAR2, NUMBER, DATE, TIMESTAMP.
+- Do NOT use CLOB. Even long text fields must use VARCHAR2 with an appropriate length up to 4000.
 - Make columns NULLABLE unless they are clearly always present.
 - Add appropriate length for VARCHAR2 based on the data observed.
 - {header_only_hint}
@@ -1342,10 +1343,13 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
                     return []
                 mapped = []
                 for c in cols:
-                    data_type = str(c.get("data_type", "VARCHAR2")).upper()
-                    if data_type not in {"VARCHAR2", "NUMBER", "DATE", "TIMESTAMP", "CLOB"}:
+                    original_data_type = str(c.get("data_type", "VARCHAR2")).upper()
+                    data_type = original_data_type
+                    if data_type not in {"VARCHAR2", "NUMBER", "DATE", "TIMESTAMP"}:
                         data_type = "VARCHAR2"
                     max_length = _to_int_or_none(c.get("data_length")) if data_type == "VARCHAR2" else None
+                    if data_type == "VARCHAR2" and max_length is None and original_data_type == "CLOB":
+                        max_length = 4000
 
                     mapped.append({
                         "field_name_en": str(c.get("column_name", "")).strip(),

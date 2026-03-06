@@ -21,7 +21,6 @@ const OciObjectStorageSettings = lazy(() => import('../views/ociObjectStorageSet
 const DatabaseSettings = lazy(() => import('../views/databaseSettings/DatabaseSettings').then(m => ({ default: m.DatabaseSettings })));
 const UploadView = lazy(() => import('../views/upload/UploadView').then(m => ({ default: m.UploadView })));
 const ListView = lazy(() => import('../views/fileList/ListView').then(m => ({ default: m.ListView })));
-const AnalysisView = lazy(() => import('../views/analysis/AnalysisView').then(m => ({ default: m.AnalysisView })));
 const RegistrationView = lazy(() => import('../views/registration/RegistrationView').then(m => ({ default: m.RegistrationView })));
 const CategoryView = lazy(() => import('../views/category/CategoryView').then(m => ({ default: m.CategoryView })));
 const SearchView = lazy(() => import('../views/search/SearchView').then(m => ({ default: m.SearchView })));
@@ -101,6 +100,11 @@ function LoginRoute() {
   return <LoginPage />;
 }
 
+function AnalysisRouteRedirect() {
+  const location = useLocation();
+  return <Navigate to={`${APP_ROUTES.registration}${location.search}`} replace />;
+}
+
 function AppRoutes() {
   const dispatch = useAppDispatch();
   const isAuthenticated = useAppSelector(state => state.application.isAuthenticated);
@@ -135,7 +139,7 @@ function AppRoutes() {
           <Route path={APP_ROUTES.dashboard} element={<Dashboard />} />
           <Route path={APP_ROUTES.upload} element={<UploadView />} />
           <Route path={APP_ROUTES.fileList} element={<ListView />} />
-          <Route path={APP_ROUTES.analysis} element={<AnalysisView />} />
+          <Route path={APP_ROUTES.analysis} element={<AnalysisRouteRedirect />} />
           <Route path={APP_ROUTES.registration} element={<RegistrationView />} />
           <Route path={APP_ROUTES.categorySamples} element={<CategoryView mode="samples" />} />
           <Route path={APP_ROUTES.categoryManagement} element={<CategoryView mode="management" />} />

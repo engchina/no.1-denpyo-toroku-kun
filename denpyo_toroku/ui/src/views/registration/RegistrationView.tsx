@@ -4,8 +4,14 @@
  */
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
-import { registerFile, clearRegistrationResult, clearAnalysisResult } from '../../redux/slices/denpyoSlice';
-import { useNavigate } from 'react-router-dom';
+import {
+  registerFile,
+  clearRegistrationResult,
+  clearAnalysisResult,
+  fetchAnalysisResult,
+  clearError
+} from '../../redux/slices/denpyoSlice';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { APP_ROUTES } from '../../constants/routes';
 import { t } from '../../i18n';
 import type { ExtractedField, RegistrationRequest } from '../../types/denpyoTypes';
@@ -25,8 +31,14 @@ export function RegistrationView() {
   const analysisResult = useAppSelector(state => state.denpyo.analysisResult);
   const isRegistering = useAppSelector(state => state.denpyo.isRegistering);
   const registrationResult = useAppSelector(state => state.denpyo.registrationResult);
+  const isAnalyzing = useAppSelector(state => state.denpyo.isAnalyzing);
   const error = useAppSelector(state => state.denpyo.error);
   const navigate = useNavigate();
+  const location = useLocation();
+  const fileId = new URLSearchParams(location.search).get('fileId');
+  const currentAnalysisResult = analysisResult && (!fileId || String(analysisResult.file_id) === String(fileId))
+    ? analysisResult
+    : null;
 
   const [headerTableName, setHeaderTableName] = useState('');
   const [lineTableName, setLineTableName] = useState('');
@@ -37,14 +49,24 @@ export function RegistrationView() {
   const [activeTab, setActiveTab] = useState<'header' | 'line'>('header');
 
   useEffect(() => {
-    if (!analysisResult) return;
+    dispatch(clearRegistrationResult());
+    dispatch(clearError());
+  }, [dispatch, fileId]);
 
-    const ddl = analysisResult.ddl_suggestion;
+  useEffect(() => {
+    if (!fileId || currentAnalysisResult) return;
+    dispatch(fetchAnalysisResult(fileId));
+  }, [currentAnalysisResult, dispatch, fileId]);
+
+  useEffect(() => {
+    if (!currentAnalysisResult) return;
+
+    const ddl = currentAnalysisResult.ddl_suggestion;
     setHeaderTableName(ddl.header_table_name || '');
     setLineTableName(ddl.line_table_name || '');
-    setHeaderFields(analysisResult.extraction.header_fields || []);
+    setHeaderFields(currentAnalysisResult.extraction.header_fields || []);
 
-    const extractedLines = (analysisResult.extraction.raw_lines || []).map(row => {
+    const extractedLines = (currentAnalysisResult.extraction.raw_lines || []).map(row => {
       const normalized: Record<string, string> = {};
       Object.entries(row || {}).forEach(([key, value]) => {
         normalized[key] = String(value ?? '');
@@ -56,7 +78,7 @@ export function RegistrationView() {
       setLineRows(extractedLines);
     } else {
       const fallbackLine: Record<string, string> = {};
-      (analysisResult.extraction.line_fields || []).forEach(field => {
+      (currentAnalysisResult.extraction.line_fields || []).forEach(field => {
         const key = field.field_name_en || field.field_name;
         if (key) fallbackLine[key] = String(field.value ?? '');
       });
@@ -66,16 +88,12 @@ export function RegistrationView() {
     setActiveTab('header');
     setIsConfirmed(false);
     setValidationError('');
-  }, [analysisResult]);
-
-  const handleBack = useCallback(() => {
-    dispatch(clearRegistrationResult());
-    navigate(APP_ROUTES.analysis);
-  }, [dispatch, navigate]);
+  }, [currentAnalysisResult]);
 
   const handleBackToList = useCallback(() => {
     dispatch(clearRegistrationResult());
     dispatch(clearAnalysisResult());
+    dispatch(clearError());
     navigate(APP_ROUTES.fileList);
   }, [dispatch, navigate]);
 
@@ -88,7 +106,7 @@ export function RegistrationView() {
   };
 
   const handleRegister = useCallback(async () => {
-    if (!analysisResult) return;
+    if (!currentAnalysisResult) return;
 
     if (!isConfirmed) {
       setValidationError(t('registration.error.notConfirmed'));
@@ -111,21 +129,76 @@ export function RegistrationView() {
       .filter(row => Object.keys(row).length > 0);
 
     const data: RegistrationRequest = {
-      category_id: analysisResult.category_id,
-      category_name: analysisResult.classification.category,
-      category_name_en: analysisResult.ddl_suggestion.table_prefix || '',
+      category_id: currentAnalysisResult.category_id,
+      category_name: currentAnalysisResult.classification.category,
+      category_name_en: currentAnalysisResult.ddl_suggestion.table_prefix || '',
       header_table_name: headerTableName.trim(),
       line_table_name: lineTableName.trim(),
-      ai_confidence: analysisResult.classification.confidence,
+      ai_confidence: currentAnalysisResult.classification.confidence,
       line_count: normalizedLineRows.length,
       header_fields: headerFields,
       raw_lines: normalizedLineRows,
     };
 
-    dispatch(registerFile({ fileId: analysisResult.file_id, data }));
-  }, [dispatch, analysisResult, headerTableName, lineTableName, headerFields, lineRows, isConfirmed]);
+    dispatch(registerFile({ fileId: currentAnalysisResult.file_id, data }));
+  }, [dispatch, currentAnalysisResult, headerTableName, lineTableName, headerFields, lineRows, isConfirmed]);
 
-  if (!analysisResult) {
+  if (fileId && !currentAnalysisResult) {
+    if (isAnalyzing || !error) {
+      return (
+        <div class="ics-dashboard ics-dashboard--enhanced">
+          <section class="ics-ops-hero">
+            <div class="ics-ops-hero__header">
+              <div>
+                <h2>{t('registration.title')}</h2>
+              </div>
+            </div>
+          </section>
+          <section class="ics-ops-grid ics-ops-grid--one">
+            <div class="ics-card ics-ops-panel">
+              <div class="ics-analysis-loading">
+                <Loader2 size={48} class="ics-spin" />
+                <p>{t('analysis.analyzing')}</p>
+              </div>
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    return (
+      <div class="ics-dashboard ics-dashboard--enhanced">
+        <section class="ics-ops-hero">
+          <div class="ics-ops-hero__header">
+            <div>
+              <h2>{t('registration.title')}</h2>
+            </div>
+            <div class="ics-ops-hero__controls">
+              <button class="ics-ops-btn ics-ops-btn--ghost" onClick={handleBackToList}>
+                <ArrowLeft size={14} />
+                <span>{t('analysis.backToList')}</span>
+              </button>
+            </div>
+          </div>
+        </section>
+        <section class="ics-ops-grid ics-ops-grid--one">
+          <div class="ics-card ics-ops-panel">
+            <div class="ics-card-body">
+              <div class="ics-empty-text">{t('registration.noAnalysis')}</div>
+            </div>
+          </div>
+        </section>
+        <section class="ics-ops-grid ics-ops-grid--one">
+          <div class="ics-registration-error">
+            <AlertCircle size={16} />
+            <span>{error}</span>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  if (!currentAnalysisResult) {
     return (
       <div class="ics-dashboard ics-dashboard--enhanced">
         <section class="ics-ops-hero">
@@ -152,7 +225,7 @@ export function RegistrationView() {
     );
   }
 
-  const { classification } = analysisResult;
+  const { classification } = currentAnalysisResult;
   const lineColumns = Array.from(new Set(lineRows.flatMap(row => Object.keys(row))));
 
   if (registrationResult?.success) {
@@ -205,14 +278,14 @@ export function RegistrationView() {
             <p class="ics-ops-hero__subtitle">{t('registration.subtitle')}</p>
           </div>
           <div class="ics-ops-hero__controls">
-            <button class="ics-ops-btn ics-ops-btn--ghost" onClick={handleBack}>
+            <button class="ics-ops-btn ics-ops-btn--ghost" onClick={handleBackToList}>
               <ArrowLeft size={14} />
-              <span>{t('registration.backToAnalysis')}</span>
+              <span>{t('analysis.backToList')}</span>
             </button>
           </div>
         </div>
         <div class="ics-ops-hero__meta">
-          <span>{analysisResult.file_name}</span>
+          <span>{currentAnalysisResult.file_name}</span>
         </div>
       </section>
 
@@ -394,11 +467,11 @@ export function RegistrationView() {
         <div class="ics-registration-actions">
           <button
             class="ics-ops-btn ics-ops-btn--ghost"
-            onClick={handleBack}
+            onClick={handleBackToList}
             disabled={isRegistering}
           >
             <ArrowLeft size={14} />
-            <span>{t('registration.backToAnalysis')}</span>
+            <span>{t('analysis.backToList')}</span>
           </button>
           <button
             class="ics-ops-btn ics-ops-btn--primary"

@@ -6700,6 +6700,12 @@ html[dir="rtl"] .oracle-icon {
     font-size: 0.9rem;
 }
 
+.ics-table-designer__hint {
+    margin: 0 0 12px;
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
 .ics-table-designer__grid-wrap {
     overflow-x: auto;
     margin-bottom: 10px;
@@ -6716,6 +6722,18 @@ html[dir="rtl"] .oracle-icon {
     gap: 8px;
     margin-top: 4px;
     margin-bottom: 8px;
+}
+
+.ics-table-designer__row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.ics-table-designer__row-action-btn {
+    min-width: 30px;
+    padding: 5px 6px;
 }
 
 .ics-table-designer__sql-preview {

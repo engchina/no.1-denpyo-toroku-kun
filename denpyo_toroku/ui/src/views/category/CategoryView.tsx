@@ -121,9 +121,13 @@ function buildDDLPreview(tableName: string, columns: TableColumnDef[]): string {
 }
 
 const DATA_TYPES = ['VARCHAR2', 'NUMBER', 'DATE', 'TIMESTAMP'] as const;
+const DEFAULT_COLUMN_DATA_TYPE: TableColumnDef['data_type'] = 'VARCHAR2';
 const PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
 const CATEGORY_SAMPLES_QUERY_SCOPE = 'cs';
 const CATEGORY_MANAGEMENT_QUERY_SCOPE = 'cm';
+const SYSTEM_ID_COLUMN_NAME = 'ID';
+const SYSTEM_ID_COLUMN_JP = 'ID';
+const SYSTEM_ID_COLUMN_MAX_LENGTH = 32;
 type SortDirection = 'asc' | 'desc';
 type SlipsSortKey = 'file_name' | 'file_type' | 'file_size' | 'uploaded_at';
 type CategorySortKey =
@@ -134,6 +138,36 @@ type CategorySortKey =
   | 'is_active'
   | 'created_at';
 type PreviewTabType = 'header' | 'line';
+type TableDesignerColumn = TableColumnDef & {
+  ui_key: string;
+  is_system?: boolean;
+};
+
+let tableDesignerColumnSequence = 0;
+
+function createTableDesignerColumnKey(): string {
+  tableDesignerColumnSequence += 1;
+  return `category-column-${tableDesignerColumnSequence}`;
+}
+
+function isSystemIdColumn(column: Partial<TableDesignerColumn> | null | undefined): boolean {
+  return Boolean(column?.is_system) || String(column?.column_name || '').trim().toUpperCase() === SYSTEM_ID_COLUMN_NAME;
+}
+
+function createSystemIdColumn(): TableDesignerColumn {
+  return {
+    ui_key: createTableDesignerColumnKey(),
+    column_name: SYSTEM_ID_COLUMN_NAME,
+    column_name_jp: SYSTEM_ID_COLUMN_JP,
+    data_type: 'VARCHAR2',
+    max_length: SYSTEM_ID_COLUMN_MAX_LENGTH,
+    precision: undefined,
+    scale: undefined,
+    is_nullable: false,
+    is_primary_key: true,
+    is_system: true,
+  };
+}
 
 function compareValues(a: unknown, b: unknown): number {
   if (a === b) return 0;
@@ -157,6 +191,71 @@ function compareValues(a: unknown, b: unknown): number {
   }
 
   return String(a).localeCompare(String(b), 'ja');
+}
+
+function normalizeColumnDataType(value: unknown): TableColumnDef['data_type'] {
+  const normalized = String(value || '').trim().toUpperCase();
+  return (DATA_TYPES as readonly string[]).includes(normalized)
+    ? (normalized as TableColumnDef['data_type'])
+    : DEFAULT_COLUMN_DATA_TYPE;
+}
+
+function normalizeColumnDef(column: Partial<TableDesignerColumn> | null | undefined): TableDesignerColumn {
+  if (isSystemIdColumn(column)) {
+    return {
+      ...createSystemIdColumn(),
+      ui_key: String(column?.ui_key || createTableDesignerColumnKey()),
+    };
+  }
+
+  const originalDataType = String(column?.data_type || '').trim().toUpperCase();
+  const dataType = normalizeColumnDataType(column?.data_type);
+  const rawMaxLength = Number(column?.max_length);
+  const rawPrecision = Number(column?.precision);
+  const rawScale = Number(column?.scale);
+  const fallbackMaxLength = originalDataType === 'CLOB' ? 4000 : 500;
+
+  return {
+    ui_key: String(column?.ui_key || createTableDesignerColumnKey()),
+    column_name: String(column?.column_name || '').trim().toUpperCase(),
+    column_name_jp: String(column?.column_name_jp || '').trim(),
+    data_type: dataType,
+    max_length: dataType === 'VARCHAR2' && Number.isFinite(rawMaxLength) && rawMaxLength > 0 ? rawMaxLength : (dataType === 'VARCHAR2' ? fallbackMaxLength : undefined),
+    precision: dataType === 'NUMBER' && Number.isFinite(rawPrecision) && rawPrecision > 0 ? rawPrecision : undefined,
+    scale: dataType === 'NUMBER' && Number.isFinite(rawScale) && rawScale >= 0 ? rawScale : undefined,
+    is_nullable: typeof column?.is_nullable === 'boolean' ? column.is_nullable : true,
+    is_primary_key: false,
+    is_system: false,
+  };
+}
+
+function normalizeColumns(columns: TableColumnDef[] | null | undefined): TableDesignerColumn[] {
+  const normalizedBusinessColumns = Array.isArray(columns)
+    ? columns
+        .map((column) => normalizeColumnDef(column))
+        .filter((column) => !isSystemIdColumn(column))
+    : [];
+  return [createSystemIdColumn(), ...normalizedBusinessColumns];
+}
+
+function serializeColumns(columns: TableDesignerColumn[]): TableColumnDef[] {
+  return normalizeColumns(columns).map(({ ui_key: _ui_key, is_system: _isSystem, ...column }) => column);
+}
+
+function getBusinessColumns(columns: TableDesignerColumn[]): TableDesignerColumn[] {
+  return columns.filter((column) => !column.is_system);
+}
+
+function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex) return items;
+  if (fromIndex < 0 || fromIndex >= items.length) return items;
+  if (toIndex < 0 || toIndex >= items.length) return items;
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  if (movedItem === undefined) return items;
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
 }
 
 function getDefaultDataSortColumn(columns: string[]): string {
@@ -233,7 +332,7 @@ function EditModal({
   const handleSubmit = useCallback(
     (e: Event) => {
       e.preventDefault();
-      if (!name.trim()) return;
+      if (!name.trim() || !nameEn.trim()) return;
       onSave({ category_name: name.trim(), category_name_en: nameEn.trim(), description: desc.trim() });
     },
     [name, nameEn, desc, onSave]
@@ -261,12 +360,13 @@ function EditModal({
               />
             </div>
             <div class="ics-form-group">
-              <label class="ics-form-label">{t('category.col.nameEn')}</label>
+              <label class="ics-form-label">{t('category.col.nameEn')} *</label>
               <input
                 type="text"
                 class="ics-form-input"
                 value={nameEn}
                 onInput={(e: Event) => setNameEn((e.target as HTMLInputElement).value)}
+                required
               />
             </div>
             <div class="ics-form-group">
@@ -293,7 +393,7 @@ function EditModal({
             <button type="button" class="ics-ops-btn ics-ops-btn--ghost" onClick={onClose} disabled={isSaving}>
               {t('common.cancel')}
             </button>
-            <button type="submit" class="ics-ops-btn ics-ops-btn--primary" disabled={isSaving || !name.trim()}>
+            <button type="submit" class="ics-ops-btn ics-ops-btn--primary" disabled={isSaving || !name.trim() || !nameEn.trim()}>
               {isSaving ? <Loader2 size={14} class="ics-spin" /> : <Save size={14} />}
               <span>{isSaving ? t('common.saving') : t('common.save')}</span>
             </button>
@@ -378,15 +478,26 @@ function AnalysisModeModal({
 function ColumnRow({
   col,
   index,
+  totalCount,
+  lockedPrefixCount,
   onChange,
+  onMove,
   onDelete,
 }: {
-  col: TableColumnDef;
+  col: TableDesignerColumn;
   index: number;
-  onChange: (index: number, updated: TableColumnDef) => void;
+  totalCount: number;
+  lockedPrefixCount: number;
+  onChange: (index: number, updated: TableDesignerColumn) => void;
+  onMove: (index: number, direction: 'up' | 'down') => void;
   onDelete: (index: number) => void;
 }) {
-  const update = (patch: Partial<TableColumnDef>) => onChange(index, { ...col, ...patch });
+  const normalizedDataType = normalizeColumnDataType(col.data_type);
+  const isLocked = Boolean(col.is_system);
+  const update = (patch: Partial<TableDesignerColumn>) => {
+    if (isLocked) return;
+    onChange(index, normalizeColumnDef({ ...col, ...patch }));
+  };
 
   return (
     <tr>
@@ -400,6 +511,7 @@ function ColumnRow({
           value={col.column_name}
           title={col.column_name}
           placeholder="COLUMN_NAME"
+          disabled={isLocked}
           onInput={(e: Event) => update({ column_name: (e.target as HTMLInputElement).value.toUpperCase() })}
         />
       </td>
@@ -410,13 +522,15 @@ function ColumnRow({
           value={col.column_name_jp}
           title={col.column_name_jp}
           placeholder={t('category.designer.colNameJp')}
+          disabled={isLocked}
           onInput={(e: Event) => update({ column_name_jp: (e.target as HTMLInputElement).value })}
         />
       </td>
       <td style={{ minWidth: '120px' }}>
         <select
           class="ics-form-select ics-form-select--sm"
-          value={col.data_type}
+          value={normalizedDataType}
+          disabled={isLocked}
           onChange={(e: Event) => update({ data_type: (e.target as HTMLSelectElement).value as TableColumnDef['data_type'] })}
         >
           {DATA_TYPES.map(dt => (
@@ -425,17 +539,18 @@ function ColumnRow({
         </select>
       </td>
       <td style={{ width: '80px' }}>
-        {(col.data_type === 'VARCHAR2') && (
+        {(normalizedDataType === 'VARCHAR2') && (
           <input
             type="number"
             class="ics-form-input ics-form-input--sm"
             value={col.max_length ?? 500}
             min="1"
             max="4000"
+            disabled={isLocked}
             onInput={(e: Event) => update({ max_length: parseInt((e.target as HTMLInputElement).value, 10) || 500 })}
           />
         )}
-        {(col.data_type === 'NUMBER') && (
+        {(normalizedDataType === 'NUMBER') && (
           <input
             type="number"
             class="ics-form-input ics-form-input--sm"
@@ -443,6 +558,7 @@ function ColumnRow({
             min="1"
             max="38"
             placeholder="精度"
+            disabled={isLocked}
             onInput={(e: Event) => {
               const v = parseInt((e.target as HTMLInputElement).value, 10);
               update({ precision: isNaN(v) ? undefined : v });
@@ -454,6 +570,7 @@ function ColumnRow({
         <input
           type="checkbox"
           checked={!col.is_nullable}
+          disabled={isLocked}
           onChange={(e: Event) => update({ is_nullable: !(e.target as HTMLInputElement).checked })}
           title="NOT NULL"
         />
@@ -462,19 +579,44 @@ function ColumnRow({
         <input
           type="checkbox"
           checked={col.is_primary_key}
+          disabled
           onChange={(e: Event) => update({ is_primary_key: (e.target as HTMLInputElement).checked })}
-          title="Primary Key"
+          title={isLocked ? 'Primary Key' : t('category.designer.idLocked')}
         />
       </td>
-      <td class="ics-table__cell--center" style={{ width: '44px' }}>
-        <button
-          type="button"
-          class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-          onClick={() => onDelete(index)}
-          title={t('common.delete')}
-        >
-          <Trash2 size={14} />
-        </button>
+      <td class="ics-table__cell--center" style={{ width: '108px' }}>
+        <div class="ics-table-designer__row-actions">
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost ics-table-designer__row-action-btn"
+            onClick={() => onMove(index, 'up')}
+            disabled={isLocked || index <= lockedPrefixCount}
+            title={isLocked ? t('category.designer.idLocked') : t('category.designer.moveUp')}
+            aria-label={isLocked ? t('category.designer.idLocked') : t('category.designer.moveUp')}
+          >
+            <ArrowUp size={14} />
+          </button>
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost ics-table-designer__row-action-btn"
+            onClick={() => onMove(index, 'down')}
+            disabled={isLocked || index === totalCount - 1}
+            title={isLocked ? t('category.designer.idLocked') : t('category.designer.moveDown')}
+            aria-label={isLocked ? t('category.designer.idLocked') : t('category.designer.moveDown')}
+          >
+            <ArrowDown size={14} />
+          </button>
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger ics-table-designer__row-action-btn"
+            onClick={() => onDelete(index)}
+            disabled={isLocked}
+            title={isLocked ? t('category.designer.idLocked') : t('common.delete')}
+            aria-label={isLocked ? t('category.designer.idLocked') : t('common.delete')}
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -491,33 +633,44 @@ function TableDesigner({
 }: {
   label: string;
   tableName: string;
-  columns: TableColumnDef[];
+  columns: TableDesignerColumn[];
   onTableNameChange: (name: string) => void;
-  onColumnsChange: (cols: TableColumnDef[]) => void;
+  onColumnsChange: (cols: TableDesignerColumn[]) => void;
 }) {
   const [showPreview, setShowPreview] = useState(false);
+  const lockedPrefixCount = columns.length > 0 && columns[0].is_system ? 1 : 0;
 
   const addColumn = () => {
+    const businessColumnCount = getBusinessColumns(columns).length;
     onColumnsChange([
       ...columns,
-      {
-        column_name: `COL_${columns.length + 1}`,
+      normalizeColumnDef({
+        column_name: `COL_${businessColumnCount + 1}`,
         column_name_jp: '',
         data_type: 'VARCHAR2',
         max_length: 500,
         is_nullable: true,
         is_primary_key: false,
-      },
+      }),
     ]);
   };
 
-  const updateColumn = (index: number, updated: TableColumnDef) => {
+  const updateColumn = (index: number, updated: TableDesignerColumn) => {
+    if (columns[index]?.is_system) return;
     const newCols = [...columns];
     newCols[index] = updated;
     onColumnsChange(newCols);
   };
 
+  const moveColumn = (index: number, direction: 'up' | 'down') => {
+    if (columns[index]?.is_system) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < lockedPrefixCount) return;
+    onColumnsChange(moveArrayItem(columns, index, targetIndex));
+  };
+
   const deleteColumn = (index: number) => {
+    if (columns[index]?.is_system) return;
     onColumnsChange(columns.filter((_, i) => i !== index));
   };
 
@@ -530,7 +683,7 @@ function TableDesigner({
         <span>{label}</span>
       </div>
       <div class="ics-table-designer__table-name-row">
-        <label class="ics-form-label">{t('category.designer.tableName')}</label>
+        <label class="ics-form-label">{t('category.designer.tableName')} *</label>
         <input
           type="text"
           class="ics-form-input"
@@ -539,14 +692,16 @@ function TableDesigner({
           onInput={(e: Event) => onTableNameChange((e.target as HTMLInputElement).value.toUpperCase())}
         />
       </div>
+      <p class="ics-table-designer__hint">{t('category.designer.reorderHint')}</p>
+      <p class="ics-form-hint" style={{ marginBottom: '12px' }}>{t('category.designer.systemIdHint')}</p>
 
       <div class="ics-table-designer__grid-wrap">
         <table class="ics-table ics-table--compact">
           <thead>
             <tr>
               <th>#</th>
-              <th>{t('category.designer.colName')}</th>
-              <th>{t('category.designer.colNameJp')}</th>
+              <th>{t('category.designer.colName')} *</th>
+              <th>{t('category.designer.colNameJp')} *</th>
               <th>{t('category.designer.dataType')}</th>
               <th>{t('category.designer.length')}</th>
               <th title="NOT NULL">NN</th>
@@ -557,10 +712,13 @@ function TableDesigner({
           <tbody>
             {columns.map((col, i) => (
               <ColumnRow
-                key={i}
+                key={col.ui_key}
                 col={col}
                 index={i}
+                totalCount={columns.length}
+                lockedPrefixCount={lockedPrefixCount}
                 onChange={updateColumn}
+                onMove={moveColumn}
                 onDelete={deleteColumn}
               />
             ))}
@@ -659,13 +817,13 @@ function TableDesignerPanel({
   const [headerTableName, setHeaderTableName] = useState(
     (analysisResult.category_guess_en || 'slip').toUpperCase() + '_H'
   );
-  const [headerColumns, setHeaderColumns] = useState<TableColumnDef[]>(analysisResult.header_columns || []);
+  const [headerColumns, setHeaderColumns] = useState<TableDesignerColumn[]>(() => normalizeColumns(analysisResult.header_columns));
   const [lineTableName, setLineTableName] = useState(
     analysisResult.analysis_mode === 'header_line'
       ? (analysisResult.category_guess_en || 'slip').toUpperCase() + '_L'
       : ''
   );
-  const [lineColumns, setLineColumns] = useState<TableColumnDef[]>(analysisResult.line_columns || []);
+  const [lineColumns, setLineColumns] = useState<TableDesignerColumn[]>(() => normalizeColumns(analysisResult.line_columns));
   const [activeTab, setActiveTab] = useState<'header' | 'line'>('header');
   const [validationError, setValidationError] = useState('');
 
@@ -683,29 +841,49 @@ function TableDesignerPanel({
   }, [previewFileId]);
 
   const handleConfirm = () => {
+    const headerBusinessColumns = getBusinessColumns(headerColumns);
+    const lineBusinessColumns = getBusinessColumns(lineColumns);
     setValidationError('');
     if (!categoryName.trim()) {
       setValidationError(t('category.designer.errorNoCategoryName'));
+      return;
+    }
+    if (!categoryNameEn.trim()) {
+      setValidationError(t('category.designer.errorNoCategoryNameEn'));
       return;
     }
     if (!headerTableName.trim()) {
       setValidationError(t('category.designer.errorNoHeaderTable'));
       return;
     }
-    if (headerColumns.length === 0) {
+    if (headerBusinessColumns.length === 0) {
       setValidationError(t('category.designer.errorNoHeaderCols'));
       return;
     }
     for (const col of headerColumns) {
+      if (col.is_system) continue;
       if (!col.column_name.trim()) {
         setValidationError(t('category.designer.errorEmptyColName'));
         return;
       }
+      if (!col.column_name_jp.trim()) {
+        setValidationError(t('category.designer.errorEmptyColNameJp'));
+        return;
+      }
     }
-    if (hasLine && lineTableName.trim() && lineColumns.length > 0) {
+    if (hasLine && lineBusinessColumns.length > 0 && !lineTableName.trim()) {
+      setValidationError(t('category.designer.errorNoLineTable'));
+      return;
+    }
+    if (hasLine && lineTableName.trim() && lineBusinessColumns.length > 0) {
       for (const col of lineColumns) {
+        if (col.is_system) continue;
         if (!col.column_name.trim()) {
           setValidationError(t('category.designer.errorEmptyColName'));
+          return;
+        }
+        if (!col.column_name_jp.trim()) {
+          setValidationError(t('category.designer.errorEmptyColNameJp'));
           return;
         }
       }
@@ -716,11 +894,11 @@ function TableDesignerPanel({
       category_name_en: categoryNameEn.trim(),
       description: description.trim(),
       header_table_name: headerTableName.trim().toUpperCase(),
-      header_columns: headerColumns,
+      header_columns: serializeColumns(headerColumns),
     };
-    if (hasLine && lineTableName.trim() && lineColumns.length > 0) {
+    if (hasLine && lineTableName.trim() && lineBusinessColumns.length > 0) {
       req.line_table_name = lineTableName.trim().toUpperCase();
-      req.line_columns = lineColumns;
+      req.line_columns = serializeColumns(lineColumns);
     }
     onConfirm(req);
   };
@@ -782,7 +960,7 @@ function TableDesignerPanel({
                       />
                     </div>
                     <div class="ics-form-group">
-                      <label class="ics-form-label">{t('category.col.nameEn')}</label>
+                      <label class="ics-form-label">{t('category.col.nameEn')} *</label>
                       <input
                         type="text"
                         class="ics-form-input"
@@ -1380,11 +1558,11 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       if (mode === 'samples' && resultFileId) {
         navigate(APP_ROUTES.categorySamples, { replace: true });
       }
-    } catch {
+    } catch (e: any) {
       dispatch(
         addNotification({
           type: 'error',
-          message: t('category.notify.createFailed'),
+          message: e?.message || t('category.notify.createFailed'),
           autoClose: true,
         })
       );
@@ -1569,11 +1747,11 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
             autoClose: true,
           })
         );
-      } catch {
+      } catch (e: any) {
         dispatch(
           addNotification({
             type: 'error',
-            message: t('category.notify.updateFailed'),
+            message: e?.message || t('category.notify.updateFailed'),
             autoClose: true,
           })
         );
