@@ -15,7 +15,9 @@ import os
 import re
 import time
 import hashlib
+import datetime as dt
 from contextlib import contextmanager
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -401,6 +403,164 @@ class DatabaseService:
         row = cursor.fetchone()
         return str(row[0]).upper() if row and row[0] else ""
 
+    @staticmethod
+    def _normalize_oracle_data_type(data_type: str) -> str:
+        normalized = str(data_type or "").strip().upper()
+        if normalized.startswith("TIMESTAMP"):
+            return "TIMESTAMP"
+        if normalized.startswith("DATE"):
+            return "DATE"
+        if normalized.startswith("NUMBER"):
+            return "NUMBER"
+        if normalized.startswith("VARCHAR2"):
+            return "VARCHAR2"
+        return normalized
+
+    def _get_table_column_data_types(self, cursor, table_name: str) -> Dict[str, str]:
+        cursor.execute(
+            """SELECT COLUMN_NAME, DATA_TYPE
+                 FROM USER_TAB_COLUMNS
+                WHERE TABLE_NAME = :1""",
+            [table_name.upper()],
+        )
+        return {
+            str(row[0]).upper(): self._normalize_oracle_data_type(row[1])
+            for row in cursor.fetchall() or []
+            if row and row[0]
+        }
+
+    @staticmethod
+    def _normalize_timestamp_value(value: dt.datetime) -> dt.datetime:
+        if value.tzinfo is not None:
+            return value.replace(tzinfo=None)
+        return value
+
+    @classmethod
+    def _parse_date_literal(cls, value: Any, column_name: str) -> Optional[dt.date]:
+        if value is None:
+            return None
+        if isinstance(value, dt.datetime):
+            return cls._normalize_timestamp_value(value).date()
+        if isinstance(value, dt.date):
+            return value
+        if not isinstance(value, str):
+            raise ValueError(f"カラム {column_name} の日付形式が不正です: {value}")
+
+        normalized = value.strip()
+        if not normalized:
+            return None
+
+        try:
+            return dt.date.fromisoformat(normalized)
+        except ValueError:
+            pass
+
+        iso_candidate = normalized[:-1] + "+00:00" if normalized.endswith("Z") else normalized
+        try:
+            return cls._normalize_timestamp_value(dt.datetime.fromisoformat(iso_candidate)).date()
+        except ValueError:
+            pass
+
+        for fmt in (
+            "%Y/%m/%d",
+            "%Y%m%d",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y/%m/%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+        ):
+            try:
+                return dt.datetime.strptime(normalized, fmt).date()
+            except ValueError:
+                continue
+
+        raise ValueError(f"カラム {column_name} の日付形式が不正です: {value}")
+
+    @classmethod
+    def _parse_timestamp_literal(cls, value: Any, column_name: str) -> Optional[dt.datetime]:
+        if value is None:
+            return None
+        if isinstance(value, dt.datetime):
+            return cls._normalize_timestamp_value(value)
+        if isinstance(value, dt.date):
+            return dt.datetime.combine(value, dt.time.min)
+        if not isinstance(value, str):
+            raise ValueError(f"カラム {column_name} の日時形式が不正です: {value}")
+
+        normalized = value.strip()
+        if not normalized:
+            return None
+
+        iso_candidate = normalized[:-1] + "+00:00" if normalized.endswith("Z") else normalized
+        try:
+            return cls._normalize_timestamp_value(dt.datetime.fromisoformat(iso_candidate))
+        except ValueError:
+            pass
+
+        if "T" not in normalized:
+            try:
+                return dt.datetime.combine(dt.date.fromisoformat(normalized), dt.time.min)
+            except ValueError:
+                pass
+
+        for fmt in (
+            "%Y/%m/%d %H:%M:%S",
+            "%Y/%m/%d %H:%M:%S.%f",
+            "%Y/%m/%d %H:%M",
+            "%Y/%m/%d",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M",
+            "%Y%m%d%H%M%S",
+            "%Y%m%d",
+        ):
+            try:
+                parsed = dt.datetime.strptime(normalized, fmt)
+                if fmt in ("%Y/%m/%d", "%Y%m%d"):
+                    parsed = dt.datetime.combine(parsed.date(), dt.time.min)
+                return parsed
+            except ValueError:
+                continue
+
+        raise ValueError(f"カラム {column_name} の日時形式が不正です: {value}")
+
+    @classmethod
+    def _coerce_insert_value(cls, value: Any, data_type: str, column_name: str) -> Any:
+        normalized_type = cls._normalize_oracle_data_type(data_type)
+        if normalized_type == "NUMBER":
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, (int, float, Decimal)):
+                return value
+            if not isinstance(value, str):
+                raise ValueError(f"カラム {column_name} の数値形式が不正です: {value}")
+
+            normalized = (
+                value.strip()
+                .replace(",", "")
+                .replace("，", "")
+                .replace("¥", "")
+                .replace("￥", "")
+            )
+            if not normalized:
+                return None
+            try:
+                if re.fullmatch(r"[+-]?\d+", normalized):
+                    return int(normalized)
+                return Decimal(normalized)
+            except (InvalidOperation, ValueError):
+                raise ValueError(f"カラム {column_name} の数値形式が不正です: {value}") from None
+
+        if normalized_type == "DATE":
+            return cls._parse_date_literal(value, column_name)
+
+        if normalized_type == "TIMESTAMP":
+            return cls._parse_timestamp_literal(value, column_name)
+
+        return value
+
     def _ensure_blob_column(self, cursor, table_name: str, column_name: str) -> None:
         table_name = table_name.upper()
         column_name = column_name.upper()
@@ -645,63 +805,86 @@ END;"""
                     if header_table_name and header_fields:
                         if not self._is_safe_table_name(header_table_name):
                             raise ValueError(f"不正なテーブル名です: {header_table_name}")
-                        header_cols = []
-                        header_vals = []
-                        generated_header_id = self._generate_business_id(cursor, header_table_name)
-                        header_cols.append(_SYSTEM_ID_COLUMN_NAME)
-                        header_vals.append(generated_header_id)
-                        for field in header_fields:
-                            col_name = field.get("field_name_en", "").upper()
-                            value = field.get("value")
-                            if col_name == _SYSTEM_ID_COLUMN_NAME:
-                                continue
-                            if col_name and value is not None:
-                                header_cols.append(col_name)
-                                header_vals.append(value)
+                        try:
+                            header_type_map = self._get_table_column_data_types(cursor, header_table_name)
+                            header_cols = []
+                            header_vals = []
+                            generated_header_id = self._generate_business_id(cursor, header_table_name)
+                            header_cols.append(_SYSTEM_ID_COLUMN_NAME)
+                            header_vals.append(generated_header_id)
+                            for field in header_fields:
+                                col_name = field.get("field_name_en", "").upper()
+                                value = field.get("value")
+                                if col_name == _SYSTEM_ID_COLUMN_NAME:
+                                    continue
+                                if col_name and value is not None:
+                                    header_cols.append(col_name)
+                                    header_vals.append(
+                                        self._coerce_insert_value(
+                                            value,
+                                            header_type_map.get(col_name) or field.get("data_type", ""),
+                                            col_name,
+                                        )
+                                    )
 
-                        if header_cols:
-                            col_str = ", ".join(header_cols)
-                            placeholders = ", ".join([f":{i+1}" for i in range(len(header_vals))])
-                            insert_sql = f"INSERT INTO {header_table_name.upper()} ({col_str}) VALUES ({placeholders})"
-                            try:
+                            if header_cols:
+                                col_str = ", ".join(header_cols)
+                                placeholders = ", ".join([f":{i+1}" for i in range(len(header_vals))])
+                                insert_sql = f"INSERT INTO {header_table_name.upper()} ({col_str}) VALUES ({placeholders})"
                                 cursor.execute(insert_sql, header_vals)
                                 result["header_inserted"] = cursor.rowcount
-                            except Exception as e:
-                                error_message = f"ヘッダーINSERTエラー: {str(e)}"
-                                logger.warning(error_message)
-                                result["success"] = False
-                                result["errors"].append(error_message)
+                        except Exception as e:
+                            error_message = f"ヘッダーINSERTエラー: {str(e)}"
+                            logger.warning(error_message)
+                            result["success"] = False
+                            result["errors"].append(error_message)
 
                     # --- 明細データ INSERT ---
                     if line_table_name and raw_lines:
                         if not self._is_safe_table_name(line_table_name):
                             raise ValueError(f"不正なテーブル名です: {line_table_name}")
-                        line_inserted = 0
-                        for line in raw_lines:
-                            line_cols = [_SYSTEM_ID_COLUMN_NAME]
-                            line_vals = [self._generate_business_id(cursor, line_table_name)]
-                            for col_name, value in line.items():
-                                normalized_col_name = str(col_name or "").upper()
-                                if normalized_col_name == _SYSTEM_ID_COLUMN_NAME:
-                                    continue
-                                if normalized_col_name and value is not None:
-                                    line_cols.append(normalized_col_name)
-                                    line_vals.append(value)
+                        try:
+                            line_type_map = self._get_table_column_data_types(cursor, line_table_name)
+                        except Exception as e:
+                            error_message = f"明細INSERTエラー: {str(e)}"
+                            logger.warning(error_message)
+                            result["success"] = False
+                            result["errors"].append(error_message)
+                            line_type_map = None
 
-                            if line_cols:
-                                col_str = ", ".join(line_cols)
-                                placeholders = ", ".join([f":{i+1}" for i in range(len(line_vals))])
-                                insert_sql = f"INSERT INTO {line_table_name.upper()} ({col_str}) VALUES ({placeholders})"
+                        if line_type_map is not None:
+                            line_inserted = 0
+                            for line in raw_lines:
                                 try:
-                                    cursor.execute(insert_sql, line_vals)
-                                    line_inserted += cursor.rowcount
+                                    line_cols = [_SYSTEM_ID_COLUMN_NAME]
+                                    line_vals = [self._generate_business_id(cursor, line_table_name)]
+                                    for col_name, value in line.items():
+                                        normalized_col_name = str(col_name or "").upper()
+                                        if normalized_col_name == _SYSTEM_ID_COLUMN_NAME:
+                                            continue
+                                        if normalized_col_name and value is not None:
+                                            line_cols.append(normalized_col_name)
+                                            line_vals.append(
+                                                self._coerce_insert_value(
+                                                    value,
+                                                    line_type_map.get(normalized_col_name, ""),
+                                                    normalized_col_name,
+                                                )
+                                            )
+
+                                    if line_cols:
+                                        col_str = ", ".join(line_cols)
+                                        placeholders = ", ".join([f":{i+1}" for i in range(len(line_vals))])
+                                        insert_sql = f"INSERT INTO {line_table_name.upper()} ({col_str}) VALUES ({placeholders})"
+                                        cursor.execute(insert_sql, line_vals)
+                                        line_inserted += cursor.rowcount
                                 except Exception as e:
                                     error_message = f"明細INSERTエラー: {str(e)}"
                                     logger.warning("%s (line=%s)", error_message, line)
                                     result["success"] = False
                                     result["errors"].append(error_message)
 
-                        result["line_inserted"] = line_inserted
+                            result["line_inserted"] = line_inserted
 
                 conn.commit()
 
@@ -1138,7 +1321,7 @@ END;"""
                 with conn.cursor() as cursor:
                     cursor.execute(
                         f"""SELECT ID, OBJECT_NAME, BUCKET_NAME, NAMESPACE,
-                                   FILE_NAME, FILE_SIZE_BYTES, CONTENT_TYPE, CREATED_AT
+                                   FILE_NAME, FILE_SIZE_BYTES, CONTENT_TYPE, STATUS, CREATED_AT
                         FROM SLIPS_CATEGORY
                         WHERE ID IN ({placeholders})
                         ORDER BY CREATED_AT DESC""",
@@ -1152,14 +1335,49 @@ END;"""
                             "bucket_name": row[2],
                             "namespace": row[3],
                             "file_name": row[4],
+                            "original_file_name": row[4],
                             "file_size": row[5],
                             "content_type": row[6] or "image/jpeg",
-                            "created_at": str(row[7]) if row[7] else "",
+                            "status": row[7] or "UPLOADED",
+                            "created_at": str(row[8]) if row[8] else "",
                         })
                     return result
         except Exception as e:
             logger.error("SLIPS_CATEGORY ファイル取得エラー (ids=%s): %s", ids, e, exc_info=True)
             return []
+
+    def get_slips_category_analysis_result(self, file_id: int) -> Optional[Dict[str, Any]]:
+        """SLIPS_CATEGORY に保存された分析結果を取得"""
+        if not self._ensure_slips_tables():
+            return None
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT ANALYSIS_RESULT, ANALYZED_AT
+                             FROM SLIPS_CATEGORY
+                            WHERE ID = :1""",
+                        [file_id],
+                    )
+                    row = cursor.fetchone()
+                    if not row or row[0] is None:
+                        return None
+
+                    raw_payload = row[0].read() if hasattr(row[0], "read") else row[0]
+                    if isinstance(raw_payload, memoryview):
+                        raw_payload = raw_payload.tobytes()
+                    if isinstance(raw_payload, bytes):
+                        raw_payload = raw_payload.decode("utf-8")
+                    parsed_result = json.loads(raw_payload)
+                    return {
+                        "analysis_kind": "category",
+                        "result": parsed_result,
+                        "analyzed_at": str(row[1]) if row[1] else "",
+                    }
+        except Exception as e:
+            logger.error("SLIPS_CATEGORY 分析結果取得エラー (id=%s): %s", file_id, e, exc_info=True)
+            return None
 
     def update_category_file_status(self, file_id: int, status: str) -> bool:
         """SLIPS_CATEGORY のステータスを更新"""
@@ -1666,6 +1884,22 @@ END;"""
         row = cursor.fetchone()
         return bool(row and int(row[0] or 0) > 0)
 
+    @staticmethod
+    def _is_oracle_invalid_identifier_error(error: Exception, identifier: str = "") -> bool:
+        message = str(error or "").upper()
+        if "ORA-00904" not in message:
+            return False
+        return not identifier or identifier.upper() in message
+
+    @staticmethod
+    def _is_oracle_already_exists_error(error: Exception) -> bool:
+        message = str(error or "").upper()
+        return (
+            "ORA-00955" in message
+            or "ALREADY EXISTS" in message
+            or "DUPLICATE" in message
+        )
+
     def _get_current_schema_name(self, cursor) -> str:
         cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
         row = cursor.fetchone()
@@ -1829,27 +2063,43 @@ END;"""
         team_name: str,
         attributes_json: str,
     ) -> None:
-        if self._object_exists(
-            cursor,
-            "SELECT COUNT(*) FROM USER_AI_AGENT_TEAMS WHERE UPPER(TEAM_NAME) = :team_name",
-            {"team_name": team_name.upper()},
-        ):
-            return
+        skip_duplicate_create_error = False
+        try:
+            if self._object_exists(
+                cursor,
+                "SELECT COUNT(*) FROM USER_AI_AGENT_TEAMS WHERE UPPER(TEAM_NAME) = :team_name",
+                {"team_name": team_name.upper()},
+            ):
+                return
+        except Exception as e:
+            if not self._is_oracle_invalid_identifier_error(e, "TEAM_NAME"):
+                raise
+            skip_duplicate_create_error = True
+            logger.warning(
+                "USER_AI_AGENT_TEAMS の TEAM_NAME 列を参照できないため CREATE_TEAM で存在確認を代替します: %s",
+                e,
+            )
 
-        cursor.execute(
-            """
-            BEGIN
-                DBMS_CLOUD_AI_AGENT.CREATE_TEAM(
-                    team_name => :team_name,
-                    attributes => :attributes
-                );
-            END;
-            """,
-            {
-                "team_name": team_name,
-                "attributes": attributes_json,
-            },
-        )
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI_AGENT.CREATE_TEAM(
+                        team_name => :team_name,
+                        attributes => :attributes
+                    );
+                END;
+                """,
+                {
+                    "team_name": team_name,
+                    "attributes": attributes_json,
+                },
+            )
+        except Exception as e:
+            if skip_duplicate_create_error and self._is_oracle_already_exists_error(e):
+                logger.info("Select AI team は既に存在するため再作成をスキップします: %s", team_name)
+                return
+            raise
 
     def _ensure_select_ai_agent_assets(
         self,
@@ -2134,8 +2384,9 @@ END;"""
 
     def _validate_select_only(self, sql: str) -> None:
         """SQL が SELECT 文のみかを検証（禁止キーワードチェック）"""
-        import re
-        normalized = sql.strip().upper()
+        normalized_sql = self._normalize_generated_select(sql)
+        sanitized_sql = self._sanitize_sql_for_analysis(normalized_sql)
+        normalized = sanitized_sql.strip().upper()
 
         # SELECT で始まることを確認
         if not normalized.startswith("SELECT"):
@@ -2146,23 +2397,258 @@ END;"""
             r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|EXEC|EXECUTE|MERGE)\b',
             re.IGNORECASE
         )
-        if forbidden.search(sql):
+        if forbidden.search(sanitized_sql):
             raise ValueError("許可されていない SQL キーワードが含まれています")
 
-    def _extract_table_names_from_sql(self, sql: str) -> set:
-        """SQL からテーブル名を抽出（簡易パーサー）"""
-        import re
-        # FROM / JOIN の後のテーブル名を抽出
-        pattern = re.compile(
-            r'\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)',
-            re.IGNORECASE
-        )
-        matches = pattern.findall(sql)
-        return {m.upper() for m in matches}
+    @staticmethod
+    def _sanitize_sql_for_analysis(sql: str) -> str:
+        """文字列リテラルとコメントを空白化し、構文解析用の SQL を返す。"""
+        source = sql or ""
+        result: List[str] = []
+        index = 0
+        length = len(source)
+
+        while index < length:
+            current = source[index]
+            next_char = source[index + 1] if index + 1 < length else ""
+
+            if current == "'" and next_char != "":
+                result.append(" ")
+                index += 1
+                while index < length:
+                    char = source[index]
+                    result.append(" " if char != "\n" else "\n")
+                    if char == "'":
+                        if index + 1 < length and source[index + 1] == "'":
+                            result.append(" ")
+                            index += 2
+                            continue
+                        index += 1
+                        break
+                    index += 1
+                continue
+
+            if current == "-" and next_char == "-":
+                result.extend([" ", " "])
+                index += 2
+                while index < length and source[index] != "\n":
+                    result.append(" ")
+                    index += 1
+                continue
+
+            if current == "/" and next_char == "*":
+                result.extend([" ", " "])
+                index += 2
+                while index < length:
+                    char = source[index]
+                    following = source[index + 1] if index + 1 < length else ""
+                    result.append(" " if char != "\n" else "\n")
+                    if char == "*" and following == "/":
+                        result.append(" ")
+                        index += 2
+                        break
+                    index += 1
+                continue
+
+            result.append(current)
+            index += 1
+
+        return "".join(result)
+
+    @staticmethod
+    def _tokenize_sql_structure(sql: str) -> List[Dict[str, str]]:
+        """SQL 構造解析用にトークン化する。文字列リテラルは事前に除去しておくこと。"""
+        tokens: List[Dict[str, str]] = []
+        index = 0
+        length = len(sql or "")
+
+        while index < length:
+            current = sql[index]
+            if current.isspace():
+                index += 1
+                continue
+
+            if current == '"':
+                index += 1
+                identifier_chars: List[str] = []
+                while index < length:
+                    char = sql[index]
+                    if char == '"':
+                        if index + 1 < length and sql[index + 1] == '"':
+                            identifier_chars.append('"')
+                            index += 2
+                            continue
+                        index += 1
+                        break
+                    identifier_chars.append(char)
+                    index += 1
+                tokens.append({
+                    "kind": "identifier",
+                    "value": "".join(identifier_chars),
+                })
+                continue
+
+            if current.isalpha() or current in ("_", "$", "#"):
+                start = index
+                index += 1
+                while index < length and (sql[index].isalnum() or sql[index] in ("_", "$", "#")):
+                    index += 1
+                tokens.append({
+                    "kind": "word",
+                    "value": sql[start:index],
+                })
+                continue
+
+            if current == ".":
+                tokens.append({
+                    "kind": "dot",
+                    "value": current,
+                })
+                index += 1
+                continue
+
+            if current in "(),;":
+                tokens.append({
+                    "kind": "symbol",
+                    "value": current,
+                })
+                index += 1
+                continue
+
+            tokens.append({
+                "kind": "symbol",
+                "value": current,
+            })
+            index += 1
+
+        return tokens
+
+    @staticmethod
+    def _token_upper(token: Dict[str, str]) -> str:
+        return str(token.get("value") or "").upper()
+
+    @staticmethod
+    def _is_identifier_token(token: Optional[Dict[str, str]]) -> bool:
+        if not token:
+            return False
+        return token.get("kind") in ("word", "identifier") and bool(token.get("value"))
+
+    @classmethod
+    def _skip_balanced_parentheses(cls, tokens: List[Dict[str, str]], start_index: int) -> int:
+        depth = 0
+        index = start_index
+        while index < len(tokens):
+            value = tokens[index].get("value")
+            if value == "(":
+                depth += 1
+            elif value == ")":
+                depth -= 1
+                if depth == 0:
+                    return index + 1
+            index += 1
+        return index
+
+    @classmethod
+    def _skip_relation_alias(cls, tokens: List[Dict[str, str]], index: int) -> int:
+        if index < len(tokens) and cls._token_upper(tokens[index]) == "AS":
+            index += 1
+        if index < len(tokens) and cls._is_identifier_token(tokens[index]):
+            index += 1
+        return index
+
+    @classmethod
+    def _parse_relation_reference(
+        cls,
+        tokens: List[Dict[str, str]],
+        start_index: int,
+    ) -> (Optional[Dict[str, Any]], int):
+        if start_index >= len(tokens) or not cls._is_identifier_token(tokens[start_index]):
+            return None, start_index
+
+        segments = [str(tokens[start_index].get("value") or "").upper()]
+        index = start_index + 1
+        while index + 1 < len(tokens):
+            if tokens[index].get("kind") != "dot" or not cls._is_identifier_token(tokens[index + 1]):
+                break
+            segments.append(str(tokens[index + 1].get("value") or "").upper())
+            index += 2
+
+        return {
+            "table_name": segments[-1],
+            "qualified_name": segments,
+            "is_qualified": len(segments) > 1,
+        }, index
+
+    @classmethod
+    def _extract_table_references_from_sql(cls, sql: str) -> List[Dict[str, Any]]:
+        tokens = cls._tokenize_sql_structure(cls._sanitize_sql_for_analysis(sql))
+        references: List[Dict[str, Any]] = []
+        clause_end_keywords = {
+            "WHERE", "GROUP", "ORDER", "HAVING", "CONNECT", "START",
+            "UNION", "MINUS", "INTERSECT", "EXCEPT", "FETCH", "OFFSET",
+            "FOR", "MODEL",
+        }
+        index = 0
+
+        while index < len(tokens):
+            token_upper = cls._token_upper(tokens[index])
+            if token_upper == "FROM":
+                index += 1
+                while index < len(tokens):
+                    current = tokens[index]
+                    current_upper = cls._token_upper(current)
+                    if current_upper in clause_end_keywords or current.get("value") == ")":
+                        break
+                    if current_upper in {"JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "NATURAL", "OUTER", "ON", "USING"}:
+                        break
+                    if current.get("value") == ",":
+                        index += 1
+                        continue
+                    if current.get("value") == "(":
+                        index = cls._skip_balanced_parentheses(tokens, index)
+                        index = cls._skip_relation_alias(tokens, index)
+                        continue
+
+                    reference, next_index = cls._parse_relation_reference(tokens, index)
+                    if reference:
+                        references.append(reference)
+                        index = cls._skip_relation_alias(tokens, next_index)
+                        continue
+
+                    index += 1
+                continue
+
+            if token_upper == "JOIN":
+                index += 1
+                if index < len(tokens) and tokens[index].get("value") == "(":
+                    index = cls._skip_balanced_parentheses(tokens, index)
+                    index = cls._skip_relation_alias(tokens, index)
+                    continue
+
+                reference, next_index = cls._parse_relation_reference(tokens, index)
+                if reference:
+                    references.append(reference)
+                    index = cls._skip_relation_alias(tokens, next_index)
+                    continue
+
+            index += 1
+
+        return references
 
     def _validate_tables_in_whitelist(self, sql: str, allowed: set) -> None:
         """SQL 内のテーブルが許可リストにあるか検証"""
-        referenced = self._extract_table_names_from_sql(sql)
+        references = self._extract_table_references_from_sql(sql)
+        qualified = sorted({
+            ".".join(ref["qualified_name"])
+            for ref in references
+            if ref.get("is_qualified")
+        })
+        if qualified:
+            raise ValueError(
+                "スキーマ修飾されたテーブル参照は許可されていません: %s" % ", ".join(qualified)
+            )
+
+        referenced = {str(ref.get("table_name") or "").upper() for ref in references if ref.get("table_name")}
         unauthorized = referenced - allowed
         if unauthorized:
             raise ValueError(f"許可されていないテーブルが参照されています: {', '.join(unauthorized)}")
@@ -2170,15 +2656,16 @@ END;"""
     def execute_select_query(self, sql: str, max_rows: int = 500, allowed_tables: Optional[set] = None) -> Dict[str, Any]:
         """SELECT 文のみ実行（安全なクエリ実行）"""
         try:
+            normalized_sql = self._normalize_generated_select(sql)
             # セキュリティ検証
-            self._validate_select_only(sql)
+            self._validate_select_only(normalized_sql)
             allowed = allowed_tables or self._get_allowed_table_set()
             if not allowed:
                 return {"success": False, "message": "検索可能なテーブルがありません", "columns": [], "rows": [], "total": 0}
-            self._validate_tables_in_whitelist(sql, allowed)
+            self._validate_tables_in_whitelist(normalized_sql, allowed)
 
             # 行数制限を追加
-            limited_sql = f"SELECT * FROM ({sql}) WHERE ROWNUM <= :max_rows"
+            limited_sql = f"SELECT * FROM ({normalized_sql}) WHERE ROWNUM <= :max_rows"
 
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -2338,13 +2825,10 @@ END;"""
                     # データ取得（ページング）
                     # 行削除に使うため、ROWIDを ROW_ID_META として含める（表示カラムからは除外可能）
                     cursor.execute(
-                        f"""SELECT ROWIDTOCHAR(RID) AS ROW_ID_META, DATA_ROW.*
-                        FROM (
-                          SELECT t.ROWID AS RID, t.*
+                        f"""SELECT ROWIDTOCHAR(t.ROWID) AS ROW_ID_META, t.*
                           FROM {table_name.upper()} t
-                          ORDER BY 2
-                          OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY
-                        ) DATA_ROW""",
+                         ORDER BY t.ID
+                         OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY""",
                         {"offset": offset, "limit": limit}
                     )
                     columns = [desc[0] for desc in cursor.description]

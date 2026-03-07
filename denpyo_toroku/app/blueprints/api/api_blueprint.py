@@ -136,6 +136,7 @@ def _runtime_oci_defaults() -> Dict[str, str]:
     return {
         "config_path": config_path or "~/.oci/config",
         "profile": profile,
+        "region": _runtime_oci_region_default(),
         "compartment_id": _normalize_text(
             os.environ.get("OCI_CONFIG_COMPARTMENT"),
             _normalize_text(getattr(AppConfig, "OCI_CONFIG_COMPARTMENT", "")),
@@ -254,7 +255,12 @@ def _load_oci_settings_snapshot() -> Dict[str, Any]:
     user_ocid = _get_config_value(parser, profile, "user")
     tenancy_ocid = _get_config_value(parser, profile, "tenancy")
     fingerprint = _get_config_value(parser, profile, "fingerprint")
-    region = _get_config_value(parser, profile, "region") or _extract_region_from_endpoint(defaults["service_endpoint"])
+    region = (
+        _normalize_text(os.environ.get("OCI_REGION"))
+        or _get_config_value(parser, profile, "region")
+        or _extract_region_from_endpoint(defaults["service_endpoint"])
+        or defaults.get("region", "")
+    )
 
     key_file = _resolve_key_file_path(config_path, parser, profile)
     key_content = ""
@@ -338,6 +344,7 @@ def _upsert_env_values(env_path: Path, updates: Dict[str, str]) -> None:
 
 
 def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
+    os.environ["OCI_REGION"] = settings["region"]
     os.environ["OCI_CONFIG_PATH"] = settings["config_path"]
     os.environ["OCI_CONFIG_PROFILE"] = settings["profile"]
     os.environ["OCI_CONFIG_COMPARTMENT"] = settings["compartment_id"]
@@ -353,6 +360,7 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     os.environ["OCI_NAMESPACE"] = settings["namespace"]
     os.environ["OCI_BUCKET"] = settings["bucket"]
 
+    AppConfig.OCI_REGION = settings["region"]
     AppConfig.OCI_CONFIG_PATH = settings["config_path"]
     AppConfig.OCI_CONFIG_PROFILE = settings["profile"]
     AppConfig.OCI_CONFIG_COMPARTMENT = settings["compartment_id"]
@@ -452,6 +460,7 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
         pass
 
     settings_for_env = {
+        "region": region,
         "config_path": config_path,
         "profile": profile,
         "compartment_id": _normalize_text(
@@ -505,6 +514,7 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
     _upsert_env_values(
         _env_file_path(),
         {
+            "OCI_REGION": settings_for_env["region"],
             "OCI_CONFIG_PATH": settings_for_env["config_path"],
             "OCI_CONFIG_PROFILE": settings_for_env["profile"],
             "OCI_CONFIG_COMPARTMENT": settings_for_env["compartment_id"],
@@ -573,6 +583,12 @@ def _build_oci_model_test_settings(request_settings: Dict[str, Any]) -> Dict[str
         request_settings.get("service_endpoint"),
         snapshot_settings.get("service_endpoint", defaults.get("service_endpoint", "")),
     )
+    if not service_endpoint:
+        resolved_region = _normalize_text(
+            request_settings.get("region"),
+            snapshot_settings.get("region", defaults.get("region", _DEFAULT_OCI_REGION)),
+        ) or _DEFAULT_OCI_REGION
+        service_endpoint = f"https://inference.generativeai.{resolved_region}.oci.oraclecloud.com"
     compartment_id = _normalize_text(
         request_settings.get("compartment_id"),
         snapshot_settings.get("compartment_id", defaults.get("compartment_id", "")),
@@ -1663,6 +1679,7 @@ def upload_files():
                     "files/upload SLIPS登録NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs slips_db=%.2fs",
                     filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed, slip_db_elapsed
                 )
+                _safe_cleanup_uploaded_object(storage_service, object_name)
                 continue
 
             # DB レコード作成
@@ -1683,6 +1700,7 @@ def upload_files():
                     "files/upload DB登録NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs db=%.2fs",
                     filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed, db_elapsed
                 )
+                _safe_cleanup_uploaded_object(storage_service, object_name)
                 continue
 
             # アクティビティログ
@@ -1709,6 +1727,8 @@ def upload_files():
             )
         except Exception as e:
             logging.error("ファイルアップロードエラー (%s): %s", filename, e, exc_info=True)
+            if 'object_name' in locals():
+                _safe_cleanup_uploaded_object(storage_service, object_name)
             errors.append(f"{filename}: {str(e)}")
 
     success = len(uploaded_files) > 0
@@ -1722,6 +1742,30 @@ def upload_files():
         len(uploaded_files), len(errors), time.time() - batch_started_at
     )
     return jsonify(g.response.get_result())
+
+
+def _safe_cleanup_uploaded_object(storage_service, object_name: str) -> None:
+    """上传流程中发生后续失败时，尽力回滚已上传的 Object Storage 文件。"""
+    normalized_object_name = _normalize_text(object_name)
+    if not normalized_object_name:
+        return
+    try:
+        rollback_result = storage_service.delete_file(normalized_object_name)
+        if rollback_result.get("success"):
+            logging.info("files/upload 回滚成功: object=%s", normalized_object_name)
+        else:
+            logging.warning(
+                "files/upload 回滚失败: object=%s message=%s",
+                normalized_object_name,
+                rollback_result.get("message", ""),
+            )
+    except Exception as rollback_error:
+        logging.warning(
+            "files/upload 回滚异常: object=%s error=%s",
+            normalized_object_name,
+            rollback_error,
+            exc_info=True,
+        )
 
 
 @api_blueprint.route("/api/v1/files", methods=["GET"])
@@ -1805,13 +1849,27 @@ def get_file_analysis_result(file_id: int):
     try:
         db_service = DatabaseService()
         file_record = db_service.get_file_by_id(file_id)
-        if not file_record:
+        if file_record:
+            analysis_result = db_service.get_analysis_result(file_id)
+            if not analysis_result:
+                if file_record.get("status") == "ANALYZING":
+                    g.response.add_error_message("AI分析はまだ完了していません")
+                    return jsonify(g.response.get_result()), 409
+                g.response.add_error_message("分析結果がありません")
+                return jsonify(g.response.get_result()), 404
+
+            g.response.set_data(analysis_result)
+            return jsonify(g.response.get_result())
+
+        slips_category_records = db_service.get_slips_category_files_by_ids([file_id])
+        if not slips_category_records:
             g.response.add_error_message("ファイルが見つかりません")
             return jsonify(g.response.get_result()), 404
 
-        analysis_result = db_service.get_analysis_result(file_id)
+        slips_category_record = slips_category_records[0]
+        analysis_result = db_service.get_slips_category_analysis_result(file_id)
         if not analysis_result:
-            if file_record.get("status") == "ANALYZING":
+            if slips_category_record.get("status") == "ANALYZING":
                 g.response.add_error_message("AI分析はまだ完了していません")
                 return jsonify(g.response.get_result()), 409
             g.response.add_error_message("分析結果がありません")
@@ -2208,6 +2266,8 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
     try:
         file_records = db_service.get_files_by_ids(file_ids)
         if not file_records:
+            file_records = db_service.get_slips_category_files_by_ids(file_ids)
+        if not file_records:
             raise ValueError("指定されたファイルが見つかりません")
 
         processed_file_ids: List[int] = []
@@ -2338,9 +2398,9 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
         }
 
         for file_id in list(dict.fromkeys(file_ids)):
-            if not db_service.save_analysis_result(file_id, "category", result):
+            if not db_service.save_category_analysis_result(file_id, result):
                 raise RuntimeError(f"分析結果の保存に失敗しました (file_id={file_id})")
-            db_service.update_file_status(file_id, "ANALYZED")
+            db_service.update_category_file_status(file_id, "ANALYZED")
             db_service.log_activity(
                 activity_type="CATEGORY_ANALYZE_COMPLETE",
                 description=f"分類用サンプル伝票の分析が完了しました (file_id={file_id})",
@@ -2350,7 +2410,7 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
     except Exception as e:
         logging.error("分類用サンプル伝票のAI分析エラー (file_ids=%s): %s", file_ids, e, exc_info=True)
         for file_id in file_ids:
-            db_service.update_file_status(file_id, "ERROR")
+            db_service.update_category_file_status(file_id, "ERROR")
             db_service.log_activity(
                 activity_type="CATEGORY_ANALYZE_ERROR",
                 description=f"分類用サンプル伝票の分析エラー: {str(e)[:200]}",
@@ -2931,8 +2991,10 @@ def analyze_slips_for_category():
 
     file_records = db_service.get_files_by_ids(normalized_file_ids)
     if not file_records:
+        file_records = db_service.get_slips_category_files_by_ids(normalized_file_ids)
+    if not file_records:
         for file_id in normalized_file_ids:
-            db_service.update_file_status(file_id, "ERROR")
+            db_service.update_category_file_status(file_id, "ERROR")
         g.response.add_error_message("指定されたファイルが見つかりません")
         return jsonify(g.response.get_result()), 404
 
@@ -2977,6 +3039,7 @@ def analyze_slips_for_category():
         if not tmp_filepaths:
             for file_id in normalized_file_ids:
                 db_service.update_file_status(file_id, "ERROR")
+                db_service.update_category_file_status(file_id, "ERROR")
             g.response.add_error_message("処理できる画像ファイルがありませんでした")
             return jsonify(g.response.get_result()), 500
 
@@ -2985,6 +3048,7 @@ def analyze_slips_for_category():
         if not ocr_result.get("success"):
             for file_id in normalized_file_ids:
                 db_service.update_file_status(file_id, "ERROR")
+                db_service.update_category_file_status(file_id, "ERROR")
             g.response.add_error_message(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
             return jsonify(g.response.get_result()), 500
 
@@ -2995,6 +3059,7 @@ def analyze_slips_for_category():
         if not schema_result.get("success"):
             for file_id in normalized_file_ids:
                 db_service.update_file_status(file_id, "ERROR")
+                db_service.update_category_file_status(file_id, "ERROR")
             g.response.add_error_message(f"AIによるスキーマ設計に失敗しました: {schema_result.get('message')}")
             return jsonify(g.response.get_result()), 500
             
@@ -3017,6 +3082,7 @@ def analyze_slips_for_category():
     if not all_header_fields:
         for file_id in normalized_file_ids:
             db_service.update_file_status(file_id, "ERROR")
+            db_service.update_category_file_status(file_id, "ERROR")
         g.response.add_error_message("分析できるファイルがありませんでした")
         return jsonify(g.response.get_result()), 500
 
@@ -3119,11 +3185,12 @@ def analyze_slips_for_category():
         "analyzed_file_ids": analyzed_file_ids,
     }
     for file_id in normalized_file_ids:
-        if not db_service.save_analysis_result(file_id, "category", result):
+        if not db_service.save_category_analysis_result(file_id, result):
             db_service.update_file_status(file_id, "ERROR")
+            db_service.update_category_file_status(file_id, "ERROR")
             g.response.add_error_message(f"分析結果の保存に失敗しました (file_id={file_id})")
             return jsonify(g.response.get_result()), 500
-        db_service.update_file_status(file_id, "ANALYZED")
+        db_service.update_category_file_status(file_id, "ANALYZED")
     g.response.set_data(result)
     return jsonify(g.response.get_result())
 
@@ -3378,6 +3445,109 @@ def get_table_browser_tables():
         return jsonify(g.response.get_result()), 500
 
 
+def _build_search_table_schemas(db_service: DatabaseService, allowed_tables: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    table_schemas: List[Dict[str, Any]] = []
+    for entry in allowed_tables:
+        header_table_name = (entry.get("header_table_name") or "").strip()
+        line_table_name = (entry.get("line_table_name") or "").strip()
+        if header_table_name:
+            cols = db_service.get_table_columns(header_table_name)
+            if cols:
+                table_schemas.append({
+                    "table_name": header_table_name,
+                    "columns": cols,
+                })
+        if line_table_name:
+            cols = db_service.get_table_columns(line_table_name)
+            if cols:
+                table_schemas.append({
+                    "table_name": line_table_name,
+                    "columns": cols,
+                })
+    return table_schemas
+
+
+def _should_fallback_from_select_ai(select_ai_result: Dict[str, Any]) -> bool:
+    if select_ai_result.get("success") or select_ai_result.get("generated_sql"):
+        return False
+    message = str(select_ai_result.get("message") or "").upper()
+    fallback_tokens = (
+        "DBMS_CLOUD_AI",
+        "DBMS_CLOUD_AI_AGENT",
+        "DBMS_CLOUD",
+        "ORA-01031",
+        "ORA-00904",
+        "ORA-06550",
+    )
+    return any(token in message for token in fallback_tokens)
+
+
+def _run_direct_llm_search(
+    db_service: DatabaseService,
+    *,
+    query: str,
+    allowed_tables: List[Dict[str, Any]],
+    allowed_table_set: set,
+) -> Dict[str, Any]:
+    from denpyo_toroku.app.services.ai_service import AIService
+
+    table_schemas = _build_search_table_schemas(db_service, allowed_tables)
+    if not table_schemas:
+        return {
+            "success": False,
+            "status_code": 400,
+            "error_message": "テーブル情報を取得できませんでした",
+        }
+
+    ai_service = AIService()
+    ai_result = ai_service.text_to_sql(query, table_schemas)
+    if not ai_result.get("success"):
+        return {
+            "success": False,
+            "status_code": 400,
+            "error_message": ai_result.get("message", "SQL生成に失敗しました"),
+        }
+
+    generated_sql = ai_result.get("sql", "")
+    explanation = ai_result.get("explanation", "")
+    exec_result = db_service.execute_select_query(
+        generated_sql,
+        max_rows=500,
+        allowed_tables=allowed_table_set,
+    )
+    if not exec_result.get("success"):
+        return {
+            "success": True,
+            "payload": {
+                "generated_sql": generated_sql,
+                "explanation": explanation,
+                "results": {
+                    "columns": [],
+                    "rows": [],
+                    "total": 0,
+                },
+                "error": exec_result.get("message", "クエリ実行に失敗しました"),
+                "engine": "direct_llm",
+                "engine_meta": {},
+            },
+        }
+
+    return {
+        "success": True,
+        "payload": {
+            "generated_sql": generated_sql,
+            "explanation": explanation,
+            "results": {
+                "columns": exec_result.get("columns", []),
+                "rows": exec_result.get("rows", []),
+                "total": exec_result.get("total", 0),
+            },
+            "engine": "direct_llm",
+            "engine_meta": {},
+        },
+    }
+
+
 @api_blueprint.route("/api/v1/search/nl", methods=["POST"])
 def natural_language_search():
     """自然言語検索（NL -> SQL -> 実行）"""
@@ -3400,7 +3570,13 @@ def natural_language_search():
 
         # category_id が指定されていれば絞り込み
         if category_id is not None:
-            allowed_tables = [t for t in allowed_tables if t["category_id"] == int(category_id)]
+            try:
+                category_id = int(category_id)
+            except (TypeError, ValueError):
+                g.response.add_error_message("category_id は整数で指定してください")
+                return jsonify(g.response.get_result()), 400
+
+            allowed_tables = [t for t in allowed_tables if t["category_id"] == category_id]
             if not allowed_tables:
                 g.response.add_error_message("指定されたカテゴリに検索可能なテーブルがありません")
                 return jsonify(g.response.get_result()), 400
@@ -3434,88 +3610,42 @@ def natural_language_search():
                     })
                     return jsonify(g.response.get_result())
 
-                g.response.add_error_message(select_ai_result.get("message", "Select AI Agent での検索に失敗しました"))
-                return jsonify(g.response.get_result()), 400
+                if _should_fallback_from_select_ai(select_ai_result):
+                    logging.warning(
+                        "Select AI Agent の基盤エラーのため direct LLM にフォールバックします: %s",
+                        select_ai_result.get("message", ""),
+                    )
+                else:
+                    g.response.add_error_message(
+                        select_ai_result.get("message", "Select AI Agent での検索に失敗しました")
+                    )
+                    return jsonify(g.response.get_result()), 400
 
-            g.response.set_data({
-                "generated_sql": select_ai_result.get("generated_sql", ""),
-                "explanation": select_ai_result.get("explanation", ""),
-                "results": {
-                    "columns": select_ai_result.get("results", {}).get("columns", []),
-                    "rows": select_ai_result.get("results", {}).get("rows", []),
-                    "total": select_ai_result.get("results", {}).get("total", 0),
-                },
-                "engine": select_ai_result.get("engine", "select_ai_agent"),
-                "engine_meta": select_ai_result.get("engine_meta", {}),
-            })
-            return jsonify(g.response.get_result())
+            else:
+                g.response.set_data({
+                    "generated_sql": select_ai_result.get("generated_sql", ""),
+                    "explanation": select_ai_result.get("explanation", ""),
+                    "results": {
+                        "columns": select_ai_result.get("results", {}).get("columns", []),
+                        "rows": select_ai_result.get("results", {}).get("rows", []),
+                        "total": select_ai_result.get("results", {}).get("total", 0),
+                    },
+                    "engine": select_ai_result.get("engine", "select_ai_agent"),
+                    "engine_meta": select_ai_result.get("engine_meta", {}),
+                })
+                return jsonify(g.response.get_result())
 
-        from denpyo_toroku.app.services.ai_service import AIService
-        ai_service = AIService()
-
-        # 各テーブルのカラム情報を取得
-        table_schemas = []
-        for t in allowed_tables:
-            if t["header_table_name"]:
-                cols = db_service.get_table_columns(t["header_table_name"])
-                if cols:
-                    table_schemas.append({
-                        "table_name": t["header_table_name"],
-                        "columns": cols
-                    })
-            if t["line_table_name"]:
-                cols = db_service.get_table_columns(t["line_table_name"])
-                if cols:
-                    table_schemas.append({
-                        "table_name": t["line_table_name"],
-                        "columns": cols
-                    })
-
-        if not table_schemas:
-            g.response.add_error_message("テーブル情報を取得できませんでした")
-            return jsonify(g.response.get_result()), 400
-
-        # AI で自然言語 -> SQL 変換
-        ai_result = ai_service.text_to_sql(query, table_schemas)
-        if not ai_result.get("success"):
-            g.response.add_error_message(ai_result.get("message", "SQL生成に失敗しました"))
-            return jsonify(g.response.get_result()), 400
-
-        generated_sql = ai_result.get("sql", "")
-        explanation = ai_result.get("explanation", "")
-
-        # 生成された SQL を実行
-        exec_result = db_service.execute_select_query(
-            generated_sql,
-            max_rows=500,
-            allowed_tables=allowed_table_set,
+        direct_llm_result = _run_direct_llm_search(
+            db_service,
+            query=query,
+            allowed_tables=allowed_tables,
+            allowed_table_set=allowed_table_set,
         )
-        if not exec_result.get("success"):
-            g.response.set_data({
-                "generated_sql": generated_sql,
-                "explanation": explanation,
-                "results": {
-                    "columns": [],
-                    "rows": [],
-                    "total": 0
-                },
-                "error": exec_result.get("message", "クエリ実行に失敗しました"),
-                "engine": "direct_llm",
-                "engine_meta": {},
-            })
-            return jsonify(g.response.get_result())
+        if not direct_llm_result.get("success"):
+            g.response.add_error_message(direct_llm_result.get("error_message", "検索に失敗しました"))
+            return jsonify(g.response.get_result()), int(direct_llm_result.get("status_code", 400))
 
-        g.response.set_data({
-            "generated_sql": generated_sql,
-            "explanation": explanation,
-            "results": {
-                "columns": exec_result.get("columns", []),
-                "rows": exec_result.get("rows", []),
-                "total": exec_result.get("total", 0)
-            },
-            "engine": "direct_llm",
-            "engine_meta": {},
-        })
+        g.response.set_data(direct_llm_result["payload"])
         return jsonify(g.response.get_result())
 
     except Exception as e:

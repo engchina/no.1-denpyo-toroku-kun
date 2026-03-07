@@ -21,6 +21,7 @@ import {
   Server,
   Tags,
   Upload,
+  ClipboardList,
   type LucideIcon,
 } from 'lucide-react';
 import { StatusBadge } from '../../components/common/StatusBadge';
@@ -58,7 +59,7 @@ const featureCards: FeatureCard[] = [
     descriptionKey: 'dashboard.feature.fileList.description',
     metricKey: 'dashboard.metric.totalRegistrations',
     metricValue: stats => stats?.registration_stats?.total_registrations ?? 0,
-    Icon: FileText
+    Icon: ClipboardList
   },
   {
     id: 'categorySamples',

@@ -26,6 +26,7 @@ export const ja = {
   'common.delete': '削除',
   'common.cancel': 'キャンセル',
   'common.close': '閉じる',
+  'common.confirmAction': '{action}の確認',
   'common.selectAll': 'すべて選択',
   'common.sort': '並び替え',
   'common.deselectAll': 'すべて解除',

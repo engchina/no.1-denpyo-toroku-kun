@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { AlertTriangle, AlertCircle, CheckCircle, Info, X } from 'lucide-react';
+import { t } from '../i18n';
 
 type ConfirmSeverity = 'error' | 'warning' | 'confirmation' | 'info' | 'none';
 
 type ToastConfirmRequest = {
+  title?: string;
   message: string;
   confirmLabel: string;
   cancelLabel: string;
@@ -43,6 +45,9 @@ function ToastConfirmPopup({
 }) {
   const sev = request.severity ?? 'warning';
   const accentColor = SEVERITY_ACCENT[sev];
+  const titleId = `${request.id}-title`;
+  const messageId = `${request.id}-message`;
+  const title = request.title || t('common.confirmAction', { action: request.confirmLabel });
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -59,29 +64,32 @@ function ToastConfirmPopup({
     <div class="ics-modal-overlay" onClick={onClose}>
       <div
         class="ics-modal ics-toast-confirm-modal"
-        style={{ maxWidth: '520px' }}
         role="alertdialog"
         aria-modal="true"
-        aria-label={request.message}
+        aria-labelledby={titleId}
+        aria-describedby={messageId}
         onClick={(e: Event) => e.stopPropagation()}
       >
-        <div class="ics-modal__header">
-          <h3 class="ics-toast-confirm-modal__title">
+        <div class="ics-modal__header ics-toast-confirm-modal__header">
+          <div class="ics-toast-confirm-modal__heading">
             <span class="ics-toast-confirm-modal__icon" style={{ color: accentColor }}>
               <SeverityIcon severity={sev} />
             </span>
-            <span>{request.message}</span>
-          </h3>
+            <h3 id={titleId} class="ics-toast-confirm-modal__title">{title}</h3>
+          </div>
           <button
             type="button"
-            class="ics-ops-btn ics-ops-btn--ghost"
+            class="ics-ops-btn ics-ops-btn--ghost ics-toast-confirm-modal__close"
             onClick={onClose}
-            aria-label="閉じる"
+            aria-label={t('common.close')}
           >
             <X size={16} />
           </button>
         </div>
-        <div class="ics-modal__footer">
+        <div class="ics-modal__body ics-toast-confirm-modal__body">
+          <p id={messageId} class="ics-toast-confirm-modal__message">{request.message}</p>
+        </div>
+        <div class="ics-modal__footer ics-toast-confirm-modal__footer">
           <button
             type="button"
             class="ics-ops-btn ics-ops-btn--ghost"

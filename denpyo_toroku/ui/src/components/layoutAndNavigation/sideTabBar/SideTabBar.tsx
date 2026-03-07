@@ -18,6 +18,7 @@ import {
   Database,
   Upload,
   FileText,
+  Files,
   Tags,
   Search,
   type LucideIcon
@@ -44,7 +45,7 @@ const navGroups: NavGroup[] = [
       { id: 'dashboard', nameKey: 'nav.dashboard', Icon: LayoutDashboard, path: APP_ROUTES.dashboard },
       { id: 'upload', nameKey: 'nav.upload', Icon: Upload, path: APP_ROUTES.upload },
       { id: 'fileList', nameKey: 'nav.fileList', Icon: FileText, path: APP_ROUTES.fileList },
-      { id: 'categorySamples', nameKey: 'nav.categorySamples', Icon: FileText, path: APP_ROUTES.categorySamples },
+      { id: 'categorySamples', nameKey: 'nav.categorySamples', Icon: Files, path: APP_ROUTES.categorySamples },
       { id: 'categoryManagement', nameKey: 'nav.categoryManagement', Icon: Tags, path: APP_ROUTES.categoryManagement },
       { id: 'search', nameKey: 'nav.dataSearch', Icon: Search, path: APP_ROUTES.search }
     ]
