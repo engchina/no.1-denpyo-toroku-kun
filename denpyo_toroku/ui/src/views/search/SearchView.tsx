@@ -95,63 +95,68 @@ export function SearchView() {
   };
 
   return (
-    <div class="ics-view-container ics-search-view">
-      <header class="ics-view-header">
-        <h1 class="oj-typography-heading-md">{t('search.title')}</h1>
-        <p class="oj-typography-body-sm oj-sm-margin-2x-top">{t('search.subtitle')}</p>
-      </header>
-
-      <div class="ics-search-workspace">
-        {/* Tab Bar */}
-        <div class="ics-search-tabs" role="tablist" aria-label={t('search.title')}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'nlSearch'}
-            class={`ics-search-tab ${activeTab === 'nlSearch' ? 'ics-search-tab--active' : ''}`}
-            onClick={() => handleTabChange('nlSearch')}
-          >
-            <Search size={16} />
-            <span>{t('search.tab.nlSearch')}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'tableBrowser'}
-            class={`ics-search-tab ${activeTab === 'tableBrowser' ? 'ics-search-tab--active' : ''}`}
-            onClick={() => handleTabChange('tableBrowser')}
-          >
-            <Database size={16} />
-            <span>{t('search.tab.tableBrowser')}</span>
-          </button>
+    <div class="ics-dashboard ics-dashboard--enhanced ics-search-view">
+      <section class="ics-ops-hero">
+        <div class="ics-ops-hero__header">
+          <div>
+            <h2>{t('search.title')}</h2>
+            <p class="ics-ops-hero__subtitle">{t('search.subtitle')}</p>
+          </div>
         </div>
+      </section>
 
-        {/* Error display */}
-        {searchError && (
-          <div class="ics-error-message oj-sm-margin-4x-top">
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-card ics-ops-panel ics-search-tabPanel">
+          <div class="ics-card-body ics-search-tabPanel__body">
+            <div class="ics-search-tabs" role="tablist" aria-label={t('search.title')}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'nlSearch'}
+                class={`ics-search-tab ${activeTab === 'nlSearch' ? 'ics-search-tab--active' : ''}`}
+                onClick={() => handleTabChange('nlSearch')}
+              >
+                <Search size={16} />
+                <span>{t('search.tab.nlSearch')}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'tableBrowser'}
+                class={`ics-search-tab ${activeTab === 'tableBrowser' ? 'ics-search-tab--active' : ''}`}
+                onClick={() => handleTabChange('tableBrowser')}
+              >
+                <Database size={16} />
+                <span>{t('search.tab.tableBrowser')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {searchError && (
+        <section class="ics-ops-grid ics-ops-grid--one">
+          <div class="ics-error-message">
             {searchError}
           </div>
-        )}
+        </section>
+      )}
 
-        {/* Tab content */}
-        <div class="ics-search-content oj-sm-margin-4x-top">
-          {activeTab === 'nlSearch' ? (
-            <NLSearchTab
-              searchableTables={searchableTables}
-              isLoading={isNLSearching}
-              isTablesLoading={isSearchableTablesLoading}
-              result={nlSearchResult}
-            />
-          ) : (
-            <TableBrowserTab
-              tableBrowserTables={tableBrowserTables}
-              isLoading={isTableBrowsing}
-              isTableListLoading={isTableBrowserTablesLoading}
-              result={tableBrowseResult}
-            />
-          )}
-        </div>
-      </div>
+      {activeTab === 'nlSearch' ? (
+        <NLSearchTab
+          searchableTables={searchableTables}
+          isLoading={isNLSearching}
+          isTablesLoading={isSearchableTablesLoading}
+          result={nlSearchResult}
+        />
+      ) : (
+        <TableBrowserTab
+          tableBrowserTables={tableBrowserTables}
+          isLoading={isTableBrowsing}
+          isTableListLoading={isTableBrowserTablesLoading}
+          result={tableBrowseResult}
+        />
+      )}
     </div>
   );
 }
@@ -200,148 +205,159 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
   const noTables = !isTablesLoading && searchableTables.length === 0;
 
   return (
-    <div class="ics-nl-search">
-      <div class="ics-search-controls-card">
-        {/* Category filter */}
-        <div class="ics-form-group">
-          <label class="ics-form-label">{t('search.common.categoryFilter')}</label>
-          <select
-            class="ics-form-input"
-            value={categoryId ?? ''}
-            onChange={(e) => setCategoryId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined)}
-            disabled={noTables}
-          >
-            <option value="">{t('search.common.allCategories')}</option>
-            {searchableTables.map(table => (
-              <option key={table.category_id} value={table.category_id}>
-                {table.category_name}
-              </option>
-            ))}
-          </select>
-        </div>
+    <div class="ics-nl-search ics-search-stack">
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-card ics-ops-panel">
+          <div class="ics-card-body ics-search-panelBody">
+            <div class="ics-search-controls-card">
+              {/* Category filter */}
+              <div class="ics-form-group">
+                <label class="ics-form-label">{t('search.common.categoryFilter')}</label>
+                <select
+                  class="ics-form-input"
+                  value={categoryId ?? ''}
+                  onChange={(e) => setCategoryId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined)}
+                  disabled={noTables}
+                >
+                  <option value="">{t('search.common.allCategories')}</option>
+                  {searchableTables.map(table => (
+                    <option key={table.category_id} value={table.category_id}>
+                      {table.category_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-        {/* Query input */}
-        <div class="ics-form-group">
-          <div class="ics-form-label-row">
-            <label class="ics-form-label">{t('search.nl.queryLabel')}</label>
-            <span class="ics-form-hint">Ctrl + Enter</span>
-          </div>
-          <textarea
-            class="ics-form-textarea ics-search-query"
-            placeholder={t('search.nl.queryPlaceholder')}
-            value={query}
-            onInput={(e) => setQuery(e.currentTarget.value)}
-            onKeyDown={handleKeyDown}
-            disabled={noTables || isLoading}
-            rows={3}
-          />
-        </div>
+              {/* Query input */}
+              <div class="ics-form-group">
+                <div class="ics-form-label-row">
+                  <label class="ics-form-label">{t('search.nl.queryLabel')}</label>
+                  <span class="ics-form-hint">Ctrl + Enter</span>
+                </div>
+                <textarea
+                  class="ics-form-textarea ics-search-query"
+                  placeholder={t('search.nl.queryPlaceholder')}
+                  value={query}
+                  onInput={(e) => setQuery(e.currentTarget.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={noTables || isLoading}
+                  rows={3}
+                />
+              </div>
 
-        <div class="ics-form-group">
-          <label class="ics-form-label">{t('search.nl.quickPrompts')}</label>
-          <div class="ics-search-chipList">
-            {quickPrompts.map(prompt => (
-              <button
-                key={prompt}
-                type="button"
-                class="ics-search-chip"
-                onClick={() => setQuery(prompt)}
-                disabled={isLoading}
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
-        </div>
+              <div class="ics-form-group">
+                <label class="ics-form-label">{t('search.nl.quickPrompts')}</label>
+                <div class="ics-search-chipList">
+                  {quickPrompts.map(prompt => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      class="ics-search-chip"
+                      onClick={() => setQuery(prompt)}
+                      disabled={isLoading}
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-        {/* Search button */}
-        <div class="ics-search-actions">
-          <button
-            type="button"
-            class="ics-ops-btn ics-ops-btn--primary"
-            onClick={handleSearch}
-            disabled={!query.trim() || noTables || isLoading}
-          >
-            {isLoading ? (
-              <>
-                <Loader2 size={16} class="ics-spinner" />
-                <span>{t('search.nl.searching')}</span>
-              </>
-            ) : (
-              <>
-                <Search size={16} />
-                <span>{t('search.nl.search')}</span>
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {noTables && (
-        <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.error.noTables')}</p>
-      )}
-
-      {/* Results */}
-      {result && (
-        <div class="ics-nl-results oj-sm-margin-6x-top">
-          <div class="ics-search-engineStrip">
-            <span class="ics-search-engineStrip__label">{t('search.nl.engineLabel')}</span>
-            <span class="ics-search-engineBadge">
-              {result.engine === 'direct_llm' ? t('search.nl.engine.directLlm') : t('search.nl.engine.selectAiAgent')}
-            </span>
-            {result.engine_meta?.api_format && (
-              <span class="ics-search-engineMeta">
-                {t('search.nl.meta.apiFormat').replace('{value}', result.engine_meta.api_format)}
-              </span>
-            )}
-            {typeof result.engine_meta?.use_comments === 'boolean' && (
-              <span class="ics-search-engineMeta">
-                {result.engine_meta.use_comments ? t('search.nl.meta.commentsOn') : t('search.nl.meta.commentsOff')}
-              </span>
-            )}
-          </div>
-
-          {/* Generated SQL */}
-          {result.generated_sql && (
-            <div class="ics-form-group">
-              <div class="ics-sql-header">
-                <label class="ics-form-label">{t('search.nl.generatedSql')}</label>
+              {/* Search button */}
+              <div class="ics-search-actions">
                 <button
                   type="button"
-                  class="ics-copy-btn"
-                  onClick={handleCopySQL}
-                  title={t('search.nl.copySql')}
+                  class="ics-ops-btn ics-ops-btn--primary"
+                  onClick={handleSearch}
+                  disabled={!query.trim() || noTables || isLoading}
                 >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
-                  <span>{copied ? t('search.nl.copiedSql') : t('search.nl.copySql')}</span>
+                  {isLoading ? (
+                    <>
+                      <Loader2 size={16} class="ics-spinner" />
+                      <span>{t('search.nl.searching')}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Search size={16} />
+                      <span>{t('search.nl.search')}</span>
+                    </>
+                  )}
                 </button>
               </div>
-              <pre class="ics-search-sql"><code>{result.generated_sql}</code></pre>
             </div>
-          )}
 
-          {/* Explanation */}
-          {result.explanation && (
-            <div class="ics-form-group">
-              <label class="ics-form-label">{t('search.nl.explanation')}</label>
-              <p class="oj-typography-body-sm">{result.explanation}</p>
-            </div>
-          )}
-
-          {/* Results table */}
-          {result.results && (
-            <div class="ics-form-group">
-              <label class="ics-form-label">
-                {t('search.nl.resultCount').replace('{count}', String(result.results.total || 0))}
-              </label>
-              {result.results.rows && result.results.rows.length > 0 ? (
-                <ResultsTable columns={result.results.columns} rows={result.results.rows} />
-              ) : (
-                <p class="oj-typography-body-sm">{t('search.nl.noResult')}</p>
-              )}
-            </div>
-          )}
+            {noTables && (
+              <p class="ics-search-panelMessage">{t('search.error.noTables')}</p>
+            )}
+          </div>
         </div>
+      </section>
+
+      {result && (
+        <section class="ics-ops-grid ics-ops-grid--one">
+          <div class="ics-card ics-ops-panel">
+            <div class="ics-card-body">
+              <div class="ics-nl-results">
+                <div class="ics-search-engineStrip">
+                  <span class="ics-search-engineStrip__label">{t('search.nl.engineLabel')}</span>
+                  <span class="ics-search-engineBadge">
+                    {result.engine === 'direct_llm' ? t('search.nl.engine.directLlm') : t('search.nl.engine.selectAiAgent')}
+                  </span>
+                  {result.engine_meta?.api_format && (
+                    <span class="ics-search-engineMeta">
+                      {t('search.nl.meta.apiFormat').replace('{value}', result.engine_meta.api_format)}
+                    </span>
+                  )}
+                  {typeof result.engine_meta?.use_comments === 'boolean' && (
+                    <span class="ics-search-engineMeta">
+                      {result.engine_meta.use_comments ? t('search.nl.meta.commentsOn') : t('search.nl.meta.commentsOff')}
+                    </span>
+                  )}
+                </div>
+
+                {/* Generated SQL */}
+                {result.generated_sql && (
+                  <div class="ics-form-group">
+                    <div class="ics-sql-header">
+                      <label class="ics-form-label">{t('search.nl.generatedSql')}</label>
+                      <button
+                        type="button"
+                        class="ics-copy-btn"
+                        onClick={handleCopySQL}
+                        title={t('search.nl.copySql')}
+                      >
+                        {copied ? <Check size={14} /> : <Copy size={14} />}
+                        <span>{copied ? t('search.nl.copiedSql') : t('search.nl.copySql')}</span>
+                      </button>
+                    </div>
+                    <pre class="ics-search-sql"><code>{result.generated_sql}</code></pre>
+                  </div>
+                )}
+
+                {/* Explanation */}
+                {result.explanation && (
+                  <div class="ics-form-group">
+                    <label class="ics-form-label">{t('search.nl.explanation')}</label>
+                    <p class="oj-typography-body-sm">{result.explanation}</p>
+                  </div>
+                )}
+
+                {/* Results table */}
+                {result.results && (
+                  <div class="ics-form-group">
+                    <label class="ics-form-label">
+                      {t('search.nl.resultCount').replace('{count}', String(result.results.total || 0))}
+                    </label>
+                    {result.results.rows && result.results.rows.length > 0 ? (
+                      <ResultsTable columns={result.results.columns} rows={result.results.rows} />
+                    ) : (
+                      <p class="oj-typography-body-sm">{t('search.nl.noResult')}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
       )}
     </div>
   );
@@ -699,276 +715,276 @@ function TableBrowserTab({
   };
 
   return (
-    <div class="ics-table-browser">
-      <div class="ics-card ics-ops-panel">
-        <div class="ics-card-header ics-card-header--table-toolbar">
-          <div class="ics-unified-table-header">
-            <span class="oj-typography-heading-xs">{t('search.browser.tableListTitle')}</span>
-            <div class="ics-unified-table-toolbar">
-              <div class="ics-unified-table-toolbar__group">
-                <span class="ics-unified-table-toolbar__meta">
-                  {t('search.browser.selectedTables', { count: tableListSelection.selectedCount })}
-                </span>
-              </div>
-              <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
-                <button
-                  type="button"
-                  class="ics-ops-btn ics-ops-btn--ghost"
-                  onClick={handleRefreshTables}
-                  disabled={isTableListLoading}
-                >
-                  {isTableListLoading ? <Loader2 size={14} class="ics-spinner" /> : <RefreshCw size={14} />}
-                  <span>{t('search.browser.refresh')}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="ics-card-body">
-          {tableBrowserTables.length > 0 ? (
-            <>
-              <div class="ics-table-wrapper">
-                <table class="ics-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: '40px' }}>
-                        <input
-                          type="checkbox"
-                          checked={tableListSelection.isAllSelected(tableListPagination.paginatedItems)}
-                          ref={(el) => {
-                            if (!el) return;
-                            const pageItems = tableListPagination.paginatedItems;
-                            const allSelected = tableListSelection.isAllSelected(pageItems);
-                            const hasSelectedOnPage = pageItems.some(item =>
-                              tableListSelection.isSelected(`${item.category_id}-${item.table_type}-${item.table_name}`)
-                            );
-                            el.indeterminate = !allSelected && hasSelectedOnPage;
-                          }}
-                          onChange={() => {
-                            if (tableListSelection.isAllSelected(tableListPagination.paginatedItems)) {
-                              tableListSelection.deselectAll();
-                            } else {
-                              tableListSelection.selectAll(tableListPagination.paginatedItems);
-                            }
-                          }}
-                          aria-label={t('common.selectAll')}
-                        />
-                      </th>
-                      <th>
-                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_name')}>
-                          {t('search.browser.col.tableName')}
-                          {renderTableListSortIcon('table_name')}
-                        </button>
-                      </th>
-                      <th>
-                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('category_name')}>
-                          {t('search.browser.col.category')}
-                          {renderTableListSortIcon('category_name')}
-                        </button>
-                      </th>
-                      <th>
-                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_type')}>
-                          {t('search.browser.col.type')}
-                          {renderTableListSortIcon('table_type')}
-                        </button>
-                      </th>
-                      <th>
-                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('row_count')}>
-                          {t('search.browser.col.rows')}
-                          {renderTableListSortIcon('row_count')}
-                        </button>
-                      </th>
-                      <th>
-                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('column_count')}>
-                          {t('search.browser.col.columns')}
-                          {renderTableListSortIcon('column_count')}
-                        </button>
-                      </th>
-                      <th>
-                        <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('created_at')}>
-                          {t('search.browser.col.createdAt')}
-                          {renderTableListSortIcon('created_at')}
-                        </button>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tableListPagination.paginatedItems.map(table => {
-                      const tableKey = `${table.category_id}-${table.table_type}-${table.table_name}`;
-                      return (
-                        <tr
-                          key={tableKey}
-                          role="button"
-                          tabIndex={0}
-                          class={
-                            selectedTable &&
-                              selectedTable.table_name === table.table_name &&
-                              selectedTable.table_type === table.table_type &&
-                              selectedTable.category_id === table.category_id
-                              ? 'ics-table-row--selected'
-                              : ''
-                          }
-                          onClick={() => handleTableSelect(table)}
-                          onKeyDown={(e) => handleTableRowKeyDown(e, table)}
-                        >
-                          <td class="ics-table__cell--center" onClick={(e: Event) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={tableListSelection.isSelected(tableKey)}
-                              onChange={() => tableListSelection.toggle(tableKey)}
-                            />
-                          </td>
-                          <td>{table.table_name}</td>
-                          <td>{table.category_name}</td>
-                          <td>{table.table_type === 'header' ? t('search.browser.header') : t('search.browser.line')}</td>
-                          <td>{table.row_count.toLocaleString()}</td>
-                          <td>{table.column_count}</td>
-                          <td>{formatDateTime(table.created_at)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <Pagination
-                currentPage={tableListPagination.currentPage}
-                totalPages={tableListPagination.totalPages}
-                totalItems={tableListPagination.totalItems}
-                pageSize={tableListPageSize}
-                pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
-                onPageSizeChange={setTableListPageSize}
-                goToPageInput={tableListPagination.goToPageInput}
-                onPageChange={tableListPagination.goToPage}
-                onGoToPageInputChange={tableListPagination.setGoToPageInput}
-                onGoToPage={tableListPagination.handleGoToPage}
-                rangeStart={tableListRangeStart}
-                rangeEnd={tableListRangeEnd}
-                showGoToPage={false}
-                isFirstPage={tableListPagination.isFirstPage}
-                isLastPage={tableListPagination.isLastPage}
-                position="bottom"
-                show
-                summaryPlacement="controls"
-              />
-            </>
-          ) : (
-            <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noTableList')}</p>
-          )}
-        </div>
-      </div>
-
-      {selectedTable && (
-        <div class="ics-card ics-ops-panel oj-sm-margin-4x-top">
+    <div class="ics-table-browser ics-search-stack">
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-card ics-ops-panel">
           <div class="ics-card-header ics-card-header--table-toolbar">
             <div class="ics-unified-table-header">
-              <div class="ics-browser-title-wrap">
-                <span class="oj-typography-heading-xs">
-                  {t('search.browser.previewTitle')}
-                </span>
-                <span class="ics-browser-table-chip">{selectedTable.table_name}</span>
-              </div>
+              <span class="oj-typography-heading-xs">{t('search.browser.tableListTitle')}</span>
               <div class="ics-unified-table-toolbar">
                 <div class="ics-unified-table-toolbar__group">
-                  <button
-                    type="button"
-                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                    onClick={handleBulkDeleteRows}
-                    disabled={dataRowSelection.selectedCount === 0 || isBulkDeletingRows || isLoading}
-                  >
-                    <Trash2 size={14} />
-                    <span>{t('fileList.bulkDelete')}</span>
-                  </button>
                   <span class="ics-unified-table-toolbar__meta">
-                    {t('search.browser.selectedRows', { count: dataRowSelection.selectedCount })}
+                    {t('search.browser.selectedTables', { count: tableListSelection.selectedCount })}
                   </span>
                 </div>
                 <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
                   <button
                     type="button"
                     class="ics-ops-btn ics-ops-btn--ghost"
-                    onClick={handleRefreshData}
-                    disabled={isLoading}
+                    onClick={handleRefreshTables}
+                    disabled={isTableListLoading}
                   >
-                    {isLoading ? <Loader2 size={14} class="ics-spinner" /> : <RefreshCw size={14} />}
+                    {isTableListLoading ? <Loader2 size={14} class="ics-spinner" /> : <RefreshCw size={14} />}
                     <span>{t('search.browser.refresh')}</span>
                   </button>
                 </div>
               </div>
             </div>
           </div>
+
           <div class="ics-card-body">
-            {isLoading && (
-              <div class="ics-loading oj-sm-margin-4x-top">
-                <Loader2 size={24} class="ics-spinner" />
-                <span>{t('common.loading')}</span>
-              </div>
-            )}
-
-            {!isLoading && result && (
-              <div class="ics-browser-results">
-                {result.rows && result.rows.length > 0 ? (
-                  <>
-                    <ResultsTable
-                      columns={result.columns}
-                      rows={sortedDataRows}
-                      sortColumn={dataSortColumn}
-                      sortDirection={dataSortDirection}
-                      onSortColumn={handleDataSort}
-                      actionColumnLabel={t('search.browser.col.actions')}
-                      renderRowActions={(row) => {
-                        const rowId = getRowId(row);
-                        if (!rowId) return null;
-                        return (
-                          <button
-                            type="button"
-                            class="ics-ops-btn ics-ops-btn--ghost"
-                            onClick={() => handleDeleteRow(row)}
-                            disabled={deletingRowId === rowId}
-                            title={t('common.delete')}
-                          >
-                            {deletingRowId === rowId
-                              ? <Loader2 size={14} class="ics-spinner" />
-                              : <Trash2 size={14} />
-                            }
+            {tableBrowserTables.length > 0 ? (
+              <>
+                <div class="ics-table-wrapper">
+                  <table class="ics-table ics-search-tableBrowserTableList">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '40px' }}>
+                          <input
+                            type="checkbox"
+                            checked={tableListSelection.isAllSelected(tableListPagination.paginatedItems)}
+                            ref={(el) => {
+                              if (!el) return;
+                              const pageItems = tableListPagination.paginatedItems;
+                              const allSelected = tableListSelection.isAllSelected(pageItems);
+                              const hasSelectedOnPage = pageItems.some(item =>
+                                tableListSelection.isSelected(`${item.category_id}-${item.table_type}-${item.table_name}`)
+                              );
+                              el.indeterminate = !allSelected && hasSelectedOnPage;
+                            }}
+                            onChange={() => {
+                              if (tableListSelection.isAllSelected(tableListPagination.paginatedItems)) {
+                                tableListSelection.deselectAll();
+                              } else {
+                                tableListSelection.selectAll(tableListPagination.paginatedItems);
+                              }
+                            }}
+                            aria-label={t('common.selectAll')}
+                          />
+                        </th>
+                        <th>
+                          <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_name')}>
+                            {t('search.browser.col.tableName')}
+                            {renderTableListSortIcon('table_name')}
                           </button>
+                        </th>
+                        <th>
+                          <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('category_name')}>
+                            {t('search.browser.col.category')}
+                            {renderTableListSortIcon('category_name')}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('table_type')}>
+                            {t('search.browser.col.type')}
+                            {renderTableListSortIcon('table_type')}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('row_count')}>
+                            {t('search.browser.col.rows')}
+                            {renderTableListSortIcon('row_count')}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('column_count')}>
+                            {t('search.browser.col.columns')}
+                            {renderTableListSortIcon('column_count')}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleTableListSort('created_at')}>
+                            {t('search.browser.col.createdAt')}
+                            {renderTableListSortIcon('created_at')}
+                          </button>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tableListPagination.paginatedItems.map(table => {
+                        const tableKey = `${table.category_id}-${table.table_type}-${table.table_name}`;
+                        return (
+                          <tr
+                            key={tableKey}
+                            role="button"
+                            tabIndex={0}
+                            class={
+                              selectedTable &&
+                                selectedTable.table_name === table.table_name &&
+                                selectedTable.table_type === table.table_type &&
+                                selectedTable.category_id === table.category_id
+                                ? 'ics-table-row--selected'
+                                : ''
+                            }
+                            onClick={() => handleTableSelect(table)}
+                            onKeyDown={(e) => handleTableRowKeyDown(e, table)}
+                          >
+                            <td class="ics-table__cell--center" onClick={(e: Event) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={tableListSelection.isSelected(tableKey)}
+                                onChange={() => tableListSelection.toggle(tableKey)}
+                              />
+                            </td>
+                            <td>{table.table_name}</td>
+                            <td>{table.category_name}</td>
+                            <td>{table.table_type === 'header' ? t('search.browser.header') : t('search.browser.line')}</td>
+                            <td>{table.row_count.toLocaleString()}</td>
+                            <td>{table.column_count}</td>
+                            <td>{formatDateTime(table.created_at)}</td>
+                          </tr>
                         );
-                      }}
-                      selection={dataRowSelection}
-                    />
-
-                    <Pagination
-                      currentPage={page}
-                      totalPages={totalPages}
-                      totalItems={result.total || 0}
-                      pageSize={dataPageSize}
-                      pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
-                      onPageSizeChange={handleDataPageSizeChange}
-                      goToPageInput={goToPageInput}
-                      onPageChange={handlePageChange}
-                      onGoToPageInputChange={setGoToPageInput}
-                      onGoToPage={handleGoToPage}
-                      rangeStart={dataRangeStart}
-                      rangeEnd={dataRangeEnd}
-                      showGoToPage={false}
-                      isFirstPage={page <= 1 || isLoading}
-                      isLastPage={page >= totalPages || isLoading}
-                      position="bottom"
-                      show
-                      summaryPlacement="controls"
-                    />
-                  </>
-                ) : (
-                  <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.browser.noData')}</p>
-                )}
-              </div>
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <Pagination
+                  currentPage={tableListPagination.currentPage}
+                  totalPages={tableListPagination.totalPages}
+                  totalItems={tableListPagination.totalItems}
+                  pageSize={tableListPageSize}
+                  pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
+                  onPageSizeChange={setTableListPageSize}
+                  goToPageInput={tableListPagination.goToPageInput}
+                  onPageChange={tableListPagination.goToPage}
+                  onGoToPageInputChange={tableListPagination.setGoToPageInput}
+                  onGoToPage={tableListPagination.handleGoToPage}
+                  rangeStart={tableListRangeStart}
+                  rangeEnd={tableListRangeEnd}
+                  showGoToPage={false}
+                  isFirstPage={tableListPagination.isFirstPage}
+                  isLastPage={tableListPagination.isLastPage}
+                  position="bottom"
+                  show
+                  summaryPlacement="controls"
+                />
+              </>
+            ) : (
+              <p class="ics-search-panelMessage">{t('search.browser.noTableList')}</p>
             )}
           </div>
         </div>
-      )}
+      </section>
 
-      {noTables && (
-        <p class="oj-typography-body-sm oj-sm-margin-4x-top">{t('search.error.noTables')}</p>
+      {selectedTable && (
+        <section class="ics-ops-grid ics-ops-grid--one">
+          <div class="ics-card ics-ops-panel">
+            <div class="ics-card-header ics-card-header--table-toolbar">
+              <div class="ics-unified-table-header">
+                <div class="ics-browser-title-wrap">
+                  <span class="oj-typography-heading-xs">
+                    {t('search.browser.previewTitle')}
+                  </span>
+                  <span class="ics-browser-table-chip">{selectedTable.table_name}</span>
+                </div>
+                <div class="ics-unified-table-toolbar">
+                  <div class="ics-unified-table-toolbar__group">
+                    <button
+                      type="button"
+                      class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                      onClick={handleBulkDeleteRows}
+                      disabled={dataRowSelection.selectedCount === 0 || isBulkDeletingRows || isLoading}
+                    >
+                      <Trash2 size={14} />
+                      <span>{t('fileList.bulkDelete')}</span>
+                    </button>
+                    <span class="ics-unified-table-toolbar__meta">
+                      {t('search.browser.selectedRows', { count: dataRowSelection.selectedCount })}
+                    </span>
+                  </div>
+                  <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
+                    <button
+                      type="button"
+                      class="ics-ops-btn ics-ops-btn--ghost"
+                      onClick={handleRefreshData}
+                      disabled={isLoading}
+                    >
+                      {isLoading ? <Loader2 size={14} class="ics-spinner" /> : <RefreshCw size={14} />}
+                      <span>{t('search.browser.refresh')}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="ics-card-body">
+              {isLoading && (
+                <div class="ics-loading">
+                  <Loader2 size={24} class="ics-spinner" />
+                  <span>{t('common.loading')}</span>
+                </div>
+              )}
+
+              {!isLoading && result && (
+                <div class="ics-browser-results">
+                  {result.rows && result.rows.length > 0 ? (
+                    <>
+                      <ResultsTable
+                        columns={result.columns}
+                        rows={sortedDataRows}
+                        sortColumn={dataSortColumn}
+                        sortDirection={dataSortDirection}
+                        onSortColumn={handleDataSort}
+                        actionColumnLabel={t('search.browser.col.actions')}
+                        renderRowActions={(row) => {
+                          const rowId = getRowId(row);
+                          if (!rowId) return null;
+                          return (
+                            <button
+                              type="button"
+                              class="ics-ops-btn ics-ops-btn--ghost"
+                              onClick={() => handleDeleteRow(row)}
+                              disabled={deletingRowId === rowId}
+                              title={t('common.delete')}
+                            >
+                              {deletingRowId === rowId
+                                ? <Loader2 size={14} class="ics-spinner" />
+                                : <Trash2 size={14} />
+                              }
+                            </button>
+                          );
+                        }}
+                        selection={dataRowSelection}
+                      />
+
+                      <Pagination
+                        currentPage={page}
+                        totalPages={totalPages}
+                        totalItems={result.total || 0}
+                        pageSize={dataPageSize}
+                        pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
+                        onPageSizeChange={handleDataPageSizeChange}
+                        goToPageInput={goToPageInput}
+                        onPageChange={handlePageChange}
+                        onGoToPageInputChange={setGoToPageInput}
+                        onGoToPage={handleGoToPage}
+                        rangeStart={dataRangeStart}
+                        rangeEnd={dataRangeEnd}
+                        showGoToPage={false}
+                        isFirstPage={page <= 1 || isLoading}
+                        isLastPage={page >= totalPages || isLoading}
+                        position="bottom"
+                        show
+                        summaryPlacement="controls"
+                      />
+                    </>
+                  ) : (
+                    <p class="ics-search-panelMessage">{t('search.browser.noData')}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
       )}
       {confirmToast}
     </div>

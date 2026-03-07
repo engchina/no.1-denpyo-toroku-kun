@@ -138,12 +138,14 @@ type CategorySortKey =
   | 'is_active'
   | 'created_at';
 type PreviewTabType = 'header' | 'line';
+type ImageViewerMode = 'fit-width' | 'fit-page' | 'zoom';
 type TableDesignerColumn = TableColumnDef & {
   ui_key: string;
   is_system?: boolean;
 };
 
 let tableDesignerColumnSequence = 0;
+const CATEGORY_IMAGE_ZOOM_STEPS: readonly number[] = [100, 125, 150, 175, 200, 250, 300];
 
 function createTableDesignerColumnKey(): string {
   tableDesignerColumnSequence += 1;
@@ -696,7 +698,7 @@ function TableDesigner({
       <p class="ics-form-hint" style={{ marginBottom: '12px' }}>{t('category.designer.systemIdHint')}</p>
 
       <div class="ics-table-designer__grid-wrap">
-        <table class="ics-table ics-table--compact">
+        <table class="ics-table ics-table--compact ics-table--sticky">
           <thead>
             <tr>
               <th>#</th>
@@ -750,50 +752,175 @@ function TableDesigner({
   );
 }
 
-// ─── Image List ──────────────────────────────────────────────────────────────
+// ─── Persistent Image Review Workspace ──────────────────────────────────────
 
-function ImageList({
-  fileIds,
-  onPreview,
-}: {
-  fileIds: number[];
-  onPreview: (fileId: number) => void;
-}) {
+function ImageReviewWorkspace({ fileIds }: { fileIds: number[] }) {
   const [imgErrors, setImgErrors] = useState<Record<number, boolean>>({});
+  const [activeFileId, setActiveFileId] = useState<number | null>(fileIds[0] ?? null);
+  const [viewerMode, setViewerMode] = useState<ImageViewerMode>('fit-width');
+  const [zoomPercent, setZoomPercent] = useState<number>(CATEGORY_IMAGE_ZOOM_STEPS[1]);
 
   useEffect(() => {
     setImgErrors({});
+    setActiveFileId(fileIds[0] ?? null);
+    setViewerMode('fit-width');
+    setZoomPercent(CATEGORY_IMAGE_ZOOM_STEPS[1]);
   }, [fileIds.join(',')]);
 
+  if (!fileIds.length) return null;
+
+  const currentFileId = activeFileId && fileIds.includes(activeFileId) ? activeFileId : fileIds[0];
+  const currentIndex = fileIds.indexOf(currentFileId);
+  const currentLabel = t('category.designer.imagePosition', { current: currentIndex + 1, total: fileIds.length });
+  const currentZoomLabel =
+    viewerMode === 'fit-width'
+      ? t('category.designer.zoomLabelFitWidth')
+      : viewerMode === 'fit-page'
+        ? t('category.designer.zoomLabelFitPage')
+        : `${zoomPercent}%`;
+  const zoomStepIndex = Math.max(0, CATEGORY_IMAGE_ZOOM_STEPS.indexOf(zoomPercent));
+  const canZoomOut = viewerMode === 'zoom' && zoomStepIndex > 0;
+  const canZoomIn =
+    viewerMode !== 'zoom' || zoomStepIndex < CATEGORY_IMAGE_ZOOM_STEPS.length - 1;
+  const currentImageHasError = Boolean(imgErrors[currentFileId]);
+  const currentImageClass =
+    viewerMode === 'fit-page'
+      ? 'ics-category-viewer__image ics-category-viewer__image--fit-page'
+      : viewerMode === 'zoom'
+        ? 'ics-category-viewer__image ics-category-viewer__image--zoom'
+        : 'ics-category-viewer__image ics-category-viewer__image--fit-width';
+
+  const handleZoom = (direction: 'in' | 'out') => {
+    if (direction === 'out' && viewerMode !== 'zoom') return;
+
+    const baseIndex = viewerMode === 'zoom'
+      ? Math.max(0, CATEGORY_IMAGE_ZOOM_STEPS.indexOf(zoomPercent))
+      : 0;
+    const nextIndex = direction === 'in'
+      ? Math.min(CATEGORY_IMAGE_ZOOM_STEPS.length - 1, baseIndex + 1)
+      : Math.max(0, baseIndex - 1);
+    const nextZoom = CATEGORY_IMAGE_ZOOM_STEPS[nextIndex] ?? CATEGORY_IMAGE_ZOOM_STEPS[0];
+
+    if (nextZoom <= CATEGORY_IMAGE_ZOOM_STEPS[0]) {
+      setViewerMode('fit-width');
+      setZoomPercent(CATEGORY_IMAGE_ZOOM_STEPS[0]);
+      return;
+    }
+
+    setViewerMode('zoom');
+    setZoomPercent(nextZoom);
+  };
+
   return (
-    <div class="ics-category-image-list">
-      {fileIds.map((fileId, idx) => {
-        const hasError = Boolean(imgErrors[fileId]);
-        return (
-          <button
-            type="button"
-            key={fileId}
-            class="ics-category-image-card"
-            onClick={() => onPreview(fileId)}
-            title={`分析画像 ${idx + 1} をプレビュー`}
-          >
-            <div class="ics-category-image-card__frame">
-              {hasError ? (
-                <div class="ics-category-image-card__error">
+    <div class="ics-category-review-panel">
+      <div class="ics-card ics-card--flat ics-category-review-card">
+        <div class="ics-card-header">
+          <div class="ics-category-review-card__heading">
+            <ImageIcon size={16} />
+            <span>{t('category.designer.reviewWorkspace')}</span>
+            <span class="ics-category-review-card__meta">{currentLabel}</span>
+          </div>
+          <div class="ics-category-review-toolbar">
+            <button
+              type="button"
+              class={`ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ${viewerMode === 'fit-width' ? 'is-active' : ''}`}
+              onClick={() => {
+                setViewerMode('fit-width');
+                setZoomPercent(CATEGORY_IMAGE_ZOOM_STEPS[0]);
+              }}
+              title={t('category.designer.fitWidth')}
+            >
+              <span>{t('category.designer.fitWidthShort')}</span>
+            </button>
+            <button
+              type="button"
+              class={`ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ${viewerMode === 'fit-page' ? 'is-active' : ''}`}
+              onClick={() => setViewerMode('fit-page')}
+              title={t('category.designer.fitPage')}
+            >
+              <span>{t('category.designer.fitPageShort')}</span>
+            </button>
+            <button
+              type="button"
+              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
+              onClick={() => handleZoom('out')}
+              disabled={!canZoomOut}
+              title={t('category.designer.zoomOut')}
+              aria-label={t('category.designer.zoomOut')}
+            >
+              <span>-</span>
+            </button>
+            <span class="ics-category-review-toolbar__status">{currentZoomLabel}</span>
+            <button
+              type="button"
+              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
+              onClick={() => handleZoom('in')}
+              disabled={!canZoomIn}
+              title={t('category.designer.zoomIn')}
+              aria-label={t('category.designer.zoomIn')}
+            >
+              <span>+</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="ics-card-body ics-category-review-card__body">
+          <p class="ics-form-hint">{t('category.designer.reviewHint')}</p>
+
+          <div class="ics-category-viewer">
+            <div class={`ics-category-viewer__stage ${viewerMode === 'fit-page' ? 'ics-category-viewer__stage--fit-page' : ''}`}>
+              {currentImageHasError ? (
+                <div class="ics-category-viewer__empty">
                   <ImageIcon size={30} />
                   <span>画像を読み込めませんでした</span>
                 </div>
               ) : (
                 <img
-                  src={`/studio/api/v1/files/${fileId}/preview?upload_kind=category`}
-                  alt={`分析画像 ${idx + 1}`}
-                  onError={() => setImgErrors(prev => ({ ...prev, [fileId]: true }))}
+                  src={`/studio/api/v1/files/${currentFileId}/preview?upload_kind=category`}
+                  alt={`分析画像 ${currentIndex + 1}`}
+                  class={currentImageClass}
+                  style={viewerMode === 'zoom' ? { width: `${zoomPercent}%`, maxWidth: 'none' } : undefined}
+                  onError={() => setImgErrors(prev => ({ ...prev, [currentFileId]: true }))}
                 />
               )}
             </div>
-          </button>
-        );
-      })}
+          </div>
+
+          {fileIds.length > 1 && (
+            <div class="ics-category-thumbnail-strip">
+              {fileIds.map((fileId, index) => {
+                const hasError = Boolean(imgErrors[fileId]);
+                const selected = fileId === currentFileId;
+                return (
+                  <button
+                    type="button"
+                    key={fileId}
+                    class={`ics-category-thumbnail ${selected ? 'is-active' : ''}`}
+                    onClick={() => setActiveFileId(fileId)}
+                    aria-pressed={selected}
+                    title={t('category.designer.selectImage', { index: index + 1 })}
+                  >
+                    <div class="ics-category-thumbnail__frame">
+                      {hasError ? (
+                        <div class="ics-category-thumbnail__error">
+                          <ImageIcon size={18} />
+                        </div>
+                      ) : (
+                        <img
+                          src={`/studio/api/v1/files/${fileId}/preview?upload_kind=category`}
+                          alt={`分析画像 ${index + 1}`}
+                          onError={() => setImgErrors(prev => ({ ...prev, [fileId]: true }))}
+                        />
+                      )}
+                    </div>
+                    <span class="ics-category-thumbnail__label">{t('category.designer.imageLabel', { index: index + 1 })}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -829,16 +956,6 @@ function TableDesignerPanel({
 
   const hasLine = analysisResult.analysis_mode === 'header_line';
   const fileIds = analysisResult.analyzed_file_ids ?? [];
-  const [previewFileId, setPreviewFileId] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!previewFileId) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPreviewFileId(null);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [previewFileId]);
 
   const handleConfirm = () => {
     const headerBusinessColumns = getBusinessColumns(headerColumns);
@@ -924,161 +1041,137 @@ function TableDesignerPanel({
         </div>
 
         <div class="ics-card-body ics-card-body--designer">
-          {/* 2カラムレイアウト: 左=画像プレビュー、右=フォーム */}
+          {/* 2カラムレイアウト: 左=画像レビュー、右=フォーム */}
           <div
             class="ics-category-designer-layout"
-            style={{ gridTemplateColumns: fileIds.length > 0 ? '1fr 2fr' : '1fr' }}
+            style={{ gridTemplateColumns: fileIds.length > 0 ? 'minmax(460px, 1.05fr) minmax(620px, 1.15fr)' : '1fr' }}
           >
-            {/* 左カラム: 画像プレビュー */}
+            {/* 左カラム: 画像レビュー */}
             {fileIds.length > 0 && (
               <div class="ics-category-image-panel">
-                <p class="ics-form-hint" style={{ marginBottom: '8px' }}>
-                  <ImageIcon size={12} style={{ display: 'inline', marginRight: '4px' }} />
-                  分析した画像（{fileIds.length}件）
-                </p>
-                <ImageList fileIds={fileIds} onPreview={setPreviewFileId} />
+                <ImageReviewWorkspace fileIds={fileIds} />
               </div>
             )}
 
             {/* 右カラム: フォーム */}
             <div class="ics-category-designer-right">
-              {/* 伝票分類基本情報 */}
-              <div class="ics-card ics-card--flat">
-                <div class="ics-card-header">
-                  <span class="oj-typography-heading-xs">{t('category.designer.categoryInfo')}</span>
-                </div>
-                <div class="ics-card-body">
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                    <div class="ics-form-group">
-                      <label class="ics-form-label">{t('category.col.name')} *</label>
-                      <input
-                        type="text"
-                        class="ics-form-input"
-                        value={categoryName}
-                        onInput={(e: Event) => setCategoryName((e.target as HTMLInputElement).value)}
-                        placeholder={t('category.designer.categoryNamePlaceholder')}
-                      />
+              <div class="ics-category-designer-right__scroll">
+                {/* 伝票分類基本情報 */}
+                <div class="ics-card ics-card--flat">
+                  <div class="ics-card-header">
+                    <span class="oj-typography-heading-xs">{t('category.designer.categoryInfo')}</span>
+                  </div>
+                  <div class="ics-card-body">
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                      <div class="ics-form-group">
+                        <label class="ics-form-label">{t('category.col.name')} *</label>
+                        <input
+                          type="text"
+                          class="ics-form-input"
+                          value={categoryName}
+                          onInput={(e: Event) => setCategoryName((e.target as HTMLInputElement).value)}
+                          placeholder={t('category.designer.categoryNamePlaceholder')}
+                        />
+                      </div>
+                      <div class="ics-form-group">
+                        <label class="ics-form-label">{t('category.col.nameEn')} *</label>
+                        <input
+                          type="text"
+                          class="ics-form-input"
+                          value={categoryNameEn}
+                          onInput={(e: Event) => setCategoryNameEn((e.target as HTMLInputElement).value)}
+                          placeholder="invoice"
+                        />
+                      </div>
                     </div>
                     <div class="ics-form-group">
-                      <label class="ics-form-label">{t('category.col.nameEn')} *</label>
-                      <input
-                        type="text"
-                        class="ics-form-input"
-                        value={categoryNameEn}
-                        onInput={(e: Event) => setCategoryNameEn((e.target as HTMLInputElement).value)}
-                        placeholder="invoice"
+                      <label class="ics-form-label">{t('category.col.description')}</label>
+                      <textarea
+                        class="ics-form-textarea"
+                        value={description}
+                        rows={2}
+                        onInput={(e: Event) => setDescription((e.target as HTMLTextAreaElement).value)}
+                        placeholder={t('category.designer.descriptionPlaceholder')}
                       />
                     </div>
                   </div>
-                  <div class="ics-form-group">
-                    <label class="ics-form-label">{t('category.col.description')}</label>
-                    <textarea
-                      class="ics-form-textarea"
-                      value={description}
-                      rows={2}
-                      onInput={(e: Event) => setDescription((e.target as HTMLTextAreaElement).value)}
-                      placeholder={t('category.designer.descriptionPlaceholder')}
-                    />
-                  </div>
                 </div>
+
+                {/* テーブルデザイナー タブ */}
+                {hasLine && (
+                  <div class="ics-category-designer-right__tabs">
+                    <div class="ics-tabs" style={{ marginBottom: '8px' }}>
+                      <button
+                        type="button"
+                        class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
+                        onClick={() => setActiveTab('header')}
+                      >
+                        <FileText size={14} />
+                        {t('category.designer.tabHeader')}
+                      </button>
+                      <button
+                        type="button"
+                        class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
+                        onClick={() => setActiveTab('line')}
+                      >
+                        <Table2 size={14} />
+                        {t('category.designer.tabLine')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {(!hasLine || activeTab === 'header') && (
+                  <TableDesigner
+                    label={t('category.designer.headerTable')}
+                    tableName={headerTableName}
+                    columns={headerColumns}
+                    onTableNameChange={setHeaderTableName}
+                    onColumnsChange={setHeaderColumns}
+                  />
+                )}
+
+                {hasLine && activeTab === 'line' && (
+                  <TableDesigner
+                    label={t('category.designer.lineTable')}
+                    tableName={lineTableName}
+                    columns={lineColumns}
+                    onTableNameChange={setLineTableName}
+                    onColumnsChange={setLineColumns}
+                  />
+                )}
               </div>
 
-              {/* テーブルデザイナー タブ */}
-              {hasLine && (
-                <div class="ics-tabs" style={{ marginBottom: '8px' }}>
+              <div class="ics-category-designer-footer">
+                {validationError && (
+                  <div class="ics-alert ics-alert--error">
+                    {validationError}
+                  </div>
+                )}
+                <div class="ics-category-designer-footer__actions">
                   <button
                     type="button"
-                    class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
-                    onClick={() => setActiveTab('header')}
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={onClose}
+                    disabled={isCreating}
                   >
-                    <FileText size={14} />
-                    {t('category.designer.tabHeader')}
+                    {t('common.cancel')}
                   </button>
                   <button
                     type="button"
-                    class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
-                    onClick={() => setActiveTab('line')}
+                    class="ics-ops-btn ics-ops-btn--primary"
+                    onClick={handleConfirm}
+                    disabled={isCreating}
                   >
-                    <Table2 size={14} />
-                    {t('category.designer.tabLine')}
+                    {isCreating ? <Loader2 size={14} class="ics-spin" /> : <Database size={14} />}
+                    <span>{isCreating ? t('category.designer.creating') : t('category.designer.createTable')}</span>
                   </button>
                 </div>
-              )}
-
-              {(!hasLine || activeTab === 'header') && (
-                <TableDesigner
-                  label={t('category.designer.headerTable')}
-                  tableName={headerTableName}
-                  columns={headerColumns}
-                  onTableNameChange={setHeaderTableName}
-                  onColumnsChange={setHeaderColumns}
-                />
-              )}
-
-              {hasLine && activeTab === 'line' && (
-                <TableDesigner
-                  label={t('category.designer.lineTable')}
-                  tableName={lineTableName}
-                  columns={lineColumns}
-                  onTableNameChange={setLineTableName}
-                  onColumnsChange={setLineColumns}
-                />
-              )}
-
-              {validationError && (
-                <div class="ics-alert ics-alert--error">
-                  {validationError}
-                </div>
-              )}
-
-              {/* アクションボタン */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px' }}>
-                <button
-                  type="button"
-                  class="ics-ops-btn ics-ops-btn--ghost"
-                  onClick={onClose}
-                  disabled={isCreating}
-                >
-                  {t('common.cancel')}
-                </button>
-                <button
-                  type="button"
-                  class="ics-ops-btn ics-ops-btn--primary"
-                  onClick={handleConfirm}
-                  disabled={isCreating}
-                >
-                  {isCreating ? <Loader2 size={14} class="ics-spin" /> : <Database size={14} />}
-                  <span>{isCreating ? t('category.designer.creating') : t('category.designer.createTable')}</span>
-                </button>
               </div>
             </div>
           </div>
         </div>
       </div>
-      {previewFileId && (
-        <div class="ics-modal-overlay" onClick={() => setPreviewFileId(null)}>
-          <div class="ics-modal ics-modal--xl ics-fileListView__previewModal" onClick={(e: Event) => e.stopPropagation()}>
-            <div class="ics-modal__header">
-              <h3>分析画像プレビュー</h3>
-              <button
-                type="button"
-                class="ics-ops-btn ics-ops-btn--ghost"
-                onClick={() => setPreviewFileId(null)}
-                title={t('common.close')}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div class="ics-modal__body ics-fileListView__previewBody">
-              <img
-                src={`/studio/api/v1/files/${previewFileId}/preview?upload_kind=category`}
-                alt="分析画像プレビュー"
-                class="ics-fileListView__previewImage"
-              />
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   );
 }
