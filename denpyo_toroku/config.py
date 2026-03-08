@@ -67,6 +67,21 @@ class AppConfig:
         config.get("ai", "llm_temperature", fallback="0.0")
     ))
     EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
+    GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES = int(os.environ.get("GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES", "1"))
+    GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES = int(
+        os.environ.get(
+            "GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES",
+            str(GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES),
+        )
+    )
+    GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES = int(
+        os.environ.get("GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES", "0")
+    )
+    GENAI_OCR_ROTATION_ANGLES = os.environ.get("GENAI_OCR_ROTATION_ANGLES", "0,90,180,270")
+    GENAI_OCR_IMAGE_MAX_EDGE_STEPS = os.environ.get(
+        "GENAI_OCR_IMAGE_MAX_EDGE_STEPS",
+        "2400,1800,1400,1100",
+    )
     SELECT_AI_ENABLED = os.environ.get("SELECT_AI_ENABLED", "true").strip().lower() in ("1", "true", "yes", "y", "on")
     SELECT_AI_REGION = os.environ.get("SELECT_AI_REGION", "us-chicago-1")
     SELECT_AI_MODEL_ID = os.environ.get("SELECT_AI_MODEL_ID", "xai.grok-code-fast-1")

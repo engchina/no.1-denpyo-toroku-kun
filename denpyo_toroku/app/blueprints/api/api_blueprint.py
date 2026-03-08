@@ -67,6 +67,10 @@ _DEFAULT_OCI_REGION = "ap-osaka-1"
 _DEFAULT_SELECT_AI_REGION = "us-chicago-1"
 _DEFAULT_SELECT_AI_MODEL_ID = "xai.grok-code-fast-1"
 _DEFAULT_SELECT_AI_MAX_TOKENS = 32768
+_DEFAULT_OCR_ROTATION_ANGLES = "0,90,180,270"
+_DEFAULT_OCR_IMAGE_MAX_EDGE_STEPS = "2400,1800,1400,1100"
+_DEFAULT_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES = 1
+_DEFAULT_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES = 0
 _ANALYSIS_STALL_DETAIL = "ANALYSIS_TIMEOUT"
 _DEFAULT_ANALYSIS_STALL_MINUTES = 30
 _GENAI_REQUEUE_MAX_ATTEMPTS = max(0, int(os.environ.get("GENAI_REQUEUE_MAX_ATTEMPTS", "4")))
@@ -94,6 +98,13 @@ def _to_bool(value, default: bool = True) -> bool:
     return bool(value)
 
 
+def _to_non_negative_int(value: Any, default: int = 0) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return max(0, int(default))
+
+
 def _is_session_authenticated() -> bool:
     user = session.get("user", None)
     token = session.get("token", None)
@@ -107,6 +118,28 @@ def _normalize_text(value: Any, default: str = "") -> str:
     if value is None:
         return default
     return str(value).strip()
+
+
+def _normalize_ocr_rotation_angles(value: Any) -> str:
+    from denpyo_toroku.app.services import ai_service as ai_service_module
+
+    normalized_value = _normalize_text(value, _DEFAULT_OCR_ROTATION_ANGLES) or _DEFAULT_OCR_ROTATION_ANGLES
+    parsed = ai_service_module._parse_ocr_rotation_angles(normalized_value)
+    return ai_service_module._format_rotation_angles(parsed)
+
+
+def _normalize_ocr_image_max_edge_steps(value: Any) -> str:
+    from denpyo_toroku.app.services import ai_service as ai_service_module
+
+    normalized_value = _normalize_text(value, _DEFAULT_OCR_IMAGE_MAX_EDGE_STEPS) or _DEFAULT_OCR_IMAGE_MAX_EDGE_STEPS
+    parsed = ai_service_module._parse_ocr_max_edge_steps(normalized_value)
+    return ai_service_module._format_ocr_max_edge_steps(parsed)
+
+
+def _refresh_ai_service_ocr_runtime_settings() -> None:
+    from denpyo_toroku.app.services import ai_service as ai_service_module
+
+    ai_service_module.refresh_runtime_ocr_settings()
 
 
 def _generate_request_id(prefix: str = "req") -> str:
@@ -124,6 +157,150 @@ def _build_background_request_id(prefix: str, *parts: Any) -> str:
 def _get_request_id() -> str:
     request_id = _normalize_text(getattr(g, "request_id", ""), "")
     return request_id or _generate_request_id()
+
+
+def _append_activity_request_id(description: str, request_id: str = "") -> str:
+    normalized_request_id = _normalize_text(request_id, "")
+    if not normalized_request_id:
+        return description
+    return f"{description} [request_id={normalized_request_id}]"
+
+
+def _extract_ocr_empty_response_error_details(error: Any) -> Optional[Dict[str, Any]]:
+    error_text = _normalize_text(error, "")
+    if not error_text or "VLMによるテキスト抽出結果が空でした" not in error_text:
+        return None
+
+    detail_match = re.search(r"\((?P<details>[^()]*)\)", error_text)
+    if not detail_match:
+        return None
+
+    detail_pairs: Dict[str, str] = {}
+    for raw_part in detail_match.group("details").split(","):
+        key, separator, value = raw_part.partition("=")
+        if not separator:
+            continue
+        normalized_key = _normalize_text(key, "").lower()
+        normalized_value = _normalize_text(value, "")
+        if normalized_key and normalized_value:
+            detail_pairs[normalized_key] = normalized_value
+
+    raw_page = detail_pairs.get("page")
+    raw_variant = detail_pairs.get("variant")
+    if not raw_page or not raw_variant:
+        return None
+
+    try:
+        page = int(raw_page)
+    except ValueError:
+        return None
+
+    attempts = 1
+    raw_attempts = detail_pairs.get("attempts", "")
+    if raw_attempts:
+        try:
+            attempts = max(1, int(raw_attempts))
+        except ValueError:
+            attempts = 1
+
+    rotation = None
+    raw_rotation = detail_pairs.get("rotation", "")
+    if raw_rotation:
+        try:
+            rotation = int(raw_rotation)
+        except ValueError:
+            rotation = None
+
+    rotation_attempts = None
+    raw_rotation_attempts = detail_pairs.get("rotation_attempts", "")
+    if raw_rotation_attempts:
+        try:
+            rotation_attempts = max(1, int(raw_rotation_attempts))
+        except ValueError:
+            rotation_attempts = None
+
+    empty_response_attempts = None
+    raw_empty_response_attempts = detail_pairs.get("empty_response_attempts", "")
+    if raw_empty_response_attempts:
+        try:
+            empty_response_attempts = max(1, int(raw_empty_response_attempts))
+        except ValueError:
+            empty_response_attempts = None
+
+    primary_empty_response_attempts = None
+    raw_primary_empty_response_attempts = detail_pairs.get("primary_empty_response_attempts", "")
+    if raw_primary_empty_response_attempts:
+        try:
+            primary_empty_response_attempts = max(1, int(raw_primary_empty_response_attempts))
+        except ValueError:
+            primary_empty_response_attempts = None
+
+    secondary_empty_response_attempts = None
+    raw_secondary_empty_response_attempts = detail_pairs.get("secondary_empty_response_attempts", "")
+    if raw_secondary_empty_response_attempts:
+        try:
+            secondary_empty_response_attempts = max(1, int(raw_secondary_empty_response_attempts))
+        except ValueError:
+            secondary_empty_response_attempts = None
+
+    details: Dict[str, Any] = {
+        "page": page,
+        "variant": _normalize_text(raw_variant, "unknown"),
+        "attempts": attempts,
+        "empty_retries": max(0, attempts - 1),
+    }
+    if rotation is not None:
+        details["rotation"] = rotation
+    if rotation_attempts is not None:
+        details["rotation_attempts"] = rotation_attempts
+    if empty_response_attempts is not None:
+        details["empty_response_attempts"] = empty_response_attempts
+    if primary_empty_response_attempts is not None:
+        details["primary_empty_response_attempts"] = primary_empty_response_attempts
+    if secondary_empty_response_attempts is not None:
+        details["secondary_empty_response_attempts"] = secondary_empty_response_attempts
+    return details
+
+
+def _build_analysis_error_activity_description(
+    prefix: str,
+    error: Any,
+    request_id: str = "",
+) -> str:
+    details = _extract_ocr_empty_response_error_details(error)
+    if details:
+        rotation_text = ""
+        if details.get("rotation") is not None:
+            rotation_text = f", rotation={details['rotation']}"
+        if details.get("rotation_attempts") is not None:
+            rotation_text += f", rotation_attempts={details['rotation_attempts']}"
+        if details.get("primary_empty_response_attempts") is not None:
+            rotation_text += (
+                f", primary_attempts={details['primary_empty_response_attempts']}"
+            )
+        if details.get("secondary_empty_response_attempts") is not None:
+            rotation_text += (
+                f", secondary_attempts={details['secondary_empty_response_attempts']}"
+            )
+        if details.get("empty_response_attempts") is not None:
+            rotation_text += f", per_rotation_attempts={details['empty_response_attempts']}"
+        return _append_activity_request_id(
+            (
+                f"{prefix}: OCR空応答が最終的に解消されませんでした "
+                f"(page={details['page']}, variant={details['variant']}{rotation_text}, "
+                f"total_attempts={details['attempts']}, empty_retries={details['empty_retries']})"
+            ),
+            request_id,
+        )
+
+    error_text = _normalize_text(error, "不明なエラー")
+    if error_text.startswith(prefix):
+        description = error_text
+    else:
+        description = f"{prefix}: {error_text}"
+    if len(description) > 220:
+        description = f"{description[:217]}..."
+    return _append_activity_request_id(description, request_id)
 
 
 def _analysis_stall_timeout_seconds() -> int:
@@ -357,6 +534,13 @@ def _runtime_oci_defaults() -> Dict[str, str]:
             f"https://inference.generativeai.{_runtime_oci_region_default()}.oci.oraclecloud.com",
         ),
     )
+    legacy_ocr_empty_response_retries = _to_non_negative_int(
+        os.environ.get(
+            "GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES",
+            getattr(AppConfig, "GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES", _DEFAULT_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES),
+        ),
+        default=_DEFAULT_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES,
+    )
     return {
         "config_path": config_path or "~/.oci/config",
         "profile": profile,
@@ -377,6 +561,40 @@ def _runtime_oci_defaults() -> Dict[str, str]:
         "embedding_model_id": _normalize_text(
             os.environ.get("EMBEDDING_MODEL_ID"),
             _normalize_text(getattr(AppConfig, "EMBEDDING_MODEL_ID", ""), "cohere.embed-v4.0"),
+        ),
+        "ocr_rotation_angles": _normalize_ocr_rotation_angles(
+            os.environ.get(
+                "GENAI_OCR_ROTATION_ANGLES",
+                getattr(AppConfig, "GENAI_OCR_ROTATION_ANGLES", _DEFAULT_OCR_ROTATION_ANGLES),
+            )
+        ),
+        "ocr_image_max_edge_steps": _normalize_ocr_image_max_edge_steps(
+            os.environ.get(
+                "GENAI_OCR_IMAGE_MAX_EDGE_STEPS",
+                getattr(AppConfig, "GENAI_OCR_IMAGE_MAX_EDGE_STEPS", _DEFAULT_OCR_IMAGE_MAX_EDGE_STEPS),
+            )
+        ),
+        "ocr_empty_response_primary_max_retries": _to_non_negative_int(
+            os.environ.get(
+                "GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES",
+                getattr(
+                    AppConfig,
+                    "GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES",
+                    legacy_ocr_empty_response_retries,
+                ),
+            ),
+            default=legacy_ocr_empty_response_retries,
+        ),
+        "ocr_empty_response_secondary_max_retries": _to_non_negative_int(
+            os.environ.get(
+                "GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES",
+                getattr(
+                    AppConfig,
+                    "GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES",
+                    _DEFAULT_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES,
+                ),
+            ),
+            default=_DEFAULT_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES,
         ),
         "select_ai_enabled": _to_bool(
             os.environ.get("SELECT_AI_ENABLED", getattr(AppConfig, "SELECT_AI_ENABLED", True)),
@@ -545,6 +763,10 @@ def _load_oci_settings_snapshot() -> Dict[str, Any]:
             "llm_model_id": defaults["llm_model_id"],
             "vlm_model_id": defaults["vlm_model_id"],
             "embedding_model_id": defaults["embedding_model_id"],
+            "ocr_rotation_angles": defaults["ocr_rotation_angles"],
+            "ocr_image_max_edge_steps": defaults["ocr_image_max_edge_steps"],
+            "ocr_empty_response_primary_max_retries": defaults["ocr_empty_response_primary_max_retries"],
+            "ocr_empty_response_secondary_max_retries": defaults["ocr_empty_response_secondary_max_retries"],
             "select_ai_enabled": defaults["select_ai_enabled"],
             "select_ai_region": defaults["select_ai_region"],
             "select_ai_model_id": defaults["select_ai_model_id"],
@@ -615,6 +837,11 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     os.environ["LLM_MODEL_ID"] = settings["llm_model_id"]
     os.environ["VLM_MODEL_ID"] = settings["vlm_model_id"]
     os.environ["EMBEDDING_MODEL_ID"] = settings["embedding_model_id"]
+    os.environ["GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES"] = str(settings["ocr_empty_response_primary_max_retries"])
+    os.environ["GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES"] = str(settings["ocr_empty_response_primary_max_retries"])
+    os.environ["GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES"] = str(settings["ocr_empty_response_secondary_max_retries"])
+    os.environ["GENAI_OCR_ROTATION_ANGLES"] = settings["ocr_rotation_angles"]
+    os.environ["GENAI_OCR_IMAGE_MAX_EDGE_STEPS"] = settings["ocr_image_max_edge_steps"]
     os.environ["SELECT_AI_ENABLED"] = "true" if settings["select_ai_enabled"] else "false"
     os.environ["SELECT_AI_REGION"] = settings["select_ai_region"]
     os.environ["SELECT_AI_MODEL_ID"] = settings["select_ai_model_id"]
@@ -639,6 +866,11 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     AppConfig.LLM_MODEL_ID = settings["llm_model_id"]
     AppConfig.VLM_MODEL_ID = settings["vlm_model_id"]
     AppConfig.EMBEDDING_MODEL_ID = settings["embedding_model_id"]
+    AppConfig.GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES = int(settings["ocr_empty_response_primary_max_retries"])
+    AppConfig.GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES = int(settings["ocr_empty_response_primary_max_retries"])
+    AppConfig.GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES = int(settings["ocr_empty_response_secondary_max_retries"])
+    AppConfig.GENAI_OCR_ROTATION_ANGLES = settings["ocr_rotation_angles"]
+    AppConfig.GENAI_OCR_IMAGE_MAX_EDGE_STEPS = settings["ocr_image_max_edge_steps"]
     AppConfig.SELECT_AI_ENABLED = bool(settings["select_ai_enabled"])
     AppConfig.SELECT_AI_REGION = settings["select_ai_region"]
     AppConfig.SELECT_AI_MODEL_ID = settings["select_ai_model_id"]
@@ -654,6 +886,7 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     AppConfig.LLM_TEMPERATURE = float(settings["llm_temperature"])
     AppConfig.OCI_NAMESPACE = settings["namespace"]
     AppConfig.OCI_BUCKET = settings["bucket"]
+    _refresh_ai_service_ocr_runtime_settings()
 
 
 def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -762,6 +995,38 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             current_settings.get("embedding_model_id", "cohere.embed-v4.0"),
         )
         or "cohere.embed-v4.0",
+        "ocr_rotation_angles": _normalize_ocr_rotation_angles(
+            settings_payload.get(
+                "ocr_rotation_angles",
+                current_settings.get("ocr_rotation_angles", _DEFAULT_OCR_ROTATION_ANGLES),
+            )
+        ),
+        "ocr_image_max_edge_steps": _normalize_ocr_image_max_edge_steps(
+            settings_payload.get(
+                "ocr_image_max_edge_steps",
+                current_settings.get("ocr_image_max_edge_steps", _DEFAULT_OCR_IMAGE_MAX_EDGE_STEPS),
+            )
+        ),
+        "ocr_empty_response_primary_max_retries": _to_non_negative_int(
+            settings_payload.get(
+                "ocr_empty_response_primary_max_retries",
+                current_settings.get(
+                    "ocr_empty_response_primary_max_retries",
+                    _DEFAULT_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES,
+                ),
+            ),
+            default=_DEFAULT_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES,
+        ),
+        "ocr_empty_response_secondary_max_retries": _to_non_negative_int(
+            settings_payload.get(
+                "ocr_empty_response_secondary_max_retries",
+                current_settings.get(
+                    "ocr_empty_response_secondary_max_retries",
+                    _DEFAULT_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES,
+                ),
+            ),
+            default=_DEFAULT_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES,
+        ),
         "select_ai_enabled": _to_bool(
             settings_payload.get("select_ai_enabled"),
             default=bool(current_settings.get("select_ai_enabled", True)),
@@ -835,6 +1100,11 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             "LLM_MODEL_ID": settings_for_env["llm_model_id"],
             "VLM_MODEL_ID": settings_for_env["vlm_model_id"],
             "EMBEDDING_MODEL_ID": settings_for_env["embedding_model_id"],
+            "GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES": str(settings_for_env["ocr_empty_response_primary_max_retries"]),
+            "GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES": str(settings_for_env["ocr_empty_response_primary_max_retries"]),
+            "GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES": str(settings_for_env["ocr_empty_response_secondary_max_retries"]),
+            "GENAI_OCR_ROTATION_ANGLES": settings_for_env["ocr_rotation_angles"],
+            "GENAI_OCR_IMAGE_MAX_EDGE_STEPS": settings_for_env["ocr_image_max_edge_steps"],
             "SELECT_AI_ENABLED": "true" if settings_for_env["select_ai_enabled"] else "false",
             "SELECT_AI_REGION": settings_for_env["select_ai_region"],
             "SELECT_AI_MODEL_ID": settings_for_env["select_ai_model_id"],
@@ -2784,29 +3054,42 @@ def _queue_raw_file_analysis(
         images = doc_processor.prepare_for_ai(file_data, file_record.get("original_file_name", ""))
         if not images:
             raise ValueError("ファイルをAI分析用に変換できませんでした")
+        logging.info(
+            "AI分析入力画像を準備しました: file_id=%s pages=%d total_bytes=%d",
+            file_id,
+            len(images),
+            sum(len(image_data or b"") for image_data, _content_type in images),
+            extra={"file_id": file_id, "action": "IMAGE_PREP_COMPLETE"},
+        )
 
         ai_service = AIService()
         tmp_paths: List[str] = []
         try:
             tmp_paths = _write_image_tempfiles(images)
             logging.info(
-                "画像変換完了、OCRテキスト抽出を開始します",
-                extra={**ocr_log_context, "action": "OCR_START"},
+                "画像変換完了、OCRテキスト抽出を開始します: file_id=%s pages=%d",
+                file_id,
+                len(tmp_paths),
+                extra={**ocr_log_context, "ocr_pages": len(tmp_paths), "action": "OCR_START"},
             )
             ocr_result = ai_service.extract_text_from_images(tmp_paths, log_context=ocr_log_context)
             if not ocr_result.get("success"):
                 raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
             extracted_text = ocr_result.get("extracted_text", "")
             logging.info(
-                "OCRテキスト抽出完了",
+                "OCRテキスト抽出完了: file_id=%s text_length=%d",
+                file_id,
+                len(extracted_text),
                 extra={**ocr_log_context, "text_length": len(extracted_text), "action": "OCR_COMPLETE"},
             )
         finally:
             _cleanup_tempfiles(tmp_paths)
 
         logging.info(
-            "LLMによるフィールドデータ抽出を開始します",
-            extra={**ocr_log_context, "action": "LLM_START"},
+            "LLMによるフィールドデータ抽出を開始します: file_id=%s ocr_chars=%d",
+            file_id,
+            len(extracted_text),
+            extra={**ocr_log_context, "ocr_chars": len(extracted_text), "action": "LLM_START"},
         )
         extraction = ai_service.extract_data_from_text(
             ocr_text=extracted_text,
@@ -2820,8 +3103,18 @@ def _queue_raw_file_analysis(
             log_context=ocr_log_context,
         )
         logging.info(
-            "フィールドデータ抽出完了",
-            extra={**ocr_log_context, "action": "LLM_COMPLETE"},
+            "フィールドデータ抽出完了: file_id=%s header_fields=%d line_fields=%d line_count=%d",
+            file_id,
+            len(extraction.get("header_fields", [])),
+            len(extraction.get("line_fields", [])),
+            extraction.get("line_count", 0),
+            extra={
+                **ocr_log_context,
+                "header_field_count": len(extraction.get("header_fields", [])),
+                "line_field_count": len(extraction.get("line_fields", [])),
+                "line_count": extraction.get("line_count", 0),
+                "action": "LLM_COMPLETE",
+            },
         )
         if not extraction.get("success"):
             raise ValueError(extraction.get("message", "フィールド抽出に失敗しました"))
@@ -2860,6 +3153,11 @@ def _queue_raw_file_analysis(
 
         if not db_service.save_analysis_result(file_id, "raw", result):
             raise RuntimeError("分析結果の保存に失敗しました")
+        logging.info(
+            "分析結果を保存しました: file_id=%s analysis_kind=raw",
+            file_id,
+            extra={"file_id": file_id, "action": "ANALYSIS_RESULT_SAVED"},
+        )
 
         db_service.update_file_status(file_id, "ANALYZED")
         db_service.log_activity(
@@ -2919,7 +3217,11 @@ def _queue_raw_file_analysis(
         db_service.update_file_status(file_id, "ERROR")
         db_service.log_activity(
             activity_type="ANALYZE_ERROR",
-            description=f"分析エラー: {str(e)[:200]}",
+            description=_build_analysis_error_activity_description(
+                "分析エラー",
+                e,
+                request_id=ocr_log_context.get("request_id", ""),
+            ),
             file_id=file_id,
             user_name=user_name,
         )
@@ -3212,7 +3514,11 @@ def _queue_category_slip_analysis(
                 db_service.update_category_file_status(int(category_file_id), "ERROR")
             db_service.log_activity(
                 activity_type="CATEGORY_ANALYZE_ERROR",
-                description=f"分類用サンプル伝票の分析エラー: {str(e)[:200]}",
+                description=_build_analysis_error_activity_description(
+                    "分類用サンプル伝票の分析エラー",
+                    e,
+                    request_id=ocr_log_context.get("request_id", ""),
+                ),
                 file_id=management_file_id or source_file_id,
                 user_name=user_name,
             )
@@ -3335,6 +3641,13 @@ def analyze_file(file_id: int):
             db_service.update_file_status(file_id, "ERROR")
             g.response.set_data({"success": False, "message": "ファイルをAI分析用に変換できませんでした"})
             return jsonify(g.response.get_result()), 500
+        logging.info(
+            "AI分析入力画像を準備しました: file_id=%s pages=%d total_bytes=%d",
+            file_id,
+            len(images),
+            sum(len(image_data or b"") for image_data, _content_type in images),
+            extra={"file_id": file_id, "action": "IMAGE_PREP_COMPLETE"},
+        )
 
         ai_service = AIService()
         ocr_log_context = {
@@ -3348,18 +3661,33 @@ def analyze_file(file_id: int):
         try:
             tmp_paths = _write_image_tempfiles(images)
             logging.info(
-                "画像変換完了、OCRテキスト抽出を開始します",
-                extra={**ocr_log_context, "action": "OCR_START"},
+                "画像変換完了、OCRテキスト抽出を開始します: file_id=%s pages=%d",
+                file_id,
+                len(tmp_paths),
+                extra={**ocr_log_context, "ocr_pages": len(tmp_paths), "action": "OCR_START"},
             )
             ocr_result = ai_service.extract_text_from_images(tmp_paths, log_context=ocr_log_context)
             if not ocr_result.get("success"):
+                error_message = f"テキスト抽出に失敗しました: {ocr_result.get('message')}"
                 db_service.update_file_status(file_id, "ERROR")
-                g.response.set_data({"success": False, "message": f"テキスト抽出に失敗しました: {ocr_result.get('message')}"})
+                db_service.log_activity(
+                    activity_type="ANALYZE_ERROR",
+                    description=_build_analysis_error_activity_description(
+                        "分析エラー",
+                        error_message,
+                        request_id=ocr_log_context.get("request_id", ""),
+                    ),
+                    file_id=file_id,
+                    user_name=user,
+                )
+                g.response.set_data({"success": False, "message": error_message})
                 return jsonify(g.response.get_result()), 500
 
             extracted_text = ocr_result.get("extracted_text", "")
             logging.info(
-                "OCRテキスト抽出完了",
+                "OCRテキスト抽出完了: file_id=%s text_length=%d",
+                file_id,
+                len(extracted_text),
                 extra={**ocr_log_context, "text_length": len(extracted_text), "action": "OCR_COMPLETE"},
             )
         finally:
@@ -3367,8 +3695,10 @@ def analyze_file(file_id: int):
 
         # 7. AI抽出（カテゴリ構造を指定してLLMでデータ生成）
         logging.info(
-            "LLMによるフィールドデータ抽出を開始します",
-            extra={**ocr_log_context, "action": "LLM_START"},
+            "LLMによるフィールドデータ抽出を開始します: file_id=%s ocr_chars=%d",
+            file_id,
+            len(extracted_text),
+            extra={**ocr_log_context, "ocr_chars": len(extracted_text), "action": "LLM_START"},
         )
         extraction = ai_service.extract_data_from_text(
             ocr_text=extracted_text,
@@ -3382,8 +3712,18 @@ def analyze_file(file_id: int):
             log_context=ocr_log_context,
         )
         logging.info(
-            "フィールドデータ抽出完了",
-            extra={**ocr_log_context, "action": "LLM_COMPLETE"},
+            "フィールドデータ抽出完了: file_id=%s header_fields=%d line_fields=%d line_count=%d",
+            file_id,
+            len(extraction.get("header_fields", [])),
+            len(extraction.get("line_fields", [])),
+            extraction.get("line_count", 0),
+            extra={
+                **ocr_log_context,
+                "header_field_count": len(extraction.get("header_fields", [])),
+                "line_field_count": len(extraction.get("line_fields", [])),
+                "line_count": extraction.get("line_count", 0),
+                "action": "LLM_COMPLETE",
+            },
         )
         if not extraction.get("success"):
             db_service.update_file_status(file_id, "ERROR")
@@ -3451,6 +3791,11 @@ def analyze_file(file_id: int):
 
         if not db_service.save_analysis_result(file_id, "raw", result):
             raise RuntimeError("分析結果の保存に失敗しました")
+        logging.info(
+            "分析結果を保存しました: file_id=%s analysis_kind=raw",
+            file_id,
+            extra={"file_id": file_id, "action": "ANALYSIS_RESULT_SAVED"},
+        )
 
         g.response.set_data(result)
         return jsonify(g.response.get_result())
@@ -3480,7 +3825,11 @@ def analyze_file(file_id: int):
         db_service.update_file_status(file_id, "ERROR")
         db_service.log_activity(
             activity_type="ANALYZE_ERROR",
-            description=f"分析エラー: {str(e)[:200]}",
+            description=_build_analysis_error_activity_description(
+                "分析エラー",
+                e,
+                request_id=locals().get("ocr_log_context", {}).get("request_id", ""),
+            ),
             file_id=file_id, user_name=user,
         )
         g.response.set_data({"success": False, "message": f"AI分析に失敗しました: {str(e)}"})
@@ -3930,14 +4279,26 @@ def analyze_slips_for_category():
         )
         ocr_result = ai_service.extract_text_from_images(tmp_filepaths, log_context=ocr_log_context)
         if not ocr_result.get("success"):
+            error_message = f"テキスト抽出に失敗しました: {ocr_result.get('message')}"
             for target in linked_targets:
                 management_file_id = target.get("management_file_id")
                 category_file_id = target.get("category_file_id")
+                source_file_id = target.get("source_file_id")
                 if management_file_id is not None:
                     db_service.update_file_status(int(management_file_id), "ERROR")
                 if category_file_id is not None:
                     db_service.update_category_file_status(int(category_file_id), "ERROR")
-            g.response.add_error_message(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
+                db_service.log_activity(
+                    activity_type="CATEGORY_ANALYZE_ERROR",
+                    description=_build_analysis_error_activity_description(
+                        "分類用サンプル伝票の分析エラー",
+                        error_message,
+                        request_id=ocr_log_context.get("request_id", ""),
+                    ),
+                    file_id=management_file_id or source_file_id,
+                    user_name=session.get("user", ""),
+                )
+            g.response.add_error_message(error_message)
             return jsonify(g.response.get_result()), 500
 
         extracted_text = ocr_result.get("extracted_text", "")

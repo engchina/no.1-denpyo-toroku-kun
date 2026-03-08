@@ -40,6 +40,23 @@ GENAI_PROGRESS_LOG_INTERVAL_SECONDS = max(
 )
 GENAI_JSON_PARSE_RETRIES = max(1, int(os.environ.get("GENAI_JSON_PARSE_RETRIES", "3")))
 GENAI_RECOVERY_MAX_RETRIES = max(1, int(os.environ.get("GENAI_RECOVERY_MAX_RETRIES", "2")))
+GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES = max(
+    0,
+    int(os.environ.get("GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES", "1")),
+)
+GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES = max(
+    0,
+    int(
+        os.environ.get(
+            "GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES",
+            str(GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES),
+        )
+    ),
+)
+GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES = max(
+    0,
+    int(os.environ.get("GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES", "0")),
+)
 
 
 def _parse_ocr_max_edge_steps(raw_value: str) -> tuple[int, ...]:
@@ -67,6 +84,87 @@ def _parse_ocr_max_edge_steps(raw_value: str) -> tuple[int, ...]:
 GENAI_OCR_IMAGE_MAX_EDGE_STEPS = _parse_ocr_max_edge_steps(
     os.environ.get("GENAI_OCR_IMAGE_MAX_EDGE_STEPS", "2400,1800,1400,1100")
 )
+
+
+def _parse_ocr_rotation_angles(raw_value: str) -> tuple[int, ...]:
+    default_angles = (0, 90, 180, 270)
+    candidates: List[int] = []
+    seen = set()
+    for raw_part in (raw_value or "").split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        try:
+            angle = int(part) % 360
+        except ValueError:
+            continue
+        if angle in seen:
+            continue
+        seen.add(angle)
+        candidates.append(angle)
+
+    if not candidates:
+        return default_angles
+    if 0 in candidates:
+        candidates = [0] + [angle for angle in candidates if angle != 0]
+    else:
+        candidates.insert(0, 0)
+    return tuple(candidates)
+
+
+GENAI_OCR_ROTATION_ANGLES = _parse_ocr_rotation_angles(
+    os.environ.get("GENAI_OCR_ROTATION_ANGLES", "0,90,180,270")
+)
+
+
+def _format_rotation_angles(rotation_angles: List[int] | tuple[int, ...]) -> str:
+    return ",".join(str(int(angle) % 360) for angle in rotation_angles)
+
+
+def _format_ocr_max_edge_steps(max_edge_steps: List[int] | tuple[int, ...]) -> str:
+    return ",".join(str(int(max_edge)) for max_edge in max_edge_steps if int(max_edge) > 0)
+
+
+def refresh_runtime_ocr_settings() -> Dict[str, Any]:
+    global GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES
+    global GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES
+    global GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES
+    global GENAI_OCR_IMAGE_MAX_EDGE_STEPS
+    global GENAI_OCR_ROTATION_ANGLES
+
+    GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES = max(
+        0,
+        int(os.environ.get("GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES", "1")),
+    )
+    GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES = max(
+        0,
+        int(
+            os.environ.get(
+                "GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES",
+                str(GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES),
+            )
+        ),
+    )
+    GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES = max(
+        0,
+        int(os.environ.get("GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES", "0")),
+    )
+    GENAI_OCR_IMAGE_MAX_EDGE_STEPS = _parse_ocr_max_edge_steps(
+        os.environ.get("GENAI_OCR_IMAGE_MAX_EDGE_STEPS", "2400,1800,1400,1100")
+    )
+    GENAI_OCR_ROTATION_ANGLES = _parse_ocr_rotation_angles(
+        os.environ.get("GENAI_OCR_ROTATION_ANGLES", "0,90,180,270")
+    )
+    return {
+        "empty_response_max_retries": GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES,
+        "empty_response_primary_max_retries": GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES,
+        "empty_response_secondary_max_retries": GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES,
+        "image_max_edge_steps": GENAI_OCR_IMAGE_MAX_EDGE_STEPS,
+        "rotation_angles": GENAI_OCR_ROTATION_ANGLES,
+    }
+
+
+refresh_runtime_ocr_settings()
 
 
 class AIRateLimitError(Exception):
@@ -222,6 +320,35 @@ class AIService:
             payload["genai_max_attempts"] = max_attempts
         payload.update(kwargs)
         return self._build_log_extra(log_context, **payload)
+
+    @staticmethod
+    def _coerce_positive_int(value: Any) -> Optional[int]:
+        if value in (None, ""):
+            return None
+        try:
+            parsed = int(value)
+        except Exception:
+            return None
+        return parsed if parsed > 0 else None
+
+    @classmethod
+    def _buffer_varchar2_length(
+        cls,
+        declared_length: Any,
+        original_data_type: str = "VARCHAR2",
+    ) -> int:
+        if str(original_data_type or "").upper() == "CLOB":
+            return 4000
+
+        observed_length = cls._coerce_positive_int(declared_length)
+        if observed_length is None:
+            return 100
+
+        buffered_length = min(4000, observed_length + max(10, (observed_length + 1) // 2))
+        for candidate in (50, 100, 200, 300, 500, 1000, 2000, 4000):
+            if buffered_length <= candidate:
+                return candidate
+        return 4000
 
     def _start_request_progress_logger(
         self,
@@ -677,14 +804,47 @@ class AIService:
             return ""
 
         message = chat_response.choices[0].message
-        if not hasattr(message, "content") or not message.content:
+        content = getattr(message, "content", None)
+        if isinstance(content, str) and content:
+            return content
+        if content:
+            if isinstance(content, list):
+                return "".join(self._get_text_from_chat_content_part(part) for part in content)
+            return self._get_text_from_chat_content_part(content)
+
+        direct_text = getattr(message, "text", None)
+        if isinstance(direct_text, str):
+            return direct_text
+        return ""
+
+    def _get_text_from_chat_content_part(self, part: Any) -> str:
+        if part is None:
+            return ""
+        if isinstance(part, str):
+            return part
+        if isinstance(part, dict):
+            direct_text = part.get("text")
+            if isinstance(direct_text, str) and direct_text:
+                return direct_text
+            for key in ("content", "parts"):
+                nested = part.get(key)
+                if isinstance(nested, str) and nested:
+                    return nested
+                if isinstance(nested, list):
+                    return "".join(self._get_text_from_chat_content_part(item) for item in nested)
             return ""
 
-        text = ""
-        for part in message.content:
-            if hasattr(part, "text") and part.text:
-                text += part.text
-        return text
+        direct_text = getattr(part, "text", None)
+        if isinstance(direct_text, str) and direct_text:
+            return direct_text
+
+        for attr_name in ("content", "parts"):
+            nested = getattr(part, attr_name, None)
+            if isinstance(nested, str) and nested:
+                return nested
+            if isinstance(nested, list):
+                return "".join(self._get_text_from_chat_content_part(item) for item in nested)
+        return ""
 
     def _get_tool_arguments_from_chat_response(self, chat_response: Any, function_name: str = "") -> str:
         """Assistant tool_calls から function arguments(JSON文字列)を抽出"""
@@ -846,6 +1006,116 @@ class AIService:
             previews.append(f"...(+{omitted} pages)")
         return ", ".join(previews)
 
+    def _select_ocr_rotation_angles_for_page(
+        self,
+        filepath: str,
+        rotation_angles: tuple[int, ...],
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> tuple[int, ...]:
+        if len(rotation_angles) <= 1:
+            return rotation_angles
+
+        image_stats = self._collect_image_path_stats([filepath])
+        stat = image_stats[0] if image_stats else {}
+        width = stat.get("width")
+        height = stat.get("height")
+        if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+            return rotation_angles
+        if width == height:
+            return rotation_angles
+
+        if width > height:
+            primary_angles = [angle for angle in rotation_angles if angle % 180 == 90]
+            secondary_angles = [angle for angle in rotation_angles if angle % 180 != 90]
+            strategy = "landscape_source_prioritize_portrait"
+        else:
+            primary_angles = [angle for angle in rotation_angles if angle % 180 == 0]
+            secondary_angles = [angle for angle in rotation_angles if angle % 180 != 0]
+            strategy = "portrait_source_prioritize_upright"
+
+        prioritized = tuple(primary_angles + secondary_angles) or rotation_angles
+        if prioritized != rotation_angles:
+            logger.info(
+                "OCR 回転順序を調整しました: source=%dx%d strategy=%s order=%s",
+                width,
+                height,
+                strategy,
+                _format_rotation_angles(prioritized),
+                extra=self._build_log_extra(
+                    log_context,
+                    image_width=width,
+                    image_height=height,
+                    ocr_rotation_strategy=strategy,
+                    ocr_rotation_order=_format_rotation_angles(prioritized),
+                ),
+            )
+        return prioritized
+
+    def _create_rotated_image_tempfile(
+        self,
+        filepath: str,
+        rotation_degrees: int,
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        import mimetypes
+        import tempfile
+
+        normalized_rotation = int(rotation_degrees) % 360
+        if normalized_rotation == 0:
+            return filepath
+
+        try:
+            from PIL import Image, ImageOps
+        except ImportError as e:
+            raise RuntimeError("Pillow が未導入のため OCR 画像の回転フォールバックを利用できません") from e
+
+        content_type = mimetypes.guess_type(filepath)[0] or "image/jpeg"
+        output_type = "image/jpeg" if content_type in ("image/jpeg", "image/jpg") else "image/png"
+        suffix = ".jpg" if output_type == "image/jpeg" else ".png"
+
+        with Image.open(filepath) as original_image:
+            normalized_image = ImageOps.exif_transpose(original_image)
+            source_image = normalized_image.copy()
+        rotated_image = source_image.rotate(normalized_rotation, expand=True)
+
+        fd, temp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+        try:
+            with os.fdopen(fd, "wb") as temp_file:
+                if output_type == "image/jpeg":
+                    rotated_image.convert("RGB").save(
+                        temp_file,
+                        format="JPEG",
+                        quality=88,
+                        optimize=True,
+                        progressive=True,
+                    )
+                else:
+                    save_image = rotated_image
+                    if save_image.mode not in ("1", "L", "LA", "P", "RGB", "RGBA"):
+                        save_image = save_image.convert("RGBA" if "A" in save_image.mode else "RGB")
+                    save_image.save(temp_file, format="PNG", optimize=True, compress_level=9)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            self._cleanup_tempfiles([temp_path])
+            raise
+
+        logger.info(
+            "OCR画像を回転しました: rotation=%d source=%s output=%s",
+            normalized_rotation,
+            filepath,
+            temp_path,
+            extra=self._build_log_extra(
+                log_context,
+                ocr_rotation_degrees=normalized_rotation,
+                source_path=filepath,
+                output_path=temp_path,
+            ),
+        )
+        return temp_path
+
     def _create_optimized_image_tempfiles(
         self,
         image_filepaths: List[str],
@@ -966,71 +1236,209 @@ Output only the extracted text with no additional commentary, explanations, or m
 
         for index, filepath in enumerate(image_filepaths):
             page_no = index + 1
-            with open(filepath, "rb") as f:
-                image_data = f.read()
-            content_type = mimetypes.guess_type(filepath)[0] or "image/jpeg"
-            encoded = base64.b64encode(image_data).decode("ascii")
             page_started_at = time.monotonic()
-
-            logger.info(
-                "VLM OCR ページ送信を開始します: variant=%s page=%d/%d bytes=%d content_type=%s",
-                variant_label,
-                page_no,
-                len(image_filepaths),
-                len(image_data),
-                content_type,
-                extra=self._build_log_extra(
-                    log_context,
-                    ocr_variant=variant_label,
-                    ocr_page=page_no,
-                    ocr_pages=len(image_filepaths),
-                    page_bytes=len(image_data),
-                    page_content_type=content_type,
-                ),
+            page_log_context = self._build_log_extra(
+                log_context,
+                ocr_variant=variant_label,
+                ocr_page=page_no,
+                ocr_pages=len(image_filepaths),
             )
+            extracted_text = ""
+            primary_empty_response_attempts = GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES + 1
+            secondary_empty_response_attempts = GENAI_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES + 1
+            rotation_angles = self._select_ocr_rotation_angles_for_page(
+                filepath,
+                GENAI_OCR_ROTATION_ANGLES or (0,),
+                log_context=page_log_context,
+            )
+            total_request_attempts = 0
+            last_rotation_degrees = 0
+            rotation_total_attempts = len(rotation_angles)
 
-            chat_request = oci.generative_ai_inference.models.GenericChatRequest(
-                api_format="GENERIC",
-                messages=[
-                    oci.generative_ai_inference.models.UserMessage(
-                        content=[
-                            {
-                                "type": "IMAGE",
-                                "imageUrl": {
-                                    "url": f"data:{content_type};base64,{encoded}"
-                                }
-                            },
-                            {"type": "TEXT", "text": prompt},
-                        ]
+            for rotation_index, rotation_degrees in enumerate(rotation_angles, start=1):
+                candidate_path = filepath
+                cleanup_paths: List[str] = []
+                last_rotation_degrees = rotation_degrees
+                try:
+                    if rotation_degrees != 0:
+                        candidate_path = self._create_rotated_image_tempfile(
+                            filepath,
+                            rotation_degrees,
+                            log_context=page_log_context,
+                        )
+                        cleanup_paths.append(candidate_path)
+
+                    with open(candidate_path, "rb") as f:
+                        image_data = f.read()
+                    content_type = mimetypes.guess_type(candidate_path)[0] or "image/jpeg"
+                    encoded = base64.b64encode(image_data).decode("ascii")
+
+                    logger.info(
+                        "VLM OCR ページ送信を開始します: variant=%s page=%d/%d rotation=%d bytes=%d content_type=%s",
+                        variant_label,
+                        page_no,
+                        len(image_filepaths),
+                        rotation_degrees,
+                        len(image_data),
+                        content_type,
+                        extra=self._build_log_extra(
+                            page_log_context,
+                            ocr_rotation_degrees=rotation_degrees,
+                            ocr_rotation_attempt=rotation_index,
+                            ocr_rotation_total_attempts=rotation_total_attempts,
+                            ocr_rotation_priority="primary" if rotation_index == 1 else "secondary",
+                            page_bytes=len(image_data),
+                            page_content_type=content_type,
+                        ),
                     )
-                ],
-                max_tokens=self._vlm_max_tokens,
-                temperature=self._temperature,
-                is_stream=False,
-            )
 
-            chat_detail = oci.generative_ai_inference.models.ChatDetails(
-                compartment_id=self._compartment_id,
-                serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                    model_id=self._vlm_model_id
-                ),
-                chat_request=chat_request,
-            )
+                    chat_request = oci.generative_ai_inference.models.GenericChatRequest(
+                        api_format="GENERIC",
+                        messages=[
+                            oci.generative_ai_inference.models.UserMessage(
+                                content=[
+                                    {
+                                        "type": "IMAGE",
+                                        "imageUrl": {
+                                            "url": f"data:{content_type};base64,{encoded}"
+                                        }
+                                    },
+                                    {"type": "TEXT", "text": prompt},
+                                ]
+                            )
+                        ],
+                        max_tokens=self._vlm_max_tokens,
+                        temperature=self._temperature,
+                        is_stream=False,
+                    )
 
-            response = self._retry_api_call(
-                f"extract_text_from_images[{page_no}]/{variant_label}",
-                client.chat,
-                chat_detail,
-                log_context=self._build_log_extra(
-                    log_context,
-                    ocr_variant=variant_label,
-                    ocr_page=page_no,
-                    ocr_pages=len(image_filepaths),
-                ),
-            )
-            extracted_text = self._get_text_from_chat_response(response.data.chat_response).strip()
+                    chat_detail = oci.generative_ai_inference.models.ChatDetails(
+                        compartment_id=self._compartment_id,
+                        serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
+                            model_id=self._vlm_model_id
+                        ),
+                        chat_request=chat_request,
+                    )
+
+                    operation_name = (
+                        f"extract_text_from_images[{page_no}]/{variant_label}/rot{rotation_degrees}"
+                    )
+                    empty_response_attempts = (
+                        primary_empty_response_attempts
+                        if rotation_index == 1
+                        else secondary_empty_response_attempts
+                    )
+                    for empty_response_attempt in range(1, empty_response_attempts + 1):
+                        total_request_attempts += 1
+                        response = self._retry_api_call(
+                            operation_name,
+                            client.chat,
+                            chat_detail,
+                            log_context=self._build_log_extra(
+                                page_log_context,
+                                ocr_rotation_degrees=rotation_degrees,
+                                ocr_rotation_attempt=rotation_index,
+                                ocr_rotation_total_attempts=rotation_total_attempts,
+                                ocr_rotation_priority="primary" if rotation_index == 1 else "secondary",
+                            ),
+                        )
+                        chat_response = getattr(getattr(response, "data", None), "chat_response", None)
+                        extracted_text = self._get_text_from_chat_response(chat_response).strip()
+                        if extracted_text:
+                            if total_request_attempts > 1:
+                                logger.info(
+                                    "%s: VLM OCR 空応答から復帰しました (rotation=%d request_attempt=%d)",
+                                    operation_name,
+                                    rotation_degrees,
+                                    total_request_attempts,
+                                    extra=self._build_log_extra(
+                                        page_log_context,
+                                        ocr_rotation_degrees=rotation_degrees,
+                                        ocr_rotation_attempt=rotation_index,
+                                        ocr_rotation_total_attempts=rotation_total_attempts,
+                                        ocr_rotation_priority="primary" if rotation_index == 1 else "secondary",
+                                        empty_response_attempt=empty_response_attempt,
+                                        empty_response_total_attempts=empty_response_attempts,
+                                        total_request_attempts=total_request_attempts,
+                                    ),
+                                )
+                            break
+
+                        is_last_request_for_rotation = empty_response_attempt >= empty_response_attempts
+                        is_last_rotation = rotation_index >= rotation_total_attempts
+                        if is_last_request_for_rotation and is_last_rotation:
+                            raise ValueError(
+                                "VLMによるテキスト抽出結果が空でした "
+                                f"(page={page_no}, variant={variant_label}, attempts={total_request_attempts}, "
+                                f"rotation={rotation_degrees}, rotation_attempts={rotation_total_attempts}, "
+                                f"primary_empty_response_attempts={primary_empty_response_attempts}, "
+                                f"secondary_empty_response_attempts={secondary_empty_response_attempts})"
+                            )
+
+                        delay = min(3.0, self._calculate_backoff_delay(total_request_attempts - 1))
+                        if is_last_request_for_rotation:
+                            next_rotation = rotation_angles[rotation_index]
+                            logger.warning(
+                                "%s: VLM OCR 応答が空でした。%.1f秒後に %d 度回転して再試行します "
+                                "(rotation_attempt %d/%d, total_request_attempt=%d)",
+                                operation_name,
+                                delay,
+                                next_rotation,
+                                rotation_index,
+                                rotation_total_attempts,
+                                total_request_attempts,
+                                extra=self._build_log_extra(
+                                    page_log_context,
+                                    ocr_rotation_degrees=rotation_degrees,
+                                    ocr_rotation_attempt=rotation_index,
+                                    ocr_rotation_total_attempts=rotation_total_attempts,
+                                    ocr_rotation_priority="primary" if rotation_index == 1 else "secondary",
+                                    empty_response_attempt=empty_response_attempt,
+                                    empty_response_total_attempts=empty_response_attempts,
+                                    total_request_attempts=total_request_attempts,
+                                    retry_after_seconds=delay,
+                                ),
+                            )
+                        else:
+                            logger.warning(
+                                "%s: VLM OCR 応答が空でした。%.1f秒後に同一向きで再試行します "
+                                "(rotation=%d attempt %d/%d, total_request_attempt=%d)",
+                                operation_name,
+                                delay,
+                                rotation_degrees,
+                                empty_response_attempt,
+                                empty_response_attempts,
+                                total_request_attempts,
+                                extra=self._build_log_extra(
+                                    page_log_context,
+                                    ocr_rotation_degrees=rotation_degrees,
+                                    ocr_rotation_attempt=rotation_index,
+                                    ocr_rotation_total_attempts=rotation_total_attempts,
+                                    ocr_rotation_priority="primary" if rotation_index == 1 else "secondary",
+                                    empty_response_attempt=empty_response_attempt,
+                                    empty_response_total_attempts=empty_response_attempts,
+                                    total_request_attempts=total_request_attempts,
+                                    retry_after_seconds=delay,
+                                ),
+                            )
+                        time.sleep(delay)
+
+                    if extracted_text:
+                        break
+                finally:
+                    self._cleanup_tempfiles(cleanup_paths)
+
+                if extracted_text:
+                    break
+
             if not extracted_text:
-                raise ValueError(f"VLMによるテキスト抽出結果が空でした (page={page_no}, variant={variant_label})")
+                raise ValueError(
+                    "VLMによるテキスト抽出結果が空でした "
+                    f"(page={page_no}, variant={variant_label}, attempts={total_request_attempts}, "
+                    f"rotation={last_rotation_degrees}, rotation_attempts={rotation_total_attempts}, "
+                    f"primary_empty_response_attempts={primary_empty_response_attempts}, "
+                    f"secondary_empty_response_attempts={secondary_empty_response_attempts})"
+                )
 
             elapsed = time.monotonic() - page_started_at
             logger.info(
@@ -1045,6 +1453,8 @@ Output only the extracted text with no additional commentary, explanations, or m
                     ocr_variant=variant_label,
                     ocr_page=page_no,
                     ocr_pages=len(image_filepaths),
+                    ocr_rotation_degrees=last_rotation_degrees,
+                    ocr_rotation_priority="primary" if last_rotation_degrees == rotation_angles[0] else "secondary",
                     text_length=len(extracted_text),
                     elapsed_seconds=round(elapsed, 3),
                 ),
@@ -1053,6 +1463,7 @@ Output only the extracted text with no additional commentary, explanations, or m
             page_texts.append({
                 "page_index": index,
                 "source_path": filepath,
+                "rotation_degrees": last_rotation_degrees,
                 "text": extracted_text,
             })
             merged_texts.append(f"[PAGE {index + 1}]\n{extracted_text}")
@@ -2007,7 +2418,9 @@ Output only the extracted text with no additional commentary, explanations, or m
 - Choose appropriate Oracle data types: VARCHAR2, NUMBER, DATE, TIMESTAMP.
 - Do NOT use CLOB. Even long text fields must use VARCHAR2 with an appropriate length up to 4000.
 - Make columns NULLABLE unless they are clearly always present.
-- Add appropriate length for VARCHAR2 based on the data observed.
+- Do not set VARCHAR2 length to the exact observed character count. Add generous safety buffer because actual production data can be longer.
+- Prefer safer bucket sizes such as 50, 100, 200, 300, 500, 1000, 2000, or 4000.
+- For short-looking codes / IDs / numbers, still keep enough room instead of matching the sample exactly.
 - {header_only_hint}
 
 ### 4. Capture ALL information present in the document, such as:
@@ -2117,15 +2530,6 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
                         return False
                 return default
 
-            def _to_int_or_none(value: Any) -> Optional[int]:
-                if value in (None, ""):
-                    return None
-                try:
-                    i = int(value)
-                    return i if i > 0 else None
-                except Exception:
-                    return None
-
             def _normalize_table_name(name: Any) -> str:
                 raw = str(name or "").strip().upper()
                 cleaned = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in raw).strip("_")
@@ -2144,9 +2548,11 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
                     data_type = original_data_type
                     if data_type not in {"VARCHAR2", "NUMBER", "DATE", "TIMESTAMP"}:
                         data_type = "VARCHAR2"
-                    max_length = _to_int_or_none(c.get("data_length")) if data_type == "VARCHAR2" else None
-                    if data_type == "VARCHAR2" and max_length is None and original_data_type == "CLOB":
-                        max_length = 4000
+                    max_length = (
+                        self._buffer_varchar2_length(c.get("data_length"), original_data_type)
+                        if data_type == "VARCHAR2"
+                        else None
+                    )
 
                     mapped.append({
                         "field_name_en": str(c.get("column_name", "")).strip(),
@@ -2218,8 +2624,8 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
   "table_prefix": "INV",
   "header_table_name": "INV_H",
   "line_table_name": "INV_L",
-  "header_ddl": "CREATE TABLE INV_H (\\n  ID NUMBER NOT NULL,\\n  ...\\n)",
-  "line_ddl": "CREATE TABLE INV_L (\\n  ID NUMBER NOT NULL,\\n  HEADER_ID NUMBER NOT NULL,\\n  ...\\n)"
+  "header_ddl": "CREATE TABLE INV_H (\\n  HEADER_ID NUMBER NOT NULL,\\n  ...\\n)",
+  "line_ddl": "CREATE TABLE INV_L (\\n  LINE_ID NUMBER NOT NULL,\\n  HEADER_ID NUMBER NOT NULL,\\n  ...\\n)"
 }}
 
 注意:
@@ -2227,8 +2633,8 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
 - header_table_name: ヘッダーテーブル名（table_prefix + "_H"）
 - line_table_name: 明細テーブル名（table_prefix + "_L"）
 - header_ddl・line_ddl: 改行を \\n でエスケープした CREATE TABLE 文の文字列
-- ヘッダーテーブルには ID（NUMBER 主キー）、CREATED_AT（DATE）、FILE_NAME（VARCHAR2(500)）を自動追加
-- 明細テーブルには ID（NUMBER 主キー）、HEADER_ID（外部キー）、LINE_NO（NUMBER）を自動追加
+- ヘッダーテーブルには HEADER_ID（NUMBER 主キー）、CREATED_AT（DATE）、FILE_NAME（VARCHAR2(500)）を自動追加
+- 明細テーブルには LINE_ID（NUMBER 主キー）、HEADER_ID（外部キー）、LINE_NO（NUMBER）を自動追加
 - 出力は必ず有効な JSON のみ。前後に説明文・コードブロック（```）・コメント（//）を含めないでください"""
 
         try:

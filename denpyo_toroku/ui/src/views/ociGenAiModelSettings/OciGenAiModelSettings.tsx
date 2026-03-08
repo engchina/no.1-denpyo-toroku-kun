@@ -14,6 +14,8 @@ const DEFAULT_SELECT_AI_REGION = 'us-chicago-1';
 const DEFAULT_SELECT_AI_MODEL = 'xai.grok-code-fast-1';
 const DEFAULT_SELECT_AI_MAX_TOKENS = 32768;
 const DEFAULT_SELECT_AI_API_FORMAT = 'GENERIC';
+const DEFAULT_OCR_ROTATION_ANGLES = '0,90,180,270';
+const DEFAULT_OCR_IMAGE_MAX_EDGE_STEPS = '2400,1800,1400,1100';
 
 interface OciModelSettingsForm {
   compartment_id: string;
@@ -21,6 +23,10 @@ interface OciModelSettingsForm {
   llm_model_id: string;
   vlm_model_id: string;
   embedding_model_id: string;
+  ocr_rotation_angles: string;
+  ocr_image_max_edge_steps: string;
+  ocr_empty_response_primary_max_retries: number;
+  ocr_empty_response_secondary_max_retries: number;
   select_ai_enabled: boolean;
   select_ai_region: string;
   select_ai_model_id: string;
@@ -58,6 +64,10 @@ const EMPTY_SETTINGS: OciModelSettingsForm = {
   llm_model_id: DEFAULT_LLM_MODEL,
   vlm_model_id: DEFAULT_VLM_MODEL,
   embedding_model_id: DEFAULT_EMBEDDING_MODEL,
+  ocr_rotation_angles: DEFAULT_OCR_ROTATION_ANGLES,
+  ocr_image_max_edge_steps: DEFAULT_OCR_IMAGE_MAX_EDGE_STEPS,
+  ocr_empty_response_primary_max_retries: 1,
+  ocr_empty_response_secondary_max_retries: 0,
   select_ai_enabled: true,
   select_ai_region: DEFAULT_SELECT_AI_REGION,
   select_ai_model_id: DEFAULT_SELECT_AI_MODEL,
@@ -116,7 +126,13 @@ export function OciGenAiModelSettings() {
       const target = event.target as HTMLInputElement | HTMLSelectElement;
       setSettings(prev => {
         let val: string | number | boolean = target.value;
-        if (field === 'llm_max_tokens' || field === 'llm_temperature' || field === 'select_ai_max_tokens') {
+        if (
+          field === 'llm_max_tokens'
+          || field === 'llm_temperature'
+          || field === 'select_ai_max_tokens'
+          || field === 'ocr_empty_response_primary_max_retries'
+          || field === 'ocr_empty_response_secondary_max_retries'
+        ) {
           val = Number(val);
         } else if (target instanceof HTMLInputElement && target.type === 'checkbox') {
           val = target.checked;
@@ -136,7 +152,8 @@ export function OciGenAiModelSettings() {
   const handleSave = useCallback(async () => {
     setIsSaving(true);
     try {
-      await apiPost('/api/v1/oci/settings', settings);
+      const snapshot = await apiPost<OciSettingsSnapshot>('/api/v1/oci/settings', settings);
+      applySnapshot(snapshot);
       dispatch(addNotification({
         type: 'success',
         message: t('notify.settings.savedOk'),
@@ -150,7 +167,7 @@ export function OciGenAiModelSettings() {
     } finally {
       setIsSaving(false);
     }
-  }, [dispatch, settings]);
+  }, [applySnapshot, dispatch, settings]);
 
   const handleModelTest = useCallback(async (testType: 'llm' | 'vlm' | 'embedding') => {
     const isLlm = testType === 'llm';
@@ -357,6 +374,69 @@ export function OciGenAiModelSettings() {
                 value={settings.llm_temperature}
                 onInput={updateField('llm_temperature')}
               />
+            </label>
+
+            <div class="applicationSettingsView__field applicationSettingsView__field--wide applicationSettingsView__field--section">
+              <div class="applicationSettingsView__fieldLabel">{t('settings.model.ocr.title')}</div>
+              <p class="applicationSettingsView__hint applicationSettingsView__hint--flush">
+                {t('settings.model.ocr.subtitle')}
+              </p>
+            </div>
+
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.ocr.primaryRetries')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                type="number"
+                min="0"
+                max="10"
+                value={settings.ocr_empty_response_primary_max_retries}
+                onInput={updateField('ocr_empty_response_primary_max_retries')}
+              />
+              <span class="applicationSettingsView__hint applicationSettingsView__hint--flush">
+                {t('settings.model.ocr.primaryRetriesHint')}
+              </span>
+            </label>
+
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.ocr.secondaryRetries')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                type="number"
+                min="0"
+                max="10"
+                value={settings.ocr_empty_response_secondary_max_retries}
+                onInput={updateField('ocr_empty_response_secondary_max_retries')}
+              />
+              <span class="applicationSettingsView__hint applicationSettingsView__hint--flush">
+                {t('settings.model.ocr.secondaryRetriesHint')}
+              </span>
+            </label>
+
+            <label class="applicationSettingsView__field applicationSettingsView__field--wide">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.ocr.rotationAngles')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                value={settings.ocr_rotation_angles}
+                onInput={updateField('ocr_rotation_angles')}
+                placeholder={DEFAULT_OCR_ROTATION_ANGLES}
+              />
+              <span class="applicationSettingsView__hint applicationSettingsView__hint--flush">
+                {t('settings.model.ocr.rotationAnglesHint')}
+              </span>
+            </label>
+
+            <label class="applicationSettingsView__field applicationSettingsView__field--wide">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.ocr.imageMaxEdgeSteps')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                value={settings.ocr_image_max_edge_steps}
+                onInput={updateField('ocr_image_max_edge_steps')}
+                placeholder={DEFAULT_OCR_IMAGE_MAX_EDGE_STEPS}
+              />
+              <span class="applicationSettingsView__hint applicationSettingsView__hint--flush">
+                {t('settings.model.ocr.imageMaxEdgeStepsHint')}
+              </span>
             </label>
 
             <div class="applicationSettingsView__field applicationSettingsView__field--wide applicationSettingsView__field--section">

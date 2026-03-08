@@ -154,20 +154,28 @@ function createTableDesignerColumnKey(): string {
 }
 
 function isSystemIdColumn(column: Partial<TableDesignerColumn> | null | undefined): boolean {
-  return Boolean(column?.is_system) || String(column?.column_name || '').trim().toUpperCase() === SYSTEM_ID_COLUMN_NAME;
+  return Boolean(column?.is_system) || ['ID', 'HEADER_ID', 'LINE_ID'].includes(String(column?.column_name || '').trim().toUpperCase());
 }
 
-function createSystemIdColumn(): TableDesignerColumn {
+function getSystemIdJapaneseName(columnName: string): string {
+  switch (columnName) {
+    case 'HEADER_ID': return 'ヘッダーID';
+    case 'LINE_ID': return '明細ID';
+    default: return 'システムID';
+  }
+}
+
+function createSystemIdColumn(systemIdName: string, isPrimaryKey = true): TableDesignerColumn {
   return {
     ui_key: createTableDesignerColumnKey(),
-    column_name: SYSTEM_ID_COLUMN_NAME,
-    column_name_jp: SYSTEM_ID_COLUMN_JP,
+    column_name: systemIdName,
+    column_name_jp: getSystemIdJapaneseName(systemIdName),
     data_type: 'VARCHAR2',
     max_length: SYSTEM_ID_COLUMN_MAX_LENGTH,
     precision: undefined,
     scale: undefined,
     is_nullable: false,
-    is_primary_key: true,
+    is_primary_key: isPrimaryKey,
     is_system: true,
   };
 }
@@ -203,10 +211,10 @@ function normalizeColumnDataType(value: unknown): TableColumnDef['data_type'] {
     : DEFAULT_COLUMN_DATA_TYPE;
 }
 
-function normalizeColumnDef(column: Partial<TableDesignerColumn> | null | undefined): TableDesignerColumn {
+function normalizeColumnDef(column: Partial<TableDesignerColumn> | null | undefined, systemIdName: string): TableDesignerColumn {
   if (isSystemIdColumn(column)) {
     return {
-      ...createSystemIdColumn(),
+      ...createSystemIdColumn(systemIdName),
       ui_key: String(column?.ui_key || createTableDesignerColumnKey()),
     };
   }
@@ -232,17 +240,21 @@ function normalizeColumnDef(column: Partial<TableDesignerColumn> | null | undefi
   };
 }
 
-function normalizeColumns(columns: TableColumnDef[] | null | undefined): TableDesignerColumn[] {
+function normalizeColumns(columns: TableColumnDef[] | null | undefined, systemIdName: string, fkIdName?: string): TableDesignerColumn[] {
   const normalizedBusinessColumns = Array.isArray(columns)
     ? columns
-        .map((column) => normalizeColumnDef(column))
-        .filter((column) => !isSystemIdColumn(column))
+      .map((column) => normalizeColumnDef(column, systemIdName))
+      .filter((column) => !isSystemIdColumn(column))
     : [];
-  return [createSystemIdColumn(), ...normalizedBusinessColumns];
+  const systemColumns: TableDesignerColumn[] = [createSystemIdColumn(systemIdName)];
+  if (fkIdName) {
+    systemColumns.push(createSystemIdColumn(fkIdName, false));
+  }
+  return [...systemColumns, ...normalizedBusinessColumns];
 }
 
-function serializeColumns(columns: TableDesignerColumn[]): TableColumnDef[] {
-  return normalizeColumns(columns).map(({ ui_key: _ui_key, is_system: _isSystem, ...column }) => column);
+function serializeColumns(columns: TableDesignerColumn[], systemIdName: string, fkIdName?: string): TableColumnDef[] {
+  return normalizeColumns(columns, systemIdName, fkIdName).map(({ ui_key: _ui_key, is_system: _isSystem, ...column }) => column);
 }
 
 function getBusinessColumns(columns: TableDesignerColumn[]): TableDesignerColumn[] {
@@ -507,7 +519,8 @@ function ColumnRow({
   const isLocked = Boolean(col.is_system);
   const update = (patch: Partial<TableDesignerColumn>) => {
     if (isLocked) return;
-    onChange(index, normalizeColumnDef({ ...col, ...patch }));
+    const sysIdName = col.column_name; // Fallback, not strictly needed since isLocked is handled above
+    onChange(index, normalizeColumnDef({ ...col, ...patch }, 'ID')); // Temporary fallback, unused for system column
   };
 
   return (
@@ -649,10 +662,11 @@ function TableDesigner({
   onColumnsChange: (cols: TableDesignerColumn[]) => void;
 }) {
   const [showPreview, setShowPreview] = useState(false);
-  const lockedPrefixCount = columns.length > 0 && columns[0].is_system ? 1 : 0;
+  const lockedPrefixCount = columns.filter((col) => col.is_system).length;
 
   const addColumn = () => {
     const businessColumnCount = getBusinessColumns(columns).length;
+    // Note: The systemIdName passed here doesn't matter for business columns, so we pass a fallback
     onColumnsChange([
       ...columns,
       normalizeColumnDef({
@@ -662,7 +676,7 @@ function TableDesigner({
         max_length: 500,
         is_nullable: true,
         is_primary_key: false,
-      }),
+      }, 'ID'),
     ]);
   };
 
@@ -780,13 +794,13 @@ function TableDesignerPanel({
   const [headerTableName, setHeaderTableName] = useState(
     (analysisResult.category_guess_en || 'slip').toUpperCase() + '_H'
   );
-  const [headerColumns, setHeaderColumns] = useState<TableDesignerColumn[]>(() => normalizeColumns(analysisResult.header_columns));
+  const [headerColumns, setHeaderColumns] = useState<TableDesignerColumn[]>(() => normalizeColumns(analysisResult.header_columns, 'HEADER_ID'));
   const [lineTableName, setLineTableName] = useState(
     analysisResult.analysis_mode === 'header_line'
       ? (analysisResult.category_guess_en || 'slip').toUpperCase() + '_L'
       : ''
   );
-  const [lineColumns, setLineColumns] = useState<TableDesignerColumn[]>(() => normalizeColumns(analysisResult.line_columns));
+  const [lineColumns, setLineColumns] = useState<TableDesignerColumn[]>(() => normalizeColumns(analysisResult.line_columns, 'LINE_ID', 'HEADER_ID'));
   const [activeTab, setActiveTab] = useState<'header' | 'line'>('header');
   const [validationError, setValidationError] = useState('');
 
@@ -847,11 +861,11 @@ function TableDesignerPanel({
       category_name_en: categoryNameEn.trim(),
       description: description.trim(),
       header_table_name: headerTableName.trim().toUpperCase(),
-      header_columns: serializeColumns(headerColumns),
+      header_columns: serializeColumns(headerColumns, 'HEADER_ID'),
     };
     if (hasLine && lineTableName.trim() && lineBusinessColumns.length > 0) {
       req.line_table_name = lineTableName.trim().toUpperCase();
-      req.line_columns = serializeColumns(lineColumns);
+      req.line_columns = serializeColumns(lineColumns, 'LINE_ID', 'HEADER_ID');
     }
     onConfirm(req);
   };

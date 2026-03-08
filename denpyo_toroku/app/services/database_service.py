@@ -995,6 +995,7 @@ END;"""
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     # --- ヘッダーデータ INSERT ---
+                    generated_header_id = None
                     if header_table_name and header_fields:
                         if not self._is_safe_table_name(header_table_name):
                             raise ValueError(f"不正なテーブル名です: {header_table_name}")
@@ -1003,12 +1004,12 @@ END;"""
                             header_cols = []
                             header_vals = []
                             generated_header_id = self._generate_business_id(cursor, header_table_name)
-                            header_cols.append(_SYSTEM_ID_COLUMN_NAME)
+                            header_cols.append("HEADER_ID")
                             header_vals.append(generated_header_id)
                             for field in header_fields:
                                 col_name = field.get("field_name_en", "").upper()
                                 value = field.get("value")
-                                if col_name == _SYSTEM_ID_COLUMN_NAME:
+                                if col_name in (_SYSTEM_ID_COLUMN_NAME, "HEADER_ID"):
                                     continue
                                 if col_name and value is not None:
                                     header_cols.append(col_name)
@@ -1047,33 +1048,56 @@ END;"""
 
                         if line_type_map is not None:
                             line_inserted = 0
+                            
+                            # Gather all standard column names that appear in any raw line
+                            all_cols_set = set()
                             for line in raw_lines:
-                                try:
-                                    line_cols = [_SYSTEM_ID_COLUMN_NAME]
-                                    line_vals = [self._generate_business_id(cursor, line_table_name)]
-                                    for col_name, value in line.items():
-                                        normalized_col_name = str(col_name or "").upper()
-                                        if normalized_col_name == _SYSTEM_ID_COLUMN_NAME:
-                                            continue
-                                        if normalized_col_name and value is not None:
-                                            line_cols.append(normalized_col_name)
-                                            line_vals.append(
-                                                self._coerce_insert_value(
-                                                    value,
-                                                    line_type_map.get(normalized_col_name, ""),
-                                                    normalized_col_name,
-                                                )
-                                            )
+                                for col_name in line.keys():
+                                    normalized_col_name = str(col_name or "").upper()
+                                    if normalized_col_name not in (_SYSTEM_ID_COLUMN_NAME, "HEADER_ID", "LINE_ID"):
+                                        all_cols_set.add(normalized_col_name)
 
-                                    if line_cols:
-                                        col_str = ", ".join(line_cols)
-                                        placeholders = ", ".join([f":{i+1}" for i in range(len(line_vals))])
-                                        insert_sql = f"INSERT INTO {line_table_name.upper()} ({col_str}) VALUES ({placeholders})"
-                                        cursor.execute(insert_sql, line_vals)
-                                        line_inserted += cursor.rowcount
+                            line_cols = ["LINE_ID"]
+                            if generated_header_id is not None:
+                                line_cols.append("HEADER_ID")
+                            
+                            ordered_dynamic_cols = sorted(list(all_cols_set))
+                            line_cols.extend(ordered_dynamic_cols)
+
+                            bulk_vals = []
+                            for line in raw_lines:
+                                line_id = self._generate_business_id(cursor, line_table_name)
+                                row_vals = [line_id]
+                                if generated_header_id is not None:
+                                    row_vals.append(generated_header_id)
+
+                                # Create a dict with uppercased keys and coerced values
+                                processed_line = {}
+                                for col_name, value in line.items():
+                                    normalized_col_name = str(col_name or "").upper()
+                                    if normalized_col_name in (_SYSTEM_ID_COLUMN_NAME, "HEADER_ID", "LINE_ID") or value is None:
+                                        continue
+                                    processed_line[normalized_col_name] = self._coerce_insert_value(
+                                        value,
+                                        line_type_map.get(normalized_col_name, ""),
+                                        normalized_col_name,
+                                    )
+                                
+                                for dynamic_col in ordered_dynamic_cols:
+                                    row_vals.append(processed_line.get(dynamic_col, None))
+                                
+                                bulk_vals.append(row_vals)
+
+                            if line_cols and bulk_vals:
+                                try:
+                                    col_str = ", ".join(line_cols)
+                                    placeholders = ", ".join([f":{i+1}" for i in range(len(line_cols))])
+                                    insert_sql = f"INSERT INTO {line_table_name.upper()} ({col_str}) VALUES ({placeholders})"
+                                    cursor.executemany(insert_sql, bulk_vals)
+                                    line_inserted += len(bulk_vals)
                                 except Exception as e:
-                                    error_message = f"明細INSERTエラー: {str(e)}"
-                                    logger.warning("%s (line=%s)", error_message, line)
+                                    error_message = f"明細INSERTエラー (executemany): {str(e)}"
+                                    logger.warning(error_message)
                                     result["success"] = False
                                     result["errors"].append(error_message)
 
@@ -1831,11 +1855,16 @@ END;"""
             return {"success": False, "message": str(e)}
 
     @staticmethod
-    def _build_ddl_from_columns(table_name: str, columns: List[Dict[str, Any]]) -> str:
+    def _build_ddl_from_columns(
+        table_name: str,
+        columns: List[Dict[str, Any]],
+        id_column_name: str = _SYSTEM_ID_COLUMN_NAME,
+        fk_column_name: Optional[str] = None,
+    ) -> str:
         """カラム定義リストからCREATE TABLE DDLを生成"""
         col_defs = []
         pk_cols = []
-        for col in DatabaseService._normalize_designer_columns(columns):
+        for col in DatabaseService._normalize_designer_columns(columns, id_column_name, fk_column_name):
             col_name = col.get("column_name", "").upper()
             if not col_name:
                 continue
@@ -1878,14 +1907,19 @@ END;"""
         return f"CREATE TABLE {table_name.upper()} (\n{cols_sql}\n)"
 
     @staticmethod
-    def _build_column_comment_ddls(table_name: str, columns: List[Dict[str, Any]]) -> List[str]:
+    def _build_column_comment_ddls(
+        table_name: str,
+        columns: List[Dict[str, Any]],
+        id_column_name: str = _SYSTEM_ID_COLUMN_NAME,
+        fk_column_name: Optional[str] = None,
+    ) -> List[str]:
         """カラム定義リストから COMMENT ON COLUMN DDL を生成"""
         table_name = (table_name or "").strip().upper()
         if not table_name:
             return []
 
         ddls: List[str] = []
-        for col in DatabaseService._normalize_designer_columns(columns):
+        for col in DatabaseService._normalize_designer_columns(columns, id_column_name, fk_column_name):
             col_name = str(col.get("column_name") or "").strip().upper()
             comment = str(col.get("column_name_jp") or col.get("comment") or "").strip()
             if not col_name or not comment:
@@ -1896,10 +1930,14 @@ END;"""
         return ddls
 
     @staticmethod
-    def _system_id_column() -> Dict[str, Any]:
+    def _system_id_column(id_column_name: str = _SYSTEM_ID_COLUMN_NAME) -> Dict[str, Any]:
+        _SYSTEM_ID_JP_NAMES = {
+            "HEADER_ID": "ヘッダーID",
+            "LINE_ID": "明細ID",
+        }
         return {
-            "column_name": _SYSTEM_ID_COLUMN_NAME,
-            "column_name_jp": _SYSTEM_ID_COLUMN_COMMENT,
+            "column_name": id_column_name,
+            "column_name_jp": _SYSTEM_ID_JP_NAMES.get(id_column_name, _SYSTEM_ID_COLUMN_COMMENT),
             "data_type": "VARCHAR2",
             "max_length": _SYSTEM_ID_COLUMN_MAX_LENGTH,
             "is_nullable": False,
@@ -1907,11 +1945,21 @@ END;"""
         }
 
     @staticmethod
-    def _normalize_designer_columns(columns: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-        normalized: List[Dict[str, Any]] = [dict(DatabaseService._system_id_column())]
+    def _normalize_designer_columns(
+        columns: Optional[List[Dict[str, Any]]],
+        id_column_name: str = _SYSTEM_ID_COLUMN_NAME,
+        fk_column_name: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = [dict(DatabaseService._system_id_column(id_column_name))]
+        
+        if fk_column_name:
+            fk_col = dict(DatabaseService._system_id_column(fk_column_name))
+            fk_col["is_primary_key"] = False
+            normalized.append(fk_col)
+
         for raw_col in columns or []:
             col_name = str(raw_col.get("column_name") or "").strip().upper()
-            if not col_name or col_name == _SYSTEM_ID_COLUMN_NAME:
+            if not col_name or col_name in (_SYSTEM_ID_COLUMN_NAME, id_column_name, fk_column_name):
                 continue
             normalized.append(
                 {
@@ -1941,16 +1989,16 @@ END;"""
         return f"{base_name}-{type_code}"
 
     @staticmethod
-    def _build_id_immutability_trigger_ddl(table_name: str) -> str:
+    def _build_id_immutability_trigger_ddl(table_name: str, id_column_name: str = _SYSTEM_ID_COLUMN_NAME) -> str:
         normalized_table_name = (table_name or "").strip().upper()
         trigger_name = f"TRG_{normalized_table_name[:20]}_ID_IMM"
         return f"""
 CREATE OR REPLACE TRIGGER {trigger_name}
-BEFORE UPDATE OF {_SYSTEM_ID_COLUMN_NAME} ON {normalized_table_name}
+BEFORE UPDATE OF {id_column_name} ON {normalized_table_name}
 FOR EACH ROW
 BEGIN
-    IF NVL(:OLD.{_SYSTEM_ID_COLUMN_NAME}, ' ') <> NVL(:NEW.{_SYSTEM_ID_COLUMN_NAME}, ' ') THEN
-        RAISE_APPLICATION_ERROR(-20001, '{_SYSTEM_ID_COLUMN_NAME} は更新できません');
+    IF NVL(:OLD.{id_column_name}, ' ') <> NVL(:NEW.{id_column_name}, ' ') THEN
+        RAISE_APPLICATION_ERROR(-20001, '{id_column_name} は更新できません');
     END IF;
 END;"""
 
@@ -2014,8 +2062,8 @@ END;"""
             result["message"] = "ヘッダーテーブル名とカラム定義は必須です"
             return result
 
-        header_columns = self._normalize_designer_columns(header_columns)
-        line_columns = self._normalize_designer_columns(line_columns) if line_table_name and line_columns else []
+        header_columns = self._normalize_designer_columns(header_columns, "HEADER_ID")
+        line_columns = self._normalize_designer_columns(line_columns, "LINE_ID", "HEADER_ID") if line_table_name and line_columns else []
 
         conflicts = self.find_category_conflicts(
             category_name=category_name,
@@ -2028,16 +2076,16 @@ END;"""
             return result
 
         # DDL生成
-        header_ddl = self._build_ddl_from_columns(header_table_name, header_columns)
-        header_comment_ddls = self._build_column_comment_ddls(header_table_name, header_columns)
-        header_trigger_ddl = self._build_id_immutability_trigger_ddl(header_table_name)
+        header_ddl = self._build_ddl_from_columns(header_table_name, header_columns, "HEADER_ID")
+        header_comment_ddls = self._build_column_comment_ddls(header_table_name, header_columns, "HEADER_ID")
+        header_trigger_ddl = self._build_id_immutability_trigger_ddl(header_table_name, "HEADER_ID")
         line_ddl = None
         line_comment_ddls: List[str] = []
         line_trigger_ddl = ""
         if line_table_name and line_columns:
-            line_ddl = self._build_ddl_from_columns(line_table_name, line_columns)
-            line_comment_ddls = self._build_column_comment_ddls(line_table_name, line_columns)
-            line_trigger_ddl = self._build_id_immutability_trigger_ddl(line_table_name)
+            line_ddl = self._build_ddl_from_columns(line_table_name, line_columns, "LINE_ID", "HEADER_ID")
+            line_comment_ddls = self._build_column_comment_ddls(line_table_name, line_columns, "LINE_ID", "HEADER_ID")
+            line_trigger_ddl = self._build_id_immutability_trigger_ddl(line_table_name, "LINE_ID")
 
         # ヘッダーテーブル作成
         header_res = self.execute_ddl(header_ddl)
