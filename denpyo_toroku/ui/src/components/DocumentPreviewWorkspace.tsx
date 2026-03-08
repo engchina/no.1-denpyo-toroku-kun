@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { AlertTriangle, ImageIcon, Loader2 } from 'lucide-react';
+import { AlertTriangle, ImageIcon, Loader2, RotateCcw, RotateCw } from 'lucide-react';
 import { apiGet } from '../utils/apiUtils';
 import { t } from '../i18n';
 import type { DocumentPreviewPage, DocumentPreviewResponse } from '../types/denpyoTypes';
 
 type ViewerMode = 'fit-width' | 'fit-page' | 'zoom';
+type PageImageMetrics = {
+  width: number;
+  height: number;
+};
 
 type PreviewWorkspacePage = DocumentPreviewPage & {
   fileId: string;
@@ -16,6 +20,11 @@ const ZOOM_STEPS: readonly number[] = [100, 125, 150, 175, 200, 250, 300];
 
 function buildPageKey(fileId: string, pageIndex: number): string {
   return `${fileId}:${pageIndex}`;
+}
+
+function normalizeRotation(rotation: number): number {
+  const normalized = rotation % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
 }
 
 export function DocumentPreviewWorkspace({
@@ -38,6 +47,8 @@ export function DocumentPreviewWorkspace({
   const [activePageKey, setActivePageKey] = useState<string>('');
   const [viewerMode, setViewerMode] = useState<ViewerMode>('fit-width');
   const [zoomPercent, setZoomPercent] = useState<number>(ZOOM_STEPS[1]);
+  const [pageMetrics, setPageMetrics] = useState<Record<string, PageImageMetrics>>({});
+  const [pageRotations, setPageRotations] = useState<Record<string, number>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +99,8 @@ export function DocumentPreviewWorkspace({
     };
 
     setImgErrors({});
+    setPageMetrics({});
+    setPageRotations({});
     setViewerMode('fit-width');
     setZoomPercent(ZOOM_STEPS[1]);
     void loadPages();
@@ -112,12 +125,86 @@ export function DocumentPreviewWorkspace({
   const canZoomOut = viewerMode === 'zoom' && zoomStepIndex > 0;
   const canZoomIn = viewerMode !== 'zoom' || zoomStepIndex < ZOOM_STEPS.length - 1;
   const currentImageHasError = activePage ? Boolean(imgErrors[activePage.key]) : false;
-  const currentImageClass =
+  const currentPageRotation = activePage ? normalizeRotation(pageRotations[activePage.key] ?? 0) : 0;
+  const currentImageFrameClass =
     viewerMode === 'fit-page'
-      ? 'ics-category-viewer__image ics-category-viewer__image--fit-page'
+      ? 'ics-category-viewer__frame ics-category-viewer__frame--fit-page'
       : viewerMode === 'zoom'
-        ? 'ics-category-viewer__image ics-category-viewer__image--zoom'
-        : 'ics-category-viewer__image ics-category-viewer__image--fit-width';
+        ? 'ics-category-viewer__frame ics-category-viewer__frame--zoom'
+        : 'ics-category-viewer__frame ics-category-viewer__frame--fit-width';
+
+  const getPageLayout = (pageKey: string) => {
+    const metrics = pageMetrics[pageKey];
+    const rotation = normalizeRotation(pageRotations[pageKey] ?? 0);
+    const isQuarterTurn = rotation % 180 !== 0;
+    const originalAspectRatio = metrics ? metrics.width / metrics.height : 1;
+    const displayAspectRatio = metrics
+      ? isQuarterTurn
+        ? metrics.height / metrics.width
+        : originalAspectRatio
+      : 1;
+
+    return {
+      metrics,
+      rotation,
+      displayAspectRatio,
+      rotationShellStyle: {
+        width: metrics && isQuarterTurn ? `${originalAspectRatio * 100}%` : '100%',
+        height: metrics && isQuarterTurn ? `${(1 / originalAspectRatio) * 100}%` : '100%',
+        transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+      },
+    };
+  };
+
+  const buildMainFrameStyle = (pageKey: string) => {
+    const { displayAspectRatio } = getPageLayout(pageKey);
+    if (viewerMode === 'fit-page') {
+      return {
+        width: `min(100%, calc((100vh - 420px) * ${displayAspectRatio}))`,
+        maxWidth: '100%',
+        aspectRatio: `${displayAspectRatio}`,
+      };
+    }
+    if (viewerMode === 'zoom') {
+      return {
+        width: `${zoomPercent}%`,
+        maxWidth: 'none',
+        aspectRatio: `${displayAspectRatio}`,
+      };
+    }
+    return {
+      width: '100%',
+      aspectRatio: `${displayAspectRatio}`,
+    };
+  };
+
+  const buildThumbnailFrameStyle = (pageKey: string) => {
+    const { displayAspectRatio } = getPageLayout(pageKey);
+    return {
+      width: `min(100%, calc(var(--ics-thumbnail-frame-height) * ${displayAspectRatio}))`,
+      maxWidth: '100%',
+      aspectRatio: `${displayAspectRatio}`,
+    };
+  };
+
+  const handleImageLoad = (pageKey: string) => (event: Event) => {
+    const target = event.currentTarget as HTMLImageElement | null;
+    if (!target?.naturalWidth || !target?.naturalHeight) return;
+
+    setPageMetrics((prev) => {
+      const current = prev[pageKey];
+      if (current && current.width === target.naturalWidth && current.height === target.naturalHeight) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [pageKey]: {
+          width: target.naturalWidth,
+          height: target.naturalHeight,
+        },
+      };
+    });
+  };
 
   const handleZoom = (direction: 'in' | 'out') => {
     if (direction === 'out' && viewerMode !== 'zoom') return;
@@ -136,6 +223,27 @@ export function DocumentPreviewWorkspace({
 
     setViewerMode('zoom');
     setZoomPercent(nextZoom);
+  };
+
+  const handleRotate = (direction: 'left' | 'right') => {
+    if (!activePage) return;
+
+    setPageRotations((prev) => {
+      const currentRotation = normalizeRotation(prev[activePage.key] ?? 0);
+      const delta = direction === 'right' ? 90 : -90;
+      const nextRotation = normalizeRotation(currentRotation + delta);
+
+      if (nextRotation === 0) {
+        const nextRotations = { ...prev };
+        delete nextRotations[activePage.key];
+        return nextRotations;
+      }
+
+      return {
+        ...prev,
+        [activePage.key]: nextRotation,
+      };
+    });
   };
 
   return (
@@ -166,6 +274,26 @@ export function DocumentPreviewWorkspace({
               title={t('category.designer.fitPage')}
             >
               <span>{t('category.designer.fitPageShort')}</span>
+            </button>
+            <button
+              type="button"
+              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
+              onClick={() => handleRotate('left')}
+              disabled={!activePage}
+              title={t('category.designer.rotateLeft')}
+              aria-label={t('category.designer.rotateLeft')}
+            >
+              <RotateCcw size={15} />
+            </button>
+            <button
+              type="button"
+              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
+              onClick={() => handleRotate('right')}
+              disabled={!activePage}
+              title={t('category.designer.rotateRight')}
+              aria-label={t('category.designer.rotateRight')}
+            >
+              <RotateCw size={15} />
             </button>
             <button
               type="button"
@@ -219,13 +347,17 @@ export function DocumentPreviewWorkspace({
                       <span>{t('documentPreview.loadFailed')}</span>
                     </div>
                   ) : (
-                    <img
-                      src={`/studio/api/v1/files/${activePage.fileId}/preview-pages/${activePage.page_index}`}
-                      alt={activePage.page_label || activePage.fileName}
-                      class={currentImageClass}
-                      style={viewerMode === 'zoom' ? { width: `${zoomPercent}%`, maxWidth: 'none' } : undefined}
-                      onError={() => setImgErrors((prev) => ({ ...prev, [activePage.key]: true }))}
-                    />
+                    <div class={currentImageFrameClass} style={buildMainFrameStyle(activePage.key)}>
+                      <div class="ics-category-viewer__rotation" style={getPageLayout(activePage.key).rotationShellStyle}>
+                        <img
+                          src={`/studio/api/v1/files/${activePage.fileId}/preview-pages/${activePage.page_index}`}
+                          alt={activePage.page_label || activePage.fileName}
+                          class="ics-category-viewer__image"
+                          onLoad={handleImageLoad(activePage.key)}
+                          onError={() => setImgErrors((prev) => ({ ...prev, [activePage.key]: true }))}
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
@@ -233,6 +365,9 @@ export function DocumentPreviewWorkspace({
               <div class="ics-category-review-card__caption">
                 <strong>{activePage.page_label || activePage.fileName}</strong>
                 <span>{activePage.source_name || activePage.fileName}</span>
+                {currentPageRotation !== 0 && (
+                  <span>{t('category.designer.rotationStatus', { degrees: currentPageRotation })}</span>
+                )}
               </div>
 
               {pages.length > 1 && (
@@ -255,11 +390,17 @@ export function DocumentPreviewWorkspace({
                               <ImageIcon size={18} />
                             </div>
                           ) : (
-                            <img
-                              src={`/studio/api/v1/files/${page.fileId}/preview-pages/${page.page_index}`}
-                              alt={page.page_label || page.fileName}
-                              onError={() => setImgErrors((prev) => ({ ...prev, [page.key]: true }))}
-                            />
+                            <div class="ics-category-thumbnail__media" style={buildThumbnailFrameStyle(page.key)}>
+                              <div class="ics-category-thumbnail__rotation" style={getPageLayout(page.key).rotationShellStyle}>
+                                <img
+                                  src={`/studio/api/v1/files/${page.fileId}/preview-pages/${page.page_index}`}
+                                  alt={page.page_label || page.fileName}
+                                  class="ics-category-thumbnail__image"
+                                  onLoad={handleImageLoad(page.key)}
+                                  onError={() => setImgErrors((prev) => ({ ...prev, [page.key]: true }))}
+                                />
+                              </div>
+                            </div>
                           )}
                         </div>
                         <span class="ics-category-thumbnail__label">{page.page_label || t('category.designer.imageLabel', { index: index + 1 })}</span>
