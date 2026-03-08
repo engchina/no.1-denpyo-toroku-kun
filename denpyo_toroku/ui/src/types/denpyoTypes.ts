@@ -48,16 +48,23 @@ export interface RecentActivity {
 // --- 伝票ファイル ---
 
 export type FileStatus = 'UPLOADED' | 'ANALYZING' | 'ANALYZED' | 'REGISTERED' | 'ERROR';
+export type FileStatusDetail = 'ANALYSIS_TIMEOUT' | '';
 
 export interface DenpyoFile {
   file_id: string;
   file_name: string;
+  original_file_name?: string;
   file_type: string;
+  content_type?: string;
   file_size: number;
   storage_path?: string;
   uploaded_at: string;
+  updated_at?: string;
   uploaded_by?: string;
   status: FileStatus;
+  status_detail?: FileStatusDetail;
+  is_analysis_stalled?: boolean;
+  can_retry_analysis?: boolean;
   has_analysis_result?: boolean;
   category_id?: string;
   category_name?: string;
@@ -87,6 +94,12 @@ export interface DenpyoCategory {
   header_table_name: string;
   line_table_name: string;
   description: string;
+  select_ai_profile_name?: string;
+  select_ai_team_name?: string;
+  select_ai_profile_ready?: boolean;
+  select_ai_last_synced_at?: string;
+  select_ai_config_hash?: string;
+  select_ai_last_error?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -189,6 +202,20 @@ export interface StoredAnalysisResultResponse<T> {
   analysis_kind: 'raw' | 'category' | string;
   result: T;
   analyzed_at?: string;
+}
+
+export interface DocumentPreviewPage {
+  page_index: number;
+  page_label: string;
+  source_name: string;
+  content_type: string;
+}
+
+export interface DocumentPreviewResponse {
+  file_id: string;
+  file_name: string;
+  page_count: number;
+  pages: DocumentPreviewPage[];
 }
 
 // --- 登録 ---
@@ -305,6 +332,11 @@ export interface SearchableTable {
   category_name: string;
   header_table_name: string;
   line_table_name: string;
+  select_ai_profile_name?: string;
+  select_ai_team_name?: string;
+  select_ai_profile_ready?: boolean;
+  select_ai_last_synced_at?: string;
+  select_ai_last_error?: string;
 }
 
 export interface TableBrowserTable {
@@ -321,7 +353,7 @@ export interface TableBrowserTable {
 
 export interface NLSearchRequest {
   query: string;
-  category_id?: number;
+  category_id: number;
 }
 
 export interface NLSearchEngineMeta {
@@ -415,6 +447,7 @@ export interface DenpyoSliceState {
   tableBrowserTables: TableBrowserTable[];
   isTableBrowserTablesLoading: boolean;
   nlSearchResult: NLSearchResponse | null;
+  activeNLSearchRequestId?: string | null;
   isNLSearching: boolean;
   tableBrowseResult: TableBrowseResult | null;
   isTableBrowsing: boolean;

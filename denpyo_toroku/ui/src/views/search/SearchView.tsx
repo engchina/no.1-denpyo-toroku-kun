@@ -182,11 +182,30 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
     t('search.nl.quickPrompt.byVendor'),
     t('search.nl.quickPrompt.latestReceipt'),
   ];
+  const selectedCategory = useMemo(
+    () => searchableTables.find((table) => table.category_id === categoryId) || null,
+    [categoryId, searchableTables],
+  );
+
+  useEffect(() => {
+    if (searchableTables.length === 0) {
+      setCategoryId(undefined);
+      return;
+    }
+    const hasCurrent = searchableTables.some((table) => table.category_id === categoryId);
+    if (!hasCurrent) {
+      setCategoryId(searchableTables[0].category_id);
+    }
+  }, [categoryId, searchableTables]);
+
+  useEffect(() => {
+    dispatch(clearSearchResults());
+  }, [dispatch, categoryId]);
 
   const handleSearch = useCallback(() => {
-    if (!query.trim()) return;
-    dispatch(nlSearch({ query: query.trim(), category_id: categoryId }));
-  }, [dispatch, query, categoryId]);
+    if (!query.trim() || !selectedCategory) return;
+    dispatch(nlSearch({ query: query.trim(), category_id: selectedCategory.category_id }));
+  }, [dispatch, query, selectedCategory]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && e.ctrlKey) {
@@ -219,13 +238,28 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
                   onChange={(e) => setCategoryId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined)}
                   disabled={noTables}
                 >
-                  <option value="">{t('search.common.allCategories')}</option>
                   {searchableTables.map(table => (
                     <option key={table.category_id} value={table.category_id}>
                       {table.category_name}
                     </option>
                   ))}
                 </select>
+                {selectedCategory && (
+                  <div class="ics-search-profileMeta">
+                    <span class="ics-search-profileMeta__label">{t('search.common.profileLabel')}</span>
+                    <code class="ics-search-profileMeta__value">
+                      {selectedCategory.select_ai_profile_name || t('search.common.profilePending')}
+                    </code>
+                    <span class="ics-search-profileMeta__status">
+                      {selectedCategory.select_ai_profile_ready
+                        ? t('search.common.profileReady')
+                        : t('search.common.profileAutoCreate')}
+                    </span>
+                  </div>
+                )}
+                {selectedCategory?.select_ai_last_error && !selectedCategory.select_ai_profile_ready && (
+                  <p class="ics-search-panelMessage">{selectedCategory.select_ai_last_error}</p>
+                )}
               </div>
 
               {/* Query input */}
@@ -268,7 +302,7 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
                   type="button"
                   class="ics-ops-btn ics-ops-btn--primary"
                   onClick={handleSearch}
-                  disabled={!query.trim() || noTables || isLoading}
+                  disabled={!query.trim() || !selectedCategory || noTables || isLoading}
                 >
                   {isLoading ? (
                     <>

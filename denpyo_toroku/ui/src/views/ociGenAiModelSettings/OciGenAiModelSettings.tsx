@@ -10,6 +10,10 @@ const DEFAULT_LLM_MODEL = 'xai.grok-code-fast-1';
 const DEFAULT_VLM_MODEL = 'google.gemini-2.5-flash';
 const DEFAULT_EMBEDDING_MODEL = 'cohere.embed-v4.0';
 const DEFAULT_ENDPOINT = 'https://inference.generativeai.us-chicago-1.oci.oraclecloud.com';
+const DEFAULT_SELECT_AI_REGION = 'us-chicago-1';
+const DEFAULT_SELECT_AI_MODEL = 'xai.grok-code-fast-1';
+const DEFAULT_SELECT_AI_MAX_TOKENS = 32768;
+const DEFAULT_SELECT_AI_API_FORMAT = 'GENERIC';
 
 interface OciModelSettingsForm {
   compartment_id: string;
@@ -18,8 +22,16 @@ interface OciModelSettingsForm {
   vlm_model_id: string;
   embedding_model_id: string;
   select_ai_enabled: boolean;
+  select_ai_region: string;
+  select_ai_model_id: string;
+  select_ai_embedding_model_id: string;
+  select_ai_endpoint_id: string;
+  select_ai_max_tokens: number;
+  select_ai_enforce_object_list: boolean;
   select_ai_oci_apiformat: string;
+  select_ai_use_annotations: boolean;
   select_ai_use_comments: boolean;
+  select_ai_use_constraints: boolean;
   llm_max_tokens: number;
   llm_temperature: number;
 }
@@ -47,8 +59,16 @@ const EMPTY_SETTINGS: OciModelSettingsForm = {
   vlm_model_id: DEFAULT_VLM_MODEL,
   embedding_model_id: DEFAULT_EMBEDDING_MODEL,
   select_ai_enabled: true,
-  select_ai_oci_apiformat: '',
+  select_ai_region: DEFAULT_SELECT_AI_REGION,
+  select_ai_model_id: DEFAULT_SELECT_AI_MODEL,
+  select_ai_embedding_model_id: DEFAULT_EMBEDDING_MODEL,
+  select_ai_endpoint_id: '',
+  select_ai_max_tokens: DEFAULT_SELECT_AI_MAX_TOKENS,
+  select_ai_enforce_object_list: true,
+  select_ai_oci_apiformat: DEFAULT_SELECT_AI_API_FORMAT,
+  select_ai_use_annotations: true,
   select_ai_use_comments: true,
+  select_ai_use_constraints: true,
   llm_max_tokens: 65536,
   llm_temperature: 0.0
 };
@@ -96,7 +116,7 @@ export function OciGenAiModelSettings() {
       const target = event.target as HTMLInputElement | HTMLSelectElement;
       setSettings(prev => {
         let val: string | number | boolean = target.value;
-        if (field === 'llm_max_tokens' || field === 'llm_temperature') {
+        if (field === 'llm_max_tokens' || field === 'llm_temperature' || field === 'select_ai_max_tokens') {
           val = Number(val);
         } else if (target instanceof HTMLInputElement && target.type === 'checkbox') {
           val = target.checked;
@@ -108,6 +128,10 @@ export function OciGenAiModelSettings() {
     },
     []
   );
+
+  const toggleSelectAiEnabled = useCallback(() => {
+    setSettings(prev => ({ ...prev, select_ai_enabled: !prev.select_ai_enabled }));
+  }, []);
 
   const handleSave = useCallback(async () => {
     setIsSaving(true);
@@ -206,6 +230,8 @@ export function OciGenAiModelSettings() {
       return settings.service_endpoint || DEFAULT_ENDPOINT;
     }
   }, [settings.service_endpoint]);
+  const selectAiModelSummary = settings.select_ai_model_id || DEFAULT_SELECT_AI_MODEL;
+  const selectAiRegionSummary = settings.select_ai_region || DEFAULT_SELECT_AI_REGION;
 
   return (
     <div class="applicationSettingsView applicationSettingsView--enhanced applicationSettingsView--model">
@@ -254,6 +280,14 @@ export function OciGenAiModelSettings() {
             <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">
               {settings.select_ai_enabled ? t('settings.model.selectAi.engine.agent') : t('settings.model.selectAi.engine.direct')}
             </div>
+          </div>
+          <div class="applicationSettingsView__heroMetric">
+            <div class="applicationSettingsView__heroMetricLabel">{t('settings.model.selectAi.region')}</div>
+            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{selectAiRegionSummary}</div>
+          </div>
+          <div class="applicationSettingsView__heroMetric">
+            <div class="applicationSettingsView__heroMetricLabel">{t('settings.model.selectAi.modelId')}</div>
+            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{selectAiModelSummary}</div>
           </div>
         </div>
       </section>
@@ -344,18 +378,84 @@ export function OciGenAiModelSettings() {
               </p>
             </div>
 
-            <label class="applicationSettingsView__field applicationSettingsView__field--wide applicationSettingsView__toggleField">
-              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.enable')}</span>
-              <span class="applicationSettingsView__toggleRow">
-                <input
-                  type="checkbox"
-                  checked={settings.select_ai_enabled}
-                  onChange={updateField('select_ai_enabled')}
-                />
-                <span class="applicationSettingsView__toggleText">
-                  {settings.select_ai_enabled ? t('settings.model.selectAi.engine.agent') : t('settings.model.selectAi.engine.direct')}
-                </span>
+            <section class="applicationSettingsView__field applicationSettingsView__field--wide applicationSettingsView__switchRow">
+              <span
+                class={`applicationSettingsView__toggleOption ${!settings.select_ai_enabled ? 'is-active' : ''}`}
+              >
+                {t('settings.model.selectAi.engine.direct')}
               </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.select_ai_enabled}
+                aria-label={t('settings.model.selectAi.enable')}
+                class={`applicationSettingsView__toggleSwitch ${settings.select_ai_enabled ? 'is-on' : ''}`}
+                onClick={toggleSelectAiEnabled}
+              >
+                <span class="applicationSettingsView__toggleSwitchTrack">
+                  <span class="applicationSettingsView__toggleSwitchThumb" />
+                </span>
+              </button>
+              <span
+                class={`applicationSettingsView__toggleOption ${settings.select_ai_enabled ? 'is-active' : ''}`}
+              >
+                {t('settings.model.selectAi.engine.agent')}
+              </span>
+            </section>
+
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.region')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                value={settings.select_ai_region}
+                onInput={updateField('select_ai_region')}
+                placeholder={DEFAULT_SELECT_AI_REGION}
+              />
+              <span class="applicationSettingsView__hint applicationSettingsView__hint--flush">{t('settings.model.selectAi.regionHint')}</span>
+            </label>
+
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.modelId')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                value={settings.select_ai_model_id}
+                onInput={updateField('select_ai_model_id')}
+                placeholder={DEFAULT_SELECT_AI_MODEL}
+              />
+              <span class="applicationSettingsView__hint applicationSettingsView__hint--flush">{t('settings.model.selectAi.modelHint')}</span>
+            </label>
+
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.embeddingModelId')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                value={settings.select_ai_embedding_model_id}
+                onInput={updateField('select_ai_embedding_model_id')}
+                placeholder={DEFAULT_EMBEDDING_MODEL}
+              />
+            </label>
+
+            <label class="applicationSettingsView__field">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.maxTokens')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                type="number"
+                min="256"
+                max="65536"
+                value={settings.select_ai_max_tokens}
+                onInput={updateField('select_ai_max_tokens')}
+              />
+            </label>
+
+            <label class="applicationSettingsView__field applicationSettingsView__field--wide">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.endpointId')}</span>
+              <input
+                class="ics-input applicationSettingsView__modelInput"
+                value={settings.select_ai_endpoint_id}
+                onInput={updateField('select_ai_endpoint_id')}
+                placeholder="ocid1.generativeaiendpoint.oc1..aaaa..."
+              />
+              <span class="applicationSettingsView__hint applicationSettingsView__hint--flush">{t('settings.model.selectAi.endpointHint')}</span>
             </label>
 
             <label class="applicationSettingsView__field">
@@ -365,10 +465,39 @@ export function OciGenAiModelSettings() {
                 value={settings.select_ai_oci_apiformat}
                 onChange={updateField('select_ai_oci_apiformat')}
               >
-                <option value="">{t('settings.model.selectAi.apiFormatAuto')}</option>
                 <option value="GENERIC">GENERIC</option>
                 <option value="COHERE">COHERE</option>
               </select>
+            </label>
+
+            <div class="applicationSettingsView__field" />
+
+            <label class="applicationSettingsView__field applicationSettingsView__toggleField">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.enforceObjectList')}</span>
+              <span class="applicationSettingsView__toggleRow">
+                <input
+                  type="checkbox"
+                  checked={settings.select_ai_enforce_object_list}
+                  onChange={updateField('select_ai_enforce_object_list')}
+                />
+                <span class="applicationSettingsView__toggleText">
+                  {settings.select_ai_enforce_object_list ? t('common.enabled') : t('common.disabled')}
+                </span>
+              </span>
+            </label>
+
+            <label class="applicationSettingsView__field applicationSettingsView__toggleField">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.useConstraints')}</span>
+              <span class="applicationSettingsView__toggleRow">
+                <input
+                  type="checkbox"
+                  checked={settings.select_ai_use_constraints}
+                  onChange={updateField('select_ai_use_constraints')}
+                />
+                <span class="applicationSettingsView__toggleText">
+                  {settings.select_ai_use_constraints ? t('common.enabled') : t('common.disabled')}
+                </span>
+              </span>
             </label>
 
             <label class="applicationSettingsView__field applicationSettingsView__toggleField">
@@ -384,87 +513,103 @@ export function OciGenAiModelSettings() {
                 </span>
               </span>
             </label>
+
+            <label class="applicationSettingsView__field applicationSettingsView__toggleField">
+              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.useAnnotations')}</span>
+              <span class="applicationSettingsView__toggleRow">
+                <input
+                  type="checkbox"
+                  checked={settings.select_ai_use_annotations}
+                  onChange={updateField('select_ai_use_annotations')}
+                />
+                <span class="applicationSettingsView__toggleText">
+                  {settings.select_ai_use_annotations ? t('common.enabled') : t('common.disabled')}
+                </span>
+              </span>
+            </label>
           </div>
 
-          <div class="applicationSettingsView__modelToolbar oj-sm-margin-2x-top">
-            <div class="applicationSettingsView__modelToolbarGroup">
-              <span class="applicationSettingsView__toolbarLabel"><Sparkles size={14} /> {t('settings.action.save')}</span>
-              <button
-                class="ics-ops-btn ics-ops-btn--primary"
-                onClick={() => { void handleSave(); }}
-                disabled={isActionLocked}
-              >
-                {isSaving ? t('settings.action.saving') : t('settings.action.save')}
-              </button>
-            </div>
-
-            <div class="applicationSettingsView__modelToolbarGroup">
-              <span class="applicationSettingsView__toolbarLabel"><Bot size={14} /> Model Test</span>
-              <div class="ics-action-bar">
+          <div class="applicationSettingsView__modelStack">
+            <div class="applicationSettingsView__modelToolbar">
+              <div class="applicationSettingsView__modelToolbarGroup">
+                <span class="applicationSettingsView__toolbarLabel"><Sparkles size={14} /> {t('settings.action.save')}</span>
                 <button
-                  class="ics-ops-btn ics-ops-btn--ghost"
-                  onClick={() => { void handleModelTest('llm'); }}
+                  class="ics-ops-btn ics-ops-btn--primary"
+                  onClick={() => { void handleSave(); }}
                   disabled={isActionLocked}
                 >
-                  {isLlmTesting ? t('settings.model.action.testingLlm') : t('settings.model.action.testLlm')}
-                </button>
-                <button
-                  class="ics-ops-btn ics-ops-btn--ghost"
-                  onClick={() => { void handleModelTest('vlm'); }}
-                  disabled={isActionLocked}
-                >
-                  {isVlmTesting ? t('settings.model.action.testingVlm') : t('settings.model.action.testVlm')}
-                </button>
-                <button
-                  class="ics-ops-btn ics-ops-btn--ghost"
-                  onClick={() => { void handleModelTest('embedding'); }}
-                  disabled={isActionLocked}
-                >
-                  {isEmbeddingTesting ? t('settings.model.action.testingEmbedding') : t('settings.model.action.testEmbedding')}
+                  {isSaving ? t('settings.action.saving') : t('settings.action.save')}
                 </button>
               </div>
+
+              <div class="applicationSettingsView__modelToolbarGroup">
+                <span class="applicationSettingsView__toolbarLabel"><Bot size={14} /> Model Test</span>
+                <div class="ics-action-bar">
+                  <button
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={() => { void handleModelTest('llm'); }}
+                    disabled={isActionLocked}
+                  >
+                    {isLlmTesting ? t('settings.model.action.testingLlm') : t('settings.model.action.testLlm')}
+                  </button>
+                  <button
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={() => { void handleModelTest('vlm'); }}
+                    disabled={isActionLocked}
+                  >
+                    {isVlmTesting ? t('settings.model.action.testingVlm') : t('settings.model.action.testVlm')}
+                  </button>
+                  <button
+                    class="ics-ops-btn ics-ops-btn--ghost"
+                    onClick={() => { void handleModelTest('embedding'); }}
+                    disabled={isActionLocked}
+                  >
+                    {isEmbeddingTesting ? t('settings.model.action.testingEmbedding') : t('settings.model.action.testEmbedding')}
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
 
-          <div class="applicationSettingsView__modelResultGrid oj-sm-margin-2x-top">
-            <label class="applicationSettingsView__field applicationSettingsView__resultPanel">
-              <span class="applicationSettingsView__fieldLabel applicationSettingsView__resultTitle">
-                <Bot size={14} /> {t('settings.model.testResult.llm')}
-              </span>
-              <textarea
-                class="ics-input applicationSettingsView__resultTextArea"
-                rows={4}
-                readOnly
-                value={llmResultText}
-                placeholder={t('settings.model.testResult.placeholder')}
-              />
-            </label>
+            <div class="applicationSettingsView__modelResultGrid">
+              <label class="applicationSettingsView__field applicationSettingsView__resultPanel">
+                <span class="applicationSettingsView__fieldLabel applicationSettingsView__resultTitle">
+                  <Bot size={14} /> {t('settings.model.testResult.llm')}
+                </span>
+                <textarea
+                  class="ics-input applicationSettingsView__resultTextArea"
+                  rows={4}
+                  readOnly
+                  value={llmResultText}
+                  placeholder={t('settings.model.testResult.placeholder')}
+                />
+              </label>
 
-            <label class="applicationSettingsView__field applicationSettingsView__resultPanel">
-              <span class="applicationSettingsView__fieldLabel applicationSettingsView__resultTitle">
-                <Network size={14} /> {t('settings.model.testResult.vlm')}
-              </span>
-              <textarea
-                class="ics-input applicationSettingsView__resultTextArea"
-                rows={4}
-                readOnly
-                value={vlmResultText}
-                placeholder={t('settings.model.testResult.placeholder')}
-              />
-            </label>
+              <label class="applicationSettingsView__field applicationSettingsView__resultPanel">
+                <span class="applicationSettingsView__fieldLabel applicationSettingsView__resultTitle">
+                  <Network size={14} /> {t('settings.model.testResult.vlm')}
+                </span>
+                <textarea
+                  class="ics-input applicationSettingsView__resultTextArea"
+                  rows={4}
+                  readOnly
+                  value={vlmResultText}
+                  placeholder={t('settings.model.testResult.placeholder')}
+                />
+              </label>
 
-            <label class="applicationSettingsView__field applicationSettingsView__resultPanel">
-              <span class="applicationSettingsView__fieldLabel applicationSettingsView__resultTitle">
-                <Network size={14} /> {t('settings.model.testResult.embedding')}
-              </span>
-              <textarea
-                class="ics-input applicationSettingsView__resultTextArea"
-                rows={4}
-                readOnly
-                value={embeddingResultText}
-                placeholder={t('settings.model.testResult.placeholder')}
-              />
-            </label>
+              <label class="applicationSettingsView__field applicationSettingsView__resultPanel">
+                <span class="applicationSettingsView__fieldLabel applicationSettingsView__resultTitle">
+                  <Network size={14} /> {t('settings.model.testResult.embedding')}
+                </span>
+                <textarea
+                  class="ics-input applicationSettingsView__resultTextArea"
+                  rows={4}
+                  readOnly
+                  value={embeddingResultText}
+                  placeholder={t('settings.model.testResult.placeholder')}
+                />
+              </label>
+            </div>
           </div>
         </div>
       </section>

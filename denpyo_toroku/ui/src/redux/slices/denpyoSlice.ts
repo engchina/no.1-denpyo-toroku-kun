@@ -73,6 +73,7 @@ const initialState: DenpyoSliceState = {
   tableBrowserTables: [],
   isTableBrowserTablesLoading: false,
   nlSearchResult: null,
+  activeNLSearchRequestId: null,
   isNLSearching: false,
   tableBrowseResult: null,
   isTableBrowsing: false,
@@ -315,6 +316,8 @@ const denpyoSlice = createSlice({
     },
     clearSearchResults(state) {
       state.nlSearchResult = null;
+      state.activeNLSearchRequestId = null;
+      state.isNLSearching = false;
       state.tableBrowseResult = null;
       state.searchError = null;
     },
@@ -440,7 +443,12 @@ const denpyoSlice = createSlice({
         const file = state.fileList.files.find(
           f => String(f.file_id) === String(action.meta.arg.fileId)
         );
-        if (file) file.status = 'ANALYZING';
+        if (file) {
+          file.status = 'ANALYZING';
+          file.status_detail = '';
+          file.is_analysis_stalled = false;
+          file.can_retry_analysis = false;
+        }
       })
       .addCase(analyzeFile.fulfilled, (state, action) => {
         state.isAnalyzing = false;
@@ -449,7 +457,12 @@ const denpyoSlice = createSlice({
         const file = state.fileList.files.find(
           f => String(f.file_id) === String(action.meta.arg.fileId)
         );
-        if (file) file.status = 'ANALYZING';
+        if (file) {
+          file.status = 'ANALYZING';
+          file.status_detail = '';
+          file.is_analysis_stalled = false;
+          file.can_retry_analysis = false;
+        }
       })
       .addCase(analyzeFile.rejected, (state, action) => {
         state.isAnalyzing = false;
@@ -459,7 +472,12 @@ const denpyoSlice = createSlice({
           const file = state.fileList.files.find(
             f => String(f.file_id) === String(state.analyzingFileId)
           );
-          if (file) file.status = 'ERROR';
+          if (file) {
+            file.status = 'ERROR';
+            file.status_detail = '';
+            file.is_analysis_stalled = false;
+            file.can_retry_analysis = true;
+          }
         }
         state.analyzingFileId = null;
       });
@@ -479,6 +497,9 @@ const denpyoSlice = createSlice({
         if (file) {
           file.status = action.payload.result.status;
           file.has_analysis_result = true;
+          file.status_detail = '';
+          file.is_analysis_stalled = false;
+          file.can_retry_analysis = false;
         }
       })
       .addCase(fetchAnalysisResult.rejected, (state, action) => {
@@ -499,7 +520,12 @@ const denpyoSlice = createSlice({
         const file = state.fileList.files.find(
           f => String(f.file_id) === String(action.payload.file_id)
         );
-        if (file) file.status = 'REGISTERED';
+        if (file) {
+          file.status = 'REGISTERED';
+          file.status_detail = '';
+          file.is_analysis_stalled = false;
+          file.can_retry_analysis = false;
+        }
       })
       .addCase(registerFile.rejected, (state, action) => {
         state.isRegistering = false;
@@ -575,7 +601,13 @@ const denpyoSlice = createSlice({
         const targetIds = new Set((action.meta.arg.fileIds || []).map(id => String(id)));
         state.slipsCategoryFiles = state.slipsCategoryFiles.map(file => (
           targetIds.has(String(file.file_id))
-            ? { ...file, status: 'ANALYZING' }
+            ? {
+              ...file,
+              status: 'ANALYZING',
+              status_detail: '',
+              is_analysis_stalled: false,
+              can_retry_analysis: false,
+            }
             : file
         ));
       })
@@ -596,7 +628,14 @@ const denpyoSlice = createSlice({
         const requestedFileId = String(action.meta.arg);
         state.slipsCategoryFiles = state.slipsCategoryFiles.map(file => (
           matchedIds.has(String(file.file_id)) || String(file.file_id) === requestedFileId
-            ? { ...file, status: 'ANALYZED', has_analysis_result: true }
+            ? {
+              ...file,
+              status: 'ANALYZED',
+              has_analysis_result: true,
+              status_detail: '',
+              is_analysis_stalled: false,
+              can_retry_analysis: false,
+            }
             : file
         ));
       })
@@ -647,20 +686,29 @@ const denpyoSlice = createSlice({
       });
 
     builder
-      .addCase(nlSearch.pending, (state) => {
+      .addCase(nlSearch.pending, (state, action) => {
         state.isNLSearching = true;
+        state.activeNLSearchRequestId = action.meta.requestId;
         state.nlSearchResult = null;
         state.searchError = null;
       })
       .addCase(nlSearch.fulfilled, (state, action) => {
+        if (state.activeNLSearchRequestId !== action.meta.requestId) {
+          return;
+        }
         state.isNLSearching = false;
+        state.activeNLSearchRequestId = null;
         state.nlSearchResult = action.payload;
         if (action.payload.error) {
           state.searchError = action.payload.error;
         }
       })
       .addCase(nlSearch.rejected, (state, action) => {
+        if (state.activeNLSearchRequestId !== action.meta.requestId) {
+          return;
+        }
         state.isNLSearching = false;
+        state.activeNLSearchRequestId = null;
         state.searchError = action.error.message || '自然言語検索に失敗しました';
       });
 

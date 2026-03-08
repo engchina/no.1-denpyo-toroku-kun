@@ -58,6 +58,12 @@ _MANAGEMENT_TABLES_DDL = [
         HEADER_TABLE_NAME VARCHAR2(128),
         LINE_TABLE_NAME VARCHAR2(128),
         DESCRIPTION VARCHAR2(1000),
+        SELECT_AI_PROFILE_NAME VARCHAR2(128),
+        SELECT_AI_TEAM_NAME VARCHAR2(128),
+        SELECT_AI_READY NUMBER(1) DEFAULT 0,
+        SELECT_AI_SYNCED_AT TIMESTAMP,
+        SELECT_AI_CONFIG_HASH VARCHAR2(64),
+        SELECT_AI_LAST_ERROR VARCHAR2(2000),
         IS_ACTIVE NUMBER(1) DEFAULT 1,
         CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -147,6 +153,7 @@ CREATE TABLE SLIPS_CATEGORY (
     ANALYSIS_RESULT BLOB,
     ANALYZED_AT TIMESTAMP,
     CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT UQ_SLIPS_CATEGORY_OBJECT UNIQUE (NAMESPACE, BUCKET_NAME, OBJECT_NAME)
 )
 """
@@ -155,6 +162,7 @@ _SLIPS_CATEGORY_ALTER_DDLS = [
     "ALTER TABLE SLIPS_CATEGORY ADD (STATUS VARCHAR2(20) DEFAULT 'UPLOADED')",
     "ALTER TABLE SLIPS_CATEGORY ADD (ANALYSIS_RESULT BLOB)",
     "ALTER TABLE SLIPS_CATEGORY ADD (ANALYZED_AT TIMESTAMP)",
+    "ALTER TABLE SLIPS_CATEGORY ADD (UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
 ]
 
 SLIPS_CATEGORY_INDEX_DDL = """
@@ -184,6 +192,25 @@ _SELECT_AI_TASK_INSTRUCTION = (
     "sql must be a single SELECT statement without markdown, comments, or trailing narration. "
     "explanation must be concise and written in Japanese."
 )
+_SELECT_AI_XAI_GROK_REGIONS = {
+    "US-ASHBURN-1",
+    "US-CHICAGO-1",
+    "US-PHOENIX-1",
+}
+_SELECT_AI_REGION_MODEL_FALLBACKS = {
+    "AP-OSAKA-1": "meta.llama-3.3-70b-instruct",
+    "EU-FRANKFURT-1": "meta.llama-3.3-70b-instruct",
+    "UK-LONDON-1": "meta.llama-3.3-70b-instruct",
+    "SA-SAOPAULO-1": "meta.llama-3.3-70b-instruct",
+}
+_CATEGORY_SELECT_AI_COLUMN_DEFINITIONS = [
+    ("SELECT_AI_PROFILE_NAME", "SELECT_AI_PROFILE_NAME VARCHAR2(128)"),
+    ("SELECT_AI_TEAM_NAME", "SELECT_AI_TEAM_NAME VARCHAR2(128)"),
+    ("SELECT_AI_READY", "SELECT_AI_READY NUMBER(1) DEFAULT 0"),
+    ("SELECT_AI_SYNCED_AT", "SELECT_AI_SYNCED_AT TIMESTAMP"),
+    ("SELECT_AI_CONFIG_HASH", "SELECT_AI_CONFIG_HASH VARCHAR2(64)"),
+    ("SELECT_AI_LAST_ERROR", "SELECT_AI_LAST_ERROR VARCHAR2(2000)"),
+]
 
 
 class DatabaseService:
@@ -203,6 +230,7 @@ class DatabaseService:
         self._pool = None
         self._management_tables_initialized = False
         self._slips_tables_initialized = False
+        self._user_ai_agent_teams_team_name_supported: Optional[bool] = None
 
     def _parse_connection_string(self) -> Dict[str, str]:
         """環境変数から接続文字列をパース"""
@@ -352,6 +380,11 @@ class DatabaseService:
                             ("ANALYSIS_RESULT", "ANALYSIS_RESULT BLOB"),
                             ("ANALYZED_AT", "ANALYZED_AT TIMESTAMP"),
                         ],
+                    )
+                    self._ensure_table_columns(
+                        cursor,
+                        "DENPYO_CATEGORIES",
+                        _CATEGORY_SELECT_AI_COLUMN_DEFINITIONS,
                     )
                     self._ensure_blob_column(cursor, "DENPYO_FILES", "ANALYSIS_RESULT")
                 conn.commit()
@@ -765,6 +798,33 @@ END;"""
             logger.error("SLIPS 登録エラー (kind=%s): %s", slip_kind, e, exc_info=True)
             return None
 
+    def delete_slip_record(self, slip_kind: str, slip_id: int) -> Dict[str, Any]:
+        """SLIPS_RAW / SLIPS_CATEGORY のレコードを削除"""
+        kind = (slip_kind or "raw").strip().lower()
+        if kind == "category":
+            table_name = "SLIPS_CATEGORY"
+        elif kind == "raw":
+            table_name = "SLIPS_RAW"
+        else:
+            return {"success": False, "message": f"不正な SLIP 種別です: {slip_kind}"}
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        f"DELETE FROM {table_name} WHERE ID = :1",
+                        [slip_id]
+                    )
+                    deleted = cursor.rowcount
+                conn.commit()
+
+            if deleted > 0:
+                return {"success": True, "message": f"{table_name} レコードを削除しました"}
+            return {"success": False, "message": "ファイルが見つかりません"}
+        except Exception as e:
+            logger.error("%s 削除エラー (id=%s): %s", table_name, slip_id, e, exc_info=True)
+            return {"success": False, "message": str(e)}
+
     def insert_extracted_data(
         self,
         header_table_name: str,
@@ -1011,19 +1071,25 @@ END;"""
 
     def get_categories(self) -> List[Dict[str, Any]]:
         """全カテゴリ一覧を登録件数付きで取得"""
+        if not self._ensure_management_tables():
+            return []
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
                         """SELECT c.ID, c.CATEGORY_NAME, c.CATEGORY_NAME_EN,
                                   c.HEADER_TABLE_NAME, c.LINE_TABLE_NAME,
-                                  c.DESCRIPTION, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT,
+                                  c.DESCRIPTION, c.SELECT_AI_PROFILE_NAME, c.SELECT_AI_TEAM_NAME,
+                                  c.SELECT_AI_READY, c.SELECT_AI_SYNCED_AT, c.SELECT_AI_CONFIG_HASH,
+                                  c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT,
                                   COUNT(r.ID) AS REGISTRATION_COUNT
                         FROM DENPYO_CATEGORIES c
                         LEFT JOIN DENPYO_REGISTRATIONS r ON c.ID = r.CATEGORY_ID
                         GROUP BY c.ID, c.CATEGORY_NAME, c.CATEGORY_NAME_EN,
                                  c.HEADER_TABLE_NAME, c.LINE_TABLE_NAME,
-                                 c.DESCRIPTION, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT
+                                 c.DESCRIPTION, c.SELECT_AI_PROFILE_NAME, c.SELECT_AI_TEAM_NAME,
+                                 c.SELECT_AI_READY, c.SELECT_AI_SYNCED_AT, c.SELECT_AI_CONFIG_HASH,
+                                 c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT
                         ORDER BY c.CREATED_AT DESC"""
                     )
                     categories = []
@@ -1035,10 +1101,16 @@ END;"""
                             "header_table_name": row[3] or "",
                             "line_table_name": row[4] or "",
                             "description": row[5] or "",
-                            "is_active": bool(row[6]),
-                            "created_at": str(row[7]) if row[7] else "",
-                            "updated_at": str(row[8]) if row[8] else "",
-                            "registration_count": row[9],
+                            "select_ai_profile_name": row[6] or "",
+                            "select_ai_team_name": row[7] or "",
+                            "select_ai_profile_ready": bool(row[8]),
+                            "select_ai_last_synced_at": str(row[9]) if row[9] else "",
+                            "select_ai_config_hash": row[10] or "",
+                            "select_ai_last_error": row[11] or "",
+                            "is_active": bool(row[12]),
+                            "created_at": str(row[13]) if row[13] else "",
+                            "updated_at": str(row[14]) if row[14] else "",
+                            "registration_count": row[15],
                         })
                     return categories
         except Exception as e:
@@ -1047,13 +1119,17 @@ END;"""
 
     def get_category_by_id(self, category_id: int) -> Optional[Dict[str, Any]]:
         """IDでカテゴリレコードを取得"""
+        if not self._ensure_management_tables():
+            return None
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
                         """SELECT ID, CATEGORY_NAME, CATEGORY_NAME_EN,
                                   HEADER_TABLE_NAME, LINE_TABLE_NAME,
-                                  DESCRIPTION, IS_ACTIVE, CREATED_AT, UPDATED_AT
+                                  DESCRIPTION, SELECT_AI_PROFILE_NAME, SELECT_AI_TEAM_NAME,
+                                  SELECT_AI_READY, SELECT_AI_SYNCED_AT, SELECT_AI_CONFIG_HASH,
+                                  SELECT_AI_LAST_ERROR, IS_ACTIVE, CREATED_AT, UPDATED_AT
                         FROM DENPYO_CATEGORIES WHERE ID = :1""",
                         [category_id]
                     )
@@ -1067,13 +1143,80 @@ END;"""
                         "header_table_name": row[3] or "",
                         "line_table_name": row[4] or "",
                         "description": row[5] or "",
-                        "is_active": bool(row[6]),
-                        "created_at": str(row[7]) if row[7] else "",
-                        "updated_at": str(row[8]) if row[8] else "",
+                        "select_ai_profile_name": row[6] or "",
+                        "select_ai_team_name": row[7] or "",
+                        "select_ai_profile_ready": bool(row[8]),
+                        "select_ai_last_synced_at": str(row[9]) if row[9] else "",
+                        "select_ai_config_hash": row[10] or "",
+                        "select_ai_last_error": row[11] or "",
+                        "is_active": bool(row[12]),
+                        "created_at": str(row[13]) if row[13] else "",
+                        "updated_at": str(row[14]) if row[14] else "",
                     }
         except Exception as e:
             logger.error("カテゴリ取得エラー (id=%s): %s", category_id, e, exc_info=True)
             return None
+
+    def _save_category_select_ai_profile_metadata_with_cursor(
+        self,
+        cursor,
+        *,
+        category_id: int,
+        profile_name: str,
+        team_name: str,
+        config_hash: str,
+        ready: bool,
+        error_message: str = "",
+    ) -> None:
+        cursor.execute(
+            """UPDATE DENPYO_CATEGORIES
+                  SET SELECT_AI_PROFILE_NAME = :1,
+                      SELECT_AI_TEAM_NAME = :2,
+                      SELECT_AI_READY = :3,
+                      SELECT_AI_SYNCED_AT = CURRENT_TIMESTAMP,
+                      SELECT_AI_CONFIG_HASH = :4,
+                      SELECT_AI_LAST_ERROR = :5,
+                      UPDATED_AT = CURRENT_TIMESTAMP
+                WHERE ID = :6""",
+            [
+                (profile_name or "").strip(),
+                (team_name or "").strip(),
+                1 if ready else 0,
+                (config_hash or "").strip(),
+                (error_message or "")[:2000],
+                category_id,
+            ],
+        )
+
+    def save_category_select_ai_profile_metadata(
+        self,
+        *,
+        category_id: int,
+        profile_name: str,
+        team_name: str,
+        config_hash: str,
+        ready: bool,
+        error_message: str = "",
+    ) -> bool:
+        if not self._ensure_management_tables():
+            return False
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    self._save_category_select_ai_profile_metadata_with_cursor(
+                        cursor,
+                        category_id=category_id,
+                        profile_name=profile_name,
+                        team_name=team_name,
+                        config_hash=config_hash,
+                        ready=ready,
+                        error_message=error_message,
+                    )
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error("カテゴリ Select AI profile メタデータ更新エラー (id=%s): %s", category_id, e, exc_info=True)
+            return False
 
     def get_category_table_schema(self, category_id: int) -> Optional[Dict[str, Any]]:
         """カテゴリに紐づくテーブル構造（HEADER/LINE）を取得"""
@@ -1321,7 +1464,9 @@ END;"""
                 with conn.cursor() as cursor:
                     cursor.execute(
                         f"""SELECT ID, OBJECT_NAME, BUCKET_NAME, NAMESPACE,
-                                   FILE_NAME, FILE_SIZE_BYTES, CONTENT_TYPE, STATUS, CREATED_AT
+                                   FILE_NAME, FILE_SIZE_BYTES, CONTENT_TYPE, STATUS, CREATED_AT,
+                                   CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT,
+                                   UPDATED_AT
                         FROM SLIPS_CATEGORY
                         WHERE ID IN ({placeholders})
                         ORDER BY CREATED_AT DESC""",
@@ -1340,6 +1485,8 @@ END;"""
                             "content_type": row[6] or "image/jpeg",
                             "status": row[7] or "UPLOADED",
                             "created_at": str(row[8]) if row[8] else "",
+                            "has_analysis_result": bool(row[9]),
+                            "updated_at": str(row[10]) if row[10] else "",
                         })
                     return result
         except Exception as e:
@@ -1387,7 +1534,7 @@ END;"""
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
-                        "UPDATE SLIPS_CATEGORY SET STATUS = :1 WHERE ID = :2",
+                        "UPDATE SLIPS_CATEGORY SET STATUS = :1, UPDATED_AT = CURRENT_TIMESTAMP WHERE ID = :2",
                         [status, file_id],
                     )
                 conn.commit()
@@ -1408,7 +1555,8 @@ END;"""
                         """UPDATE SLIPS_CATEGORY
                            SET ANALYSIS_RESULT = :1,
                                ANALYZED_AT = CURRENT_TIMESTAMP,
-                               STATUS = 'ANALYZED'
+                               STATUS = 'ANALYZED',
+                               UPDATED_AT = CURRENT_TIMESTAMP
                          WHERE ID = :2""",
                         [payload, file_id],
                     )
@@ -1773,6 +1921,18 @@ END;"""
         }
 
     @staticmethod
+    def _resolve_select_ai_model_name(model_name: str, region: str) -> str:
+        normalized_model = str(model_name or "").strip()
+        normalized_model_upper = normalized_model.upper()
+        normalized_region_upper = str(region or "").strip().upper()
+        if not normalized_model or not normalized_region_upper:
+            return normalized_model
+
+        if normalized_model_upper.startswith("XAI.GROK") and normalized_region_upper not in _SELECT_AI_XAI_GROK_REGIONS:
+            return _SELECT_AI_REGION_MODEL_FALLBACKS.get(normalized_region_upper, normalized_model)
+        return normalized_model
+
+    @staticmethod
     def _build_select_ai_profile_attributes(
         *,
         credential_name: str,
@@ -1780,7 +1940,13 @@ END;"""
         region: str,
         compartment_id: str,
         object_list: List[Dict[str, str]],
+        embedding_model_name: str = "",
+        endpoint_id: str = "",
+        max_tokens: int = 0,
+        enforce_object_list: bool = True,
+        use_annotations: bool = True,
         use_comments: bool,
+        use_constraints: bool = True,
         api_format: str = "",
     ) -> str:
         attributes: Dict[str, Any] = {
@@ -1790,8 +1956,17 @@ END;"""
             "region": region,
             "oci_compartment_id": compartment_id,
             "object_list": object_list,
+            "enforce_object_list": bool(enforce_object_list),
+            "annotations": bool(use_annotations),
             "comments": bool(use_comments),
+            "constraints": bool(use_constraints),
         }
+        if str(embedding_model_name or "").strip():
+            attributes["embedding_model"] = str(embedding_model_name).strip()
+        if str(endpoint_id or "").strip():
+            attributes["oci_endpoint_id"] = str(endpoint_id).strip()
+        if int(max_tokens or 0) > 0:
+            attributes["max_tokens"] = int(max_tokens)
         normalized_api_format = str(api_format or "").strip().upper()
         if normalized_api_format:
             attributes["oci_apiformat"] = normalized_api_format
@@ -1836,6 +2011,33 @@ END;"""
             ],
             "process": "sequential",
         }, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _build_select_ai_run_team_params(conversation_id: str) -> str:
+        return json.dumps({
+            "conversation_id": str(conversation_id or "").strip(),
+        }, ensure_ascii=False, separators=(",", ":"))
+
+    def _create_select_ai_conversation(self, cursor) -> str:
+        cursor.execute(
+            """
+            SELECT DBMS_CLOUD_AI.CREATE_CONVERSATION
+            FROM DUAL
+            """
+        )
+        row = cursor.fetchone()
+        conversation_id = self._coerce_db_text(row[0] if row else "").strip()
+        if not conversation_id:
+            raise ValueError("Select AI Agent 用 conversation_id を作成できませんでした")
+        return conversation_id
+
+    @staticmethod
+    def _is_select_ai_conversation_error(error_message_upper: str) -> bool:
+        return (
+            "CONVERSATION_ID" in error_message_upper
+            or "DBMS_CLOUD_AI_CONVERSATION_PROMPT$" in error_message_upper
+            or ("ORA-01400" in error_message_upper and "CONVERSATION" in error_message_upper)
+        )
 
     @staticmethod
     def _extract_json_payload(text: str) -> Dict[str, Any]:
@@ -2064,21 +2266,27 @@ END;"""
         attributes_json: str,
     ) -> None:
         skip_duplicate_create_error = False
-        try:
-            if self._object_exists(
-                cursor,
-                "SELECT COUNT(*) FROM USER_AI_AGENT_TEAMS WHERE UPPER(TEAM_NAME) = :team_name",
-                {"team_name": team_name.upper()},
-            ):
-                return
-        except Exception as e:
-            if not self._is_oracle_invalid_identifier_error(e, "TEAM_NAME"):
-                raise
+        if self._user_ai_agent_teams_team_name_supported is not False:
+            try:
+                if self._object_exists(
+                    cursor,
+                    "SELECT COUNT(*) FROM USER_AI_AGENT_TEAMS WHERE UPPER(TEAM_NAME) = :team_name",
+                    {"team_name": team_name.upper()},
+                ):
+                    self._user_ai_agent_teams_team_name_supported = True
+                    return
+                self._user_ai_agent_teams_team_name_supported = True
+            except Exception as e:
+                if not self._is_oracle_invalid_identifier_error(e, "TEAM_NAME"):
+                    raise
+                self._user_ai_agent_teams_team_name_supported = False
+                skip_duplicate_create_error = True
+                logger.info(
+                    "USER_AI_AGENT_TEAMS の TEAM_NAME 列は利用できないため CREATE_TEAM で存在確認を代替します: %s",
+                    e,
+                )
+        else:
             skip_duplicate_create_error = True
-            logger.warning(
-                "USER_AI_AGENT_TEAMS の TEAM_NAME 列を参照できないため CREATE_TEAM で存在確認を代替します: %s",
-                e,
-            )
 
         try:
             cursor.execute(
@@ -2112,20 +2320,41 @@ END;"""
         if not allowed_table_names:
             raise ValueError("検索可能なテーブルがありません")
 
-        llm_model_id = str(model_settings.get("llm_model_id") or "").strip()
+        llm_model_id = str(model_settings.get("select_ai_model_id") or model_settings.get("llm_model_id") or "").strip()
+        embedding_model_id = str(model_settings.get("select_ai_embedding_model_id") or "").strip()
+        endpoint_id = str(model_settings.get("select_ai_endpoint_id") or "").strip()
         compartment_id = str(model_settings.get("compartment_id") or "").strip()
-        region = str(oci_auth_config.get("region") or "").strip()
+        region = str(model_settings.get("select_ai_region") or oci_auth_config.get("region") or "").strip()
         if not all([llm_model_id, compartment_id, region]):
             raise ValueError("Select AI Agent の実行に必要な OCI / GenAI 設定が不足しています")
+        select_ai_model_id = self._resolve_select_ai_model_name(llm_model_id, region)
+        select_ai_max_tokens = int(model_settings.get("select_ai_max_tokens") or 0)
+        select_ai_enforce_object_list = bool(model_settings.get("select_ai_enforce_object_list", True))
+        select_ai_use_annotations = bool(model_settings.get("select_ai_use_annotations", True))
+        select_ai_use_comments = bool(model_settings.get("select_ai_use_comments", True))
+        select_ai_use_constraints = bool(model_settings.get("select_ai_use_constraints", True))
+        if select_ai_model_id != llm_model_id:
+            logger.info(
+                "Select AI Agent 用モデルをリージョン互換の設定へ切り替えます: requested=%s region=%s resolved=%s",
+                llm_model_id,
+                region,
+                select_ai_model_id,
+            )
 
         schema_name = self._get_current_schema_name(cursor)
         object_list = [{"owner": schema_name, "name": table_name} for table_name in sorted(allowed_table_names)]
         config_payload = {
-            "model": llm_model_id,
+            "model": select_ai_model_id,
+            "embedding_model": embedding_model_id,
             "compartment_id": compartment_id,
             "region": region,
+            "endpoint_id": endpoint_id,
+            "max_tokens": select_ai_max_tokens,
+            "enforce_object_list": select_ai_enforce_object_list,
             "api_format": str(model_settings.get("select_ai_oci_apiformat") or "").strip().upper(),
-            "use_comments": bool(model_settings.get("select_ai_use_comments", True)),
+            "use_annotations": select_ai_use_annotations,
+            "use_comments": select_ai_use_comments,
+            "use_constraints": select_ai_use_constraints,
             "objects": object_list,
             "oci_user": str(oci_auth_config.get("user") or "").strip(),
             "oci_tenancy": str(oci_auth_config.get("tenancy") or "").strip(),
@@ -2146,11 +2375,17 @@ END;"""
             profile_name=asset_names["profile_name"],
             attributes_json=self._build_select_ai_profile_attributes(
                 credential_name=asset_names["credential_name"],
-                model_name=llm_model_id,
+                model_name=select_ai_model_id,
                 region=region,
                 compartment_id=compartment_id,
                 object_list=object_list,
-                use_comments=bool(model_settings.get("select_ai_use_comments", True)),
+                embedding_model_name=embedding_model_id,
+                endpoint_id=endpoint_id,
+                max_tokens=select_ai_max_tokens,
+                enforce_object_list=select_ai_enforce_object_list,
+                use_annotations=select_ai_use_annotations,
+                use_comments=select_ai_use_comments,
+                use_constraints=select_ai_use_constraints,
                 api_format=str(model_settings.get("select_ai_oci_apiformat") or "").strip(),
             ),
         )
@@ -2174,15 +2409,91 @@ END;"""
             team_name=asset_names["team_name"],
             attributes_json=self._build_select_ai_team_attributes(asset_names["agent_name"], asset_names["task_name"]),
         )
-        return asset_names
+        return {
+            **asset_names,
+            "config_fingerprint": config_fingerprint,
+            "model_name": select_ai_model_id,
+            "region": region,
+        }
+
+    def create_select_ai_profile_for_category(
+        self,
+        *,
+        category_id: int,
+        oci_auth_config: Dict[str, str],
+        model_settings: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """カテゴリ単位で Select AI Agent profile / team を作成または再利用する。"""
+        if not self._ensure_management_tables():
+            return {"success": False, "message": "管理テーブルの初期化に失敗しました"}
+
+        category = self.get_category_by_id(category_id)
+        if not category:
+            return {"success": False, "message": "カテゴリが見つかりません"}
+
+        allowed_table_entries = [{
+            "category_id": category["id"],
+            "category_name": category["category_name"],
+            "header_table_name": category.get("header_table_name", ""),
+            "line_table_name": category.get("line_table_name", ""),
+        }]
+        allowed_table_names = self._build_allowed_table_set_from_entries(allowed_table_entries)
+        if not allowed_table_names:
+            return {"success": False, "message": "Select AI profile の作成に必要なテーブルがありません"}
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    asset_names = self._ensure_select_ai_agent_assets(
+                        cursor,
+                        allowed_table_names=allowed_table_names,
+                        oci_auth_config=oci_auth_config,
+                        model_settings=model_settings,
+                    )
+                    self._save_category_select_ai_profile_metadata_with_cursor(
+                        cursor,
+                        category_id=category_id,
+                        profile_name=asset_names["profile_name"],
+                        team_name=asset_names["team_name"],
+                        config_hash=asset_names.get("config_fingerprint", ""),
+                        ready=True,
+                        error_message="",
+                    )
+                conn.commit()
+
+            return {
+                "success": True,
+                "category_id": category_id,
+                "category_name": category.get("category_name", ""),
+                "profile_name": asset_names["profile_name"],
+                "team_name": asset_names["team_name"],
+                "model_name": asset_names.get("model_name", ""),
+                "region": asset_names.get("region", ""),
+                "config_hash": asset_names.get("config_fingerprint", ""),
+            }
+        except Exception as e:
+            logger.error("カテゴリ Select AI profile 作成エラー (id=%s): %s", category_id, e, exc_info=True)
+            self.save_category_select_ai_profile_metadata(
+                category_id=category_id,
+                profile_name=str(category.get("select_ai_profile_name") or ""),
+                team_name=str(category.get("select_ai_team_name") or ""),
+                config_hash=str(category.get("select_ai_config_hash") or ""),
+                ready=False,
+                error_message=str(e),
+            )
+            return {"success": False, "message": str(e)}
 
     def get_allowed_table_names(self) -> List[Dict[str, Any]]:
         """DENPYO_CATEGORIES から有効なユーザーテーブル名を取得"""
+        if not self._ensure_management_tables():
+            return []
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
-                        """SELECT ID, CATEGORY_NAME, HEADER_TABLE_NAME, LINE_TABLE_NAME
+                        """SELECT ID, CATEGORY_NAME, HEADER_TABLE_NAME, LINE_TABLE_NAME,
+                                  SELECT_AI_PROFILE_NAME, SELECT_AI_TEAM_NAME,
+                                  SELECT_AI_READY, SELECT_AI_SYNCED_AT, SELECT_AI_LAST_ERROR
                         FROM DENPYO_CATEGORIES WHERE IS_ACTIVE = 1
                         ORDER BY CATEGORY_NAME"""
                     )
@@ -2193,6 +2504,11 @@ END;"""
                             "category_name": row[1],
                             "header_table_name": row[2] or "",
                             "line_table_name": row[3] or "",
+                            "select_ai_profile_name": row[4] or "",
+                            "select_ai_team_name": row[5] or "",
+                            "select_ai_profile_ready": bool(row[6]),
+                            "select_ai_last_synced_at": str(row[7]) if row[7] else "",
+                            "select_ai_last_error": row[8] or "",
                         })
                     return tables
         except Exception as e:
@@ -2550,9 +2866,19 @@ END;"""
 
     @classmethod
     def _skip_relation_alias(cls, tokens: List[Dict[str, str]], index: int) -> int:
+        alias_stop_keywords = {
+            "WHERE", "GROUP", "ORDER", "HAVING", "CONNECT", "START",
+            "UNION", "MINUS", "INTERSECT", "EXCEPT", "FETCH", "OFFSET",
+            "FOR", "MODEL", "JOIN", "INNER", "LEFT", "RIGHT", "FULL",
+            "CROSS", "NATURAL", "OUTER", "ON", "USING",
+        }
         if index < len(tokens) and cls._token_upper(tokens[index]) == "AS":
             index += 1
-        if index < len(tokens) and cls._is_identifier_token(tokens[index]):
+        if (
+            index < len(tokens)
+            and cls._is_identifier_token(tokens[index])
+            and cls._token_upper(tokens[index]) not in alias_stop_keywords
+        ):
             index += 1
         return index
 
@@ -2712,6 +3038,15 @@ END;"""
         ]):
             return {"success": False, "message": "OCI 認証情報が不足しています"}
 
+        category_ids = {
+            int(entry.get("category_id"))
+            for entry in allowed_table_entries
+            if entry.get("category_id") not in (None, "")
+        }
+        target_category_id = next(iter(category_ids)) if len(category_ids) == 1 else None
+        asset_names: Dict[str, Any] = {}
+        conversation_id = ""
+
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -2721,19 +3056,32 @@ END;"""
                         oci_auth_config=oci_auth_config,
                         model_settings=model_settings,
                     )
+                    if target_category_id is not None:
+                        self._save_category_select_ai_profile_metadata_with_cursor(
+                            cursor,
+                            category_id=target_category_id,
+                            profile_name=asset_names["profile_name"],
+                            team_name=asset_names["team_name"],
+                            config_hash=asset_names.get("config_fingerprint", ""),
+                            ready=True,
+                            error_message="",
+                        )
                     conn.commit()
+                    conversation_id = self._create_select_ai_conversation(cursor)
 
                     cursor.execute(
                         """
                         SELECT DBMS_CLOUD_AI_AGENT.RUN_TEAM(
                             team_name => :team_name,
-                            user_prompt => :user_prompt
+                            user_prompt => :user_prompt,
+                            params => :params
                         )
                         FROM DUAL
                         """,
                         {
                             "team_name": asset_names["team_name"],
                             "user_prompt": query.strip(),
+                            "params": self._build_select_ai_run_team_params(conversation_id),
                         },
                     )
                     row = cursor.fetchone()
@@ -2770,6 +3118,10 @@ END;"""
                     "engine_meta": {
                         "profile_name": asset_names["profile_name"],
                         "team_name": asset_names["team_name"],
+                        "model_name": asset_names.get("model_name", ""),
+                        "region": asset_names.get("region", ""),
+                        "conversation_id": conversation_id,
+                        "config_hash": asset_names.get("config_fingerprint", ""),
                         "api_format": str(model_settings.get("select_ai_oci_apiformat") or "").strip().upper(),
                         "use_comments": bool(model_settings.get("select_ai_use_comments", True)),
                     },
@@ -2788,19 +3140,60 @@ END;"""
                 "engine_meta": {
                     "profile_name": asset_names["profile_name"],
                     "team_name": asset_names["team_name"],
+                    "model_name": asset_names.get("model_name", ""),
+                    "region": asset_names.get("region", ""),
+                    "conversation_id": conversation_id,
+                    "config_hash": asset_names.get("config_fingerprint", ""),
                     "api_format": str(model_settings.get("select_ai_oci_apiformat") or "").strip().upper(),
                     "use_comments": bool(model_settings.get("select_ai_use_comments", True)),
                 },
             }
         except Exception as e:
             error_message = str(e)
-            if "DBMS_CLOUD_AI" in error_message or "DBMS_CLOUD_AI_AGENT" in error_message or "ORA-01031" in error_message:
+            error_message_upper = error_message.upper()
+            should_fallback_to_direct_llm = False
+            if target_category_id is not None:
+                self.save_category_select_ai_profile_metadata(
+                    category_id=target_category_id,
+                    profile_name=str(asset_names.get("profile_name") or ""),
+                    team_name=str(asset_names.get("team_name") or ""),
+                    config_hash=str(asset_names.get("config_fingerprint") or ""),
+                    ready=bool(asset_names),
+                    error_message=error_message,
+                )
+            if "ORA-20404" in error_message_upper or "OBJECT NOT FOUND" in error_message_upper:
+                should_fallback_to_direct_llm = True
+                error_message = (
+                    "Select AI Agent の実行に失敗しました。現在のモデルまたは OCI Generative AI "
+                    "エンドポイント設定では Select AI Agent を実行できません: %s" % str(e)
+                )
+            elif self._is_select_ai_conversation_error(error_message_upper):
+                should_fallback_to_direct_llm = True
+                error_message = (
+                    "Select AI Agent の実行に失敗しました。Web / 接続プール経由の Select AI Agent 実行では "
+                    "conversation_id が必要です。RUN_TEAM(params) に conversation_id を指定してください: %s"
+                    % str(e)
+                )
+            elif (
+                "ORA-01031" in error_message_upper
+                or "INSUFFICIENT PRIVILEGES" in error_message_upper
+                or "PLS-00201" in error_message_upper
+                or "MUST BE DECLARED" in error_message_upper
+            ):
+                should_fallback_to_direct_llm = True
                 error_message = (
                     "Select AI Agent の実行に失敗しました。DBMS_CLOUD / DBMS_CLOUD_AI / "
                     "DBMS_CLOUD_AI_AGENT の利用権限を確認してください: %s" % str(e)
                 )
-            logger.error("Select AI Agent 自然言語検索エラー: %s", error_message, exc_info=True)
-            return {"success": False, "message": error_message}
+            if should_fallback_to_direct_llm:
+                logger.warning("Select AI Agent 自然言語検索は direct LLM にフォールバックします: %s", error_message)
+            else:
+                logger.error("Select AI Agent 自然言語検索エラー: %s", error_message, exc_info=True)
+            return {
+                "success": False,
+                "message": error_message,
+                "fallback_to_direct_llm": should_fallback_to_direct_llm,
+            }
 
     def get_table_data(self, table_name: str, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
         """テーブルデータをページング付きで取得"""
@@ -2986,7 +3379,8 @@ END;"""
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     query = """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT,
-                                      CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT
+                                      CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT,
+                                      UPDATED_AT
                                FROM DENPYO_FILES WHERE 1=1"""
                     params = []
 
@@ -3015,6 +3409,7 @@ END;"""
                             "uploaded_by": row[6] or "",
                             "uploaded_at": str(row[7]) if row[7] else "",
                             "has_analysis_result": bool(row[8]),
+                            "updated_at": str(row[9]) if row[9] else "",
                         })
                     return files
         except Exception as e:
@@ -3068,7 +3463,7 @@ END;"""
                         """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, OBJECT_STORAGE_PATH,
                                   CONTENT_TYPE, FILE_SIZE, STATUS, ANALYSIS_KIND, UPLOADED_BY, UPLOADED_AT,
                                   CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT,
-                                  ANALYZED_AT
+                                  ANALYZED_AT, UPDATED_AT
                         FROM DENPYO_FILES WHERE ID = :1""",
                         [file_id]
                     )
@@ -3088,6 +3483,7 @@ END;"""
                         "uploaded_at": str(row[9]) if row[9] else "",
                         "has_analysis_result": bool(row[10]),
                         "analyzed_at": str(row[11]) if row[11] else "",
+                        "updated_at": str(row[12]) if row[12] else "",
                     }
         except Exception as e:
             logger.error("ファイル取得エラー (id=%s): %s", file_id, e, exc_info=True)
@@ -3105,7 +3501,9 @@ END;"""
                 with conn.cursor() as cursor:
                     cursor.execute(
                         f"""SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, OBJECT_STORAGE_PATH,
-                                   CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT
+                                   CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT,
+                                   CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT,
+                                   UPDATED_AT
                         FROM DENPYO_FILES
                         WHERE ID IN ({placeholders})
                         ORDER BY UPLOADED_AT DESC""",
@@ -3123,6 +3521,8 @@ END;"""
                             "status": row[6],
                             "uploaded_by": row[7],
                             "uploaded_at": str(row[8]) if row[8] else "",
+                            "has_analysis_result": bool(row[9]),
+                            "updated_at": str(row[10]) if row[10] else "",
                         })
                     return result
         except Exception as e:

@@ -22,7 +22,7 @@ import Pagination from '../../components/Pagination';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
 import { clearLegacyFileListParams, getCurrentSearchParams, readScopedNumber, readScopedString, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
-import type { FileStatus } from '../../types/denpyoTypes';
+import type { DenpyoFile, FileStatus } from '../../types/denpyoTypes';
 import {
   RefreshCw,
   Trash2,
@@ -43,6 +43,7 @@ import {
   FileSearch
 } from 'lucide-react';
 import { StatusBadge } from '../../components/common/StatusBadge';
+import { DocumentPreviewWorkspace } from '../../components/DocumentPreviewWorkspace';
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '--';
@@ -76,7 +77,16 @@ type SortDirection = 'asc' | 'desc';
 const DEFAULT_FILE_LIST_SORT_KEY: SortKey = 'uploaded_at';
 const DEFAULT_FILE_LIST_SORT_DIRECTION: SortDirection = 'desc';
 
-function FileStatusBadge({ status }: { status: FileStatus }) {
+function FileStatusBadge({ file }: { file: DenpyoFile }) {
+  if (file.is_analysis_stalled) {
+    return (
+      <StatusBadge variant="error" icon={AlertTriangle}>
+        {t('fileList.status.stalled')}
+      </StatusBadge>
+    );
+  }
+
+  const status = file.status;
   const variantMap: Record<FileStatus, 'info' | 'warning' | 'success' | 'primary' | 'error'> = {
     UPLOADED: 'info',
     ANALYZING: 'warning',
@@ -110,9 +120,8 @@ function hasViewableResult(file: { status: FileStatus; has_analysis_result?: boo
   return Boolean(file.has_analysis_result) || file.status === 'ANALYZED' || file.status === 'REGISTERED';
 }
 
-function isImageFile(fileName: string | null | undefined): boolean {
-  if (!fileName) return false;
-  return /\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(fileName);
+function canAnalyzeFile(file: Pick<DenpyoFile, 'status' | 'can_retry_analysis'>): boolean {
+  return Boolean(file.can_retry_analysis) || ['UPLOADED', 'ERROR'].includes(file.status);
 }
 
 export function ListView() {
@@ -152,7 +161,7 @@ export function ListView() {
 
   useEffect(() => {
     if (!isQueryReady) return;
-    const hasAnalyzingFiles = files.some(file => file.status === 'ANALYZING');
+    const hasAnalyzingFiles = files.some(file => file.status === 'ANALYZING' && !file.is_analysis_stalled);
     if (!hasAnalyzingFiles) return;
     const timer = window.setInterval(() => {
       loadFiles();
@@ -440,6 +449,9 @@ export function ListView() {
       REGISTERED: 4
     };
     const factor = sortDirection === 'asc' ? 1 : -1;
+    const getStatusRank = (file: DenpyoFile): number => (
+      file.is_analysis_stalled ? 0.5 : statusRank[file.status]
+    );
     return [...files].sort((a, b) => {
       if (sortKey === 'file_name') {
         return factor * a.file_name.localeCompare(b.file_name, 'ja');
@@ -448,7 +460,7 @@ export function ListView() {
         return factor * ((a.file_size || 0) - (b.file_size || 0));
       }
       if (sortKey === 'status') {
-        return factor * (statusRank[a.status] - statusRank[b.status]);
+        return factor * (getStatusRank(a) - getStatusRank(b));
       }
       const aTime = new Date(a.uploaded_at || '').getTime() || 0;
       const bTime = new Date(b.uploaded_at || '').getTime() || 0;
@@ -462,7 +474,7 @@ export function ListView() {
   const isAllSelectedOnPage = selectableIds.length > 0 && selectableIds.every(id => selectedFileIds.includes(id));
   const uploadedCount = files.filter(file => file.status === 'UPLOADED').length;
   const analyzedCount = files.filter(file => file.status === 'ANALYZED' || file.status === 'REGISTERED').length;
-  const errorCount = files.filter(file => file.status === 'ERROR').length;
+  const errorCount = files.filter(file => file.status === 'ERROR' || file.is_analysis_stalled).length;
 
   const renderSortIcon = (key: SortKey) => {
     if (sortKey !== key) return <ArrowUpDown size={13} />;
@@ -591,7 +603,9 @@ export function ListView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedFiles.map(file => (
+                    {sortedFiles.map(file => {
+                      const displayName = file.original_file_name || file.file_name;
+                      return (
                       <tr key={file.file_id} class={selectedFileIds.includes(String(file.file_id)) ? 'ics-fileListView__row--selected' : ''}>
                         <td>
                           <input
@@ -602,16 +616,18 @@ export function ListView() {
                             aria-label={t('fileList.selectFile')}
                           />
                         </td>
-                        <td class="ics-table__cell--name ics-fileListView__fileNameCell">{file.file_name}</td>
+                        <td class="ics-table__cell--name ics-fileListView__fileNameCell">{file.original_file_name || file.file_name}</td>
                         <td>{t('upload.kind.raw')}</td>
                         <td>{formatFileSize(file.file_size)}</td>
-                        <td><FileStatusBadge status={file.status} /></td>
+                        <td>
+                          <FileStatusBadge file={file} />
+                        </td>
                         <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
                         <td class="ics-fileListView__actions">
                           <button
                             type="button"
                             class="ics-ops-btn ics-ops-btn--ghost"
-                            onClick={() => handlePreview(String(file.file_id), file.file_name)}
+                            onClick={() => handlePreview(String(file.file_id), displayName)}
                             title={t('fileList.previewFile')}
                           >
                             <Eye size={14} />
@@ -619,9 +635,9 @@ export function ListView() {
                           <button
                             type="button"
                             class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
-                            onClick={() => handleAnalyze(String(file.file_id), file.file_name)}
-                            disabled={isAnalyzing || !['UPLOADED', 'ERROR'].includes(file.status)}
-                            title={t('fileList.analyzeFile')}
+                            onClick={() => handleAnalyze(String(file.file_id), displayName)}
+                            disabled={isAnalyzing || !canAnalyzeFile(file)}
+                            title={file.is_analysis_stalled ? t('fileList.analyze.retry') : t('fileList.analyzeFile')}
                           >
                             {isAnalyzing && String(analyzingFileId) === String(file.file_id)
                               ? <Loader2 size={14} class="ics-spin" />
@@ -640,7 +656,7 @@ export function ListView() {
                           <button
                             type="button"
                             class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                            onClick={() => handleDelete(String(file.file_id), file.file_name)}
+                            onClick={() => handleDelete(String(file.file_id), displayName)}
                             disabled={isDeleting || file.status === 'REGISTERED'}
                             title={file.status === 'REGISTERED' ? t('fileList.cannotDeleteRegistered') : t('fileList.deleteFile')}
                           >
@@ -648,7 +664,8 @@ export function ListView() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -698,19 +715,10 @@ export function ListView() {
               </button>
             </div>
             <div class="ics-modal__body ics-fileListView__previewBody">
-              {isImageFile(previewTarget.fileName) ? (
-                <img
-                  src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=raw`}
-                  alt={previewTarget.fileName || t('fileList.previewFile')}
-                  class="ics-fileListView__previewImage"
-                />
-              ) : (
-                <iframe
-                  src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=raw`}
-                  title={previewTarget.fileName || t('fileList.previewFile')}
-                  class="ics-fileListView__previewFrame"
-                />
-              )}
+              <DocumentPreviewWorkspace
+                fileIds={[previewTarget.fileId]}
+                title={t('fileList.previewFile')}
+              />
             </div>
           </div>
         </div>

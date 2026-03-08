@@ -1117,7 +1117,10 @@ class AIService:
 
 
     def extract_text_from_images(self, image_filepaths: List[str]) -> Dict[str, Any]:
-        """伝票画像群からVLMを用いてテキストを抽出する"""
+        """伝票画像群からVLMを用いてテキストを抽出する
+
+        VLM は画像1枚ずつ実行し、結果だけを最後に結合して返す。
+        """
         client = self._get_client()
         if not client:
             return {"success": False, "message": "AI クライアントが初期化されていません"}
@@ -1131,53 +1134,71 @@ Output only the extracted text with no additional commentary, explanations, or m
             import base64
             import mimetypes
 
-            contents = []
-            for filepath in image_filepaths:
-                if not os.path.exists(filepath):
-                    continue
+            valid_filepaths = [filepath for filepath in image_filepaths if os.path.exists(filepath)]
+            if not valid_filepaths:
+                return {"success": False, "message": "有効な画像ファイルがありません"}
+
+            page_texts: List[Dict[str, Any]] = []
+            merged_texts: List[str] = []
+
+            for index, filepath in enumerate(valid_filepaths):
                 with open(filepath, "rb") as f:
                     image_data = f.read()
                 content_type = mimetypes.guess_type(filepath)[0] or "image/jpeg"
                 encoded = base64.b64encode(image_data).decode("ascii")
-                contents.append({
-                    "type": "IMAGE",
-                    "imageUrl": {
-                        "url": f"data:{content_type};base64,{encoded}"
+
+                chat_request = oci.generative_ai_inference.models.GenericChatRequest(
+                    api_format="GENERIC",
+                    messages=[
+                        oci.generative_ai_inference.models.UserMessage(
+                            content=[
+                                {
+                                    "type": "IMAGE",
+                                    "imageUrl": {
+                                        "url": f"data:{content_type};base64,{encoded}"
+                                    }
+                                },
+                                {"type": "TEXT", "text": prompt},
+                            ]
+                        )
+                    ],
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
+                    is_stream=False,
+                )
+
+                chat_detail = oci.generative_ai_inference.models.ChatDetails(
+                    compartment_id=self._compartment_id,
+                    serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
+                        model_id=self._vlm_model_id
+                    ),
+                    chat_request=chat_request,
+                )
+
+                response = self._retry_api_call(
+                    f"extract_text_from_images[{index + 1}]",
+                    client.chat,
+                    chat_detail,
+                )
+                extracted_text = self._get_text_from_chat_response(response.data.chat_response).strip()
+                if not extracted_text:
+                    return {
+                        "success": False,
+                        "message": f"VLMによるテキスト抽出結果が空でした (page={index + 1})",
                     }
+
+                page_texts.append({
+                    "page_index": index,
+                    "source_path": filepath,
+                    "text": extracted_text,
                 })
+                merged_texts.append(f"[PAGE {index + 1}]\n{extracted_text}")
 
-            if not contents:
-                return {"success": False, "message": "有効な画像ファイルがありません"}
-
-            contents.append({"type": "TEXT", "text": prompt})
-
-            chat_request = oci.generative_ai_inference.models.GenericChatRequest(
-                api_format="GENERIC",
-                messages=[
-                    oci.generative_ai_inference.models.UserMessage(
-                        content=contents
-                    )
-                ],
-                max_tokens=self._max_tokens,
-                temperature=self._temperature,
-                is_stream=False,
-            )
-
-            chat_detail = oci.generative_ai_inference.models.ChatDetails(
-                compartment_id=self._compartment_id,
-                serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                    model_id=self._vlm_model_id
-                ),
-                chat_request=chat_request,
-            )
-
-            response = self._retry_api_call("extract_text_from_images", client.chat, chat_detail)
-            extracted_text = self._get_text_from_chat_response(response.data.chat_response)
-            
-            if not extracted_text.strip():
-                return {"success": False, "message": "VLMによるテキスト抽出結果が空でした"}
-
-            return {"success": True, "extracted_text": extracted_text}
+            return {
+                "success": True,
+                "extracted_text": "\n\n".join(merged_texts).strip(),
+                "page_texts": page_texts,
+            }
 
         except Exception as e:
             logger.error("VLM テキスト抽出エラー: %s", e, exc_info=True)

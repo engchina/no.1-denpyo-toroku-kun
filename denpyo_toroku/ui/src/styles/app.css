@@ -2012,6 +2012,74 @@ html[dir="rtl"] .oracle-icon {
     min-height: 38px;
 }
 
+.applicationSettingsView--model .applicationSettingsView__switchRow {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-top: 4px;
+}
+
+.applicationSettingsView--model .applicationSettingsView__toggleOption {
+    color: var(--aai-neutral-mid-2);
+    font-size: 0.85rem;
+    font-weight: 400;
+    white-space: nowrap;
+}
+
+.applicationSettingsView--model .applicationSettingsView__toggleOption.is-active {
+    color: #1f3551;
+    font-weight: 500;
+}
+
+.applicationSettingsView--model .applicationSettingsView__toggleSwitch {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+}
+
+.applicationSettingsView--model .applicationSettingsView__toggleSwitchTrack {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    width: 52px;
+    height: 30px;
+    padding: 3px;
+    border-radius: 999px;
+    background: #cbd5e1;
+    transition: background-color 0.2s ease;
+}
+
+.applicationSettingsView--model .applicationSettingsView__toggleSwitch.is-on .applicationSettingsView__toggleSwitchTrack {
+    background: #2464b5;
+}
+
+.applicationSettingsView--model .applicationSettingsView__toggleSwitchThumb {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: #ffffff;
+    box-shadow: 0 2px 8px rgba(20, 36, 58, 0.18);
+    transform: translateX(0);
+    transition: transform 0.2s ease;
+}
+
+.applicationSettingsView--model .applicationSettingsView__toggleSwitch.is-on .applicationSettingsView__toggleSwitchThumb {
+    transform: translateX(22px);
+}
+
+.applicationSettingsView--model .applicationSettingsView__modelStack {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-top: 18px;
+}
+
 .applicationSettingsView--model .applicationSettingsView__modelToolbar {
     display: flex;
     align-items: flex-end;
@@ -2044,7 +2112,7 @@ html[dir="rtl"] .oracle-icon {
 .applicationSettingsView--model .applicationSettingsView__modelResultGrid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+    gap: 16px;
 }
 
 .applicationSettingsView--model .applicationSettingsView__resultPanel {
@@ -2092,6 +2160,11 @@ html[dir="rtl"] .oracle-icon {
 
     .applicationSettingsView--model .applicationSettingsView__modelToolbarGroup {
         width: 100%;
+    }
+
+    .applicationSettingsView--model .applicationSettingsView__switchCard {
+        flex-direction: column;
+        align-items: flex-start;
     }
 }
 
@@ -5691,6 +5764,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 @media (max-width: 640px) {
+
     .icsConfirmModal__actions,
     .ics-toast-confirm-modal__footer {
         flex-direction: column-reverse;
@@ -5953,8 +6027,19 @@ html[dir="rtl"] .oracle-icon {
     padding: 12px 14px;
 }
 
+.ics-registration-reviewLayout {
+    display: grid;
+    grid-template-columns: minmax(420px, 1.02fr) minmax(560px, 1.18fr);
+    gap: 24px;
+    align-items: stretch;
+}
+
 @media (max-width: 768px) {
     .ics-table-name-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .ics-registration-reviewLayout {
         grid-template-columns: 1fr;
     }
 }
@@ -6177,6 +6262,35 @@ html[dir="rtl"] .oracle-icon {
     color: #5f748d;
     font-size: 0.88rem;
     line-height: 1.5;
+}
+
+.ics-search-profileMeta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+    color: #5f748d;
+}
+
+.ics-search-profileMeta__label {
+    font-weight: 700;
+    color: #546a83;
+}
+
+.ics-search-profileMeta__value {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #eef5ff;
+    color: #0f4c90;
+    border: 1px solid #c9dcf2;
+    font-size: 0.78rem;
+}
+
+.ics-search-profileMeta__status {
+    color: #6b7c90;
 }
 
 /* Search query textarea */
@@ -7075,6 +7189,28 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     flex-direction: column;
     gap: 12px;
+}
+
+.ics-category-review-card__caption {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid #d8e4f0;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.ics-category-review-card__caption strong {
+    color: #1f3d63;
+    font-size: 0.84rem;
+    overflow-wrap: anywhere;
+}
+
+.ics-category-review-card__caption span {
+    color: #617993;
+    font-size: 0.76rem;
+    overflow-wrap: anywhere;
 }
 
 .ics-category-viewer {

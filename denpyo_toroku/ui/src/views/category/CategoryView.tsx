@@ -3,7 +3,7 @@
  *
  * 機能:
  *  A. SLIPS_CATEGORY ファイル一覧 + AI 分析フロー
- *     1. SLIPS_CATEGORY アップロードファイル一覧（最大5件選択）
+ *     1. SLIPS_CATEGORY アップロードファイル一覧
  *     2. AI 分析モード選択 (HEADER only / HEADER+LINE)
  *     3. テーブルデザイナー UI（カラム追加/削除/編集）
  *     4. テーブル作成 → 伝票分類登録
@@ -55,22 +55,24 @@ import {
   Save,
   Loader2,
   Sparkles,
+  KeyRound,
   Plus,
   Database,
   ChevronDown,
   ChevronUp,
   FileText,
   Table2,
-  ImageIcon,
   ArrowLeft,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
   CheckCircle2,
+  AlertTriangle,
   MinusCircle,
   FileSearch,
 } from 'lucide-react';
 import { StatusBadge } from '../../components/common/StatusBadge';
+import { DocumentPreviewWorkspace } from '../../components/DocumentPreviewWorkspace';
 
 // ─── Utils ───────────────────────────────────────────────────────────────────
 
@@ -136,16 +138,15 @@ type CategorySortKey =
   | 'header_table_name'
   | 'registration_count'
   | 'is_active'
+  | 'select_ai_profile_ready'
   | 'created_at';
 type PreviewTabType = 'header' | 'line';
-type ImageViewerMode = 'fit-width' | 'fit-page' | 'zoom';
 type TableDesignerColumn = TableColumnDef & {
   ui_key: string;
   is_system?: boolean;
 };
 
 let tableDesignerColumnSequence = 0;
-const CATEGORY_IMAGE_ZOOM_STEPS: readonly number[] = [100, 125, 150, 175, 200, 250, 300];
 
 function createTableDesignerColumnKey(): string {
   tableDesignerColumnSequence += 1;
@@ -275,7 +276,16 @@ function formatCellValue(value: any): string {
   return String(value);
 }
 
-function FileStatusBadge({ status }: { status: DenpyoFile['status'] }) {
+function FileStatusBadge({ file }: { file: DenpyoFile }) {
+  if (file.is_analysis_stalled) {
+    return (
+      <StatusBadge variant="error" icon={AlertTriangle}>
+        {t('fileList.status.stalled')}
+      </StatusBadge>
+    );
+  }
+
+  const status = file.status;
   const variantMap: Record<DenpyoFile['status'], 'info' | 'warning' | 'success' | 'primary' | 'error'> = {
     UPLOADED: 'info',
     ANALYZING: 'warning',
@@ -309,9 +319,8 @@ function hasViewableResult(file: Pick<DenpyoFile, 'status' | 'has_analysis_resul
   return Boolean(file.has_analysis_result) || file.status === 'ANALYZED' || file.status === 'REGISTERED';
 }
 
-function isImageFile(fileName: string | null | undefined): boolean {
-  if (!fileName) return false;
-  return /\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(fileName);
+function canAnalyzeFile(file: Pick<DenpyoFile, 'status' | 'can_retry_analysis'>): boolean {
+  return Boolean(file.can_retry_analysis) || ['UPLOADED', 'ERROR'].includes(file.status);
 }
 
 // ─── Category Edit Modal (existing CRUD) ─────────────────────────────────────
@@ -752,179 +761,6 @@ function TableDesigner({
   );
 }
 
-// ─── Persistent Image Review Workspace ──────────────────────────────────────
-
-function ImageReviewWorkspace({ fileIds }: { fileIds: number[] }) {
-  const [imgErrors, setImgErrors] = useState<Record<number, boolean>>({});
-  const [activeFileId, setActiveFileId] = useState<number | null>(fileIds[0] ?? null);
-  const [viewerMode, setViewerMode] = useState<ImageViewerMode>('fit-width');
-  const [zoomPercent, setZoomPercent] = useState<number>(CATEGORY_IMAGE_ZOOM_STEPS[1]);
-
-  useEffect(() => {
-    setImgErrors({});
-    setActiveFileId(fileIds[0] ?? null);
-    setViewerMode('fit-width');
-    setZoomPercent(CATEGORY_IMAGE_ZOOM_STEPS[1]);
-  }, [fileIds.join(',')]);
-
-  if (!fileIds.length) return null;
-
-  const currentFileId = activeFileId && fileIds.includes(activeFileId) ? activeFileId : fileIds[0];
-  const currentIndex = fileIds.indexOf(currentFileId);
-  const currentLabel = t('category.designer.imagePosition', { current: currentIndex + 1, total: fileIds.length });
-  const currentZoomLabel =
-    viewerMode === 'fit-width'
-      ? t('category.designer.zoomLabelFitWidth')
-      : viewerMode === 'fit-page'
-        ? t('category.designer.zoomLabelFitPage')
-        : `${zoomPercent}%`;
-  const zoomStepIndex = Math.max(0, CATEGORY_IMAGE_ZOOM_STEPS.indexOf(zoomPercent));
-  const canZoomOut = viewerMode === 'zoom' && zoomStepIndex > 0;
-  const canZoomIn =
-    viewerMode !== 'zoom' || zoomStepIndex < CATEGORY_IMAGE_ZOOM_STEPS.length - 1;
-  const currentImageHasError = Boolean(imgErrors[currentFileId]);
-  const currentImageClass =
-    viewerMode === 'fit-page'
-      ? 'ics-category-viewer__image ics-category-viewer__image--fit-page'
-      : viewerMode === 'zoom'
-        ? 'ics-category-viewer__image ics-category-viewer__image--zoom'
-        : 'ics-category-viewer__image ics-category-viewer__image--fit-width';
-
-  const handleZoom = (direction: 'in' | 'out') => {
-    if (direction === 'out' && viewerMode !== 'zoom') return;
-
-    const baseIndex = viewerMode === 'zoom'
-      ? Math.max(0, CATEGORY_IMAGE_ZOOM_STEPS.indexOf(zoomPercent))
-      : 0;
-    const nextIndex = direction === 'in'
-      ? Math.min(CATEGORY_IMAGE_ZOOM_STEPS.length - 1, baseIndex + 1)
-      : Math.max(0, baseIndex - 1);
-    const nextZoom = CATEGORY_IMAGE_ZOOM_STEPS[nextIndex] ?? CATEGORY_IMAGE_ZOOM_STEPS[0];
-
-    if (nextZoom <= CATEGORY_IMAGE_ZOOM_STEPS[0]) {
-      setViewerMode('fit-width');
-      setZoomPercent(CATEGORY_IMAGE_ZOOM_STEPS[0]);
-      return;
-    }
-
-    setViewerMode('zoom');
-    setZoomPercent(nextZoom);
-  };
-
-  return (
-    <div class="ics-category-review-panel">
-      <div class="ics-card ics-card--flat ics-category-review-card">
-        <div class="ics-card-header">
-          <div class="ics-category-review-card__heading">
-            <ImageIcon size={16} />
-            <span>{t('category.designer.reviewWorkspace')}</span>
-            <span class="ics-category-review-card__meta">{currentLabel}</span>
-          </div>
-          <div class="ics-category-review-toolbar">
-            <button
-              type="button"
-              class={`ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ${viewerMode === 'fit-width' ? 'is-active' : ''}`}
-              onClick={() => {
-                setViewerMode('fit-width');
-                setZoomPercent(CATEGORY_IMAGE_ZOOM_STEPS[0]);
-              }}
-              title={t('category.designer.fitWidth')}
-            >
-              <span>{t('category.designer.fitWidthShort')}</span>
-            </button>
-            <button
-              type="button"
-              class={`ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ${viewerMode === 'fit-page' ? 'is-active' : ''}`}
-              onClick={() => setViewerMode('fit-page')}
-              title={t('category.designer.fitPage')}
-            >
-              <span>{t('category.designer.fitPageShort')}</span>
-            </button>
-            <button
-              type="button"
-              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
-              onClick={() => handleZoom('out')}
-              disabled={!canZoomOut}
-              title={t('category.designer.zoomOut')}
-              aria-label={t('category.designer.zoomOut')}
-            >
-              <span>-</span>
-            </button>
-            <span class="ics-category-review-toolbar__status">{currentZoomLabel}</span>
-            <button
-              type="button"
-              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
-              onClick={() => handleZoom('in')}
-              disabled={!canZoomIn}
-              title={t('category.designer.zoomIn')}
-              aria-label={t('category.designer.zoomIn')}
-            >
-              <span>+</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="ics-card-body ics-category-review-card__body">
-          <p class="ics-form-hint">{t('category.designer.reviewHint')}</p>
-
-          <div class="ics-category-viewer">
-            <div class={`ics-category-viewer__stage ${viewerMode === 'fit-page' ? 'ics-category-viewer__stage--fit-page' : ''}`}>
-              {currentImageHasError ? (
-                <div class="ics-category-viewer__empty">
-                  <ImageIcon size={30} />
-                  <span>画像を読み込めませんでした</span>
-                </div>
-              ) : (
-                <img
-                  src={`/studio/api/v1/files/${currentFileId}/preview?upload_kind=category`}
-                  alt={`分析画像 ${currentIndex + 1}`}
-                  class={currentImageClass}
-                  style={viewerMode === 'zoom' ? { width: `${zoomPercent}%`, maxWidth: 'none' } : undefined}
-                  onError={() => setImgErrors(prev => ({ ...prev, [currentFileId]: true }))}
-                />
-              )}
-            </div>
-          </div>
-
-          {fileIds.length > 1 && (
-            <div class="ics-category-thumbnail-strip">
-              {fileIds.map((fileId, index) => {
-                const hasError = Boolean(imgErrors[fileId]);
-                const selected = fileId === currentFileId;
-                return (
-                  <button
-                    type="button"
-                    key={fileId}
-                    class={`ics-category-thumbnail ${selected ? 'is-active' : ''}`}
-                    onClick={() => setActiveFileId(fileId)}
-                    aria-pressed={selected}
-                    title={t('category.designer.selectImage', { index: index + 1 })}
-                  >
-                    <div class="ics-category-thumbnail__frame">
-                      {hasError ? (
-                        <div class="ics-category-thumbnail__error">
-                          <ImageIcon size={18} />
-                        </div>
-                      ) : (
-                        <img
-                          src={`/studio/api/v1/files/${fileId}/preview?upload_kind=category`}
-                          alt={`分析画像 ${index + 1}`}
-                          onError={() => setImgErrors(prev => ({ ...prev, [fileId]: true }))}
-                        />
-                      )}
-                    </div>
-                    <span class="ics-category-thumbnail__label">{t('category.designer.imageLabel', { index: index + 1 })}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Table Designer Inline Panel ─────────────────────────────────────────────
 
 function TableDesignerPanel({
@@ -1049,7 +885,11 @@ function TableDesignerPanel({
             {/* 左カラム: 画像レビュー */}
             {fileIds.length > 0 && (
               <div class="ics-category-image-panel">
-                <ImageReviewWorkspace fileIds={fileIds} />
+                <DocumentPreviewWorkspace
+                  fileIds={fileIds}
+                  title={t('category.designer.reviewWorkspace')}
+                  hint={t('category.designer.reviewHint')}
+                />
               </div>
             )}
 
@@ -1207,6 +1047,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const [editTarget, setEditTarget] = useState<DenpyoCategory | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [creatingProfileCategoryId, setCreatingProfileCategoryId] = useState<number | null>(null);
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [isBulkDeletingSlips, setIsBulkDeletingSlips] = useState(false);
   const [isBulkDeletingCategories, setIsBulkDeletingCategories] = useState(false);
@@ -1273,6 +1114,9 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       }
       if (categorySortKey === 'is_active') {
         return factor * (Number(a.is_active) - Number(b.is_active));
+      }
+      if (categorySortKey === 'select_ai_profile_ready') {
+        return factor * (Number(Boolean(a.select_ai_profile_ready)) - Number(Boolean(b.select_ai_profile_ready)));
       }
       const aTime = new Date(a.created_at || '').getTime() || 0;
       const bTime = new Date(b.created_at || '').getTime() || 0;
@@ -1356,7 +1200,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
 
   useEffect(() => {
     if (mode !== 'samples' || !isSamplesQueryReady) return;
-    const hasAnalyzingFiles = slipsCategoryFiles.some(file => file.status === 'ANALYZING');
+    const hasAnalyzingFiles = slipsCategoryFiles.some(file => file.status === 'ANALYZING' && !file.is_analysis_stalled);
     if (!hasAnalyzingFiles) return;
     const timer = window.setInterval(() => {
       loadSlipsFiles();
@@ -1433,7 +1277,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
-      } else if (next.size < 5) {
+      } else {
         next.add(id);
       }
       return next;
@@ -1441,7 +1285,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   }, []);
 
   const toggleSelectAll = useCallback(() => {
-    const targetIds = sortedSlipsCategoryFiles.slice(0, 5).map(f => String(f.file_id));
+    const targetIds = sortedSlipsCategoryFiles.map(f => String(f.file_id));
     const areAllTargetSelected =
       targetIds.length > 0 &&
       targetIds.every(id => selectedFileIds.has(id));
@@ -1855,9 +1699,43 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     [dispatch, editTarget]
   );
 
+  const handleCreateProfile = useCallback(
+    async (cat: DenpyoCategory) => {
+      setCreatingProfileCategoryId(cat.id);
+      try {
+        const result = await apiPost<{
+          success: boolean;
+          category_id: number;
+          category_name: string;
+          profile_name: string;
+          team_name: string;
+        }>(`/api/v1/categories/${cat.id}/select-ai-profile`, {});
+        await dispatch(fetchCategories()).unwrap();
+        dispatch(
+          addNotification({
+            type: 'success',
+            message: t('category.notify.profileCreated', { name: result.category_name || cat.category_name }),
+            autoClose: true,
+          })
+        );
+      } catch (e: any) {
+        dispatch(
+          addNotification({
+            type: 'error',
+            message: e?.message || t('category.notify.profileCreateFailed'),
+            autoClose: true,
+          })
+        );
+      } finally {
+        setCreatingProfileCategoryId(null);
+      }
+    },
+    [dispatch]
+  );
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
-  const selectableOnPageIds = sortedSlipsCategoryFiles.map(file => String(file.file_id)).slice(0, 5);
+  const selectableOnPageIds = sortedSlipsCategoryFiles.map(file => String(file.file_id));
   const allSelectedOnPage =
     selectableOnPageIds.length > 0 &&
     selectableOnPageIds.every(id => selectedFileIds.has(id));
@@ -2135,7 +2013,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                         {sortedSlipsCategoryFiles.map((file: DenpyoFile) => {
                           const fileId = String(file.file_id);
                           const selected = selectedFileIds.has(fileId);
-                          const disabledByMax = !selected && selectedFileIds.size >= 5;
+                          const displayName = file.original_file_name || file.file_name;
                           return (
                             <tr
                               key={fileId}
@@ -2143,36 +2021,37 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                               onClick={(e: Event) => {
                                 const target = e.target as HTMLElement;
                                 if (target.closest('input[type="checkbox"]')) return;
-                                if (!disabledByMax) toggleFileSelect(fileId);
+                                toggleFileSelect(fileId);
                               }}
-                              style={{ cursor: disabledByMax ? 'not-allowed' : 'pointer', opacity: disabledByMax ? 0.5 : 1 }}
+                              style={{ cursor: 'pointer' }}
                             >
                               <td class="ics-table__cell--center">
                                 <input
                                   type="checkbox"
                                   checked={selected}
-                                  onChange={() => !disabledByMax && toggleFileSelect(fileId)}
-                                  disabled={disabledByMax}
+                                  onChange={() => toggleFileSelect(fileId)}
                                   aria-label={t('fileList.selectFile')}
                                 />
                               </td>
                               <td class="ics-fileListView__fileNameCell">
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                   <FileText size={14} />
-                                  <span>{file.file_name}</span>
+                                  <span>{displayName}</span>
                                 </div>
                               </td>
                               <td>
                                 <code class="ics-code">{file.file_type || t('upload.kind.category')}</code>
                               </td>
                               <td>{formatFileSize(file.file_size)}</td>
-                              <td><FileStatusBadge status={file.status} /></td>
+                              <td>
+                                <FileStatusBadge file={file} />
+                              </td>
                               <td class="oj-text-color-secondary">{formatDateTime(file.uploaded_at)}</td>
                               <td class="ics-fileListView__actions" onClick={(e: Event) => e.stopPropagation()}>
                                 <button
                                   type="button"
                                   class="ics-ops-btn ics-ops-btn--ghost"
-                                  onClick={() => setPreviewTarget({ fileId, fileName: file.file_name })}
+                                  onClick={() => setPreviewTarget({ fileId, fileName: displayName })}
                                   title={t('fileList.previewFile')}
                                 >
                                   <Eye size={14} />
@@ -2181,8 +2060,8 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                   type="button"
                                   class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--accent"
                                   onClick={() => handleAnalyzeSingleFile(fileId)}
-                                  disabled={isCategoryAnalyzing || !['UPLOADED', 'ERROR'].includes(file.status)}
-                                  title={t('fileList.analyzeFile')}
+                                  disabled={isCategoryAnalyzing || !canAnalyzeFile(file)}
+                                  title={file.is_analysis_stalled ? t('fileList.analyze.retry') : t('fileList.analyzeFile')}
                                 >
                                   {isCategoryAnalyzing && selectedFileIds.has(fileId)
                                     ? <Loader2 size={14} class="ics-spin" />
@@ -2201,7 +2080,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                 <button
                                   type="button"
                                   class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
-                                  onClick={() => handleDeleteSlipFile(fileId, file.file_name)}
+                                  onClick={() => handleDeleteSlipFile(fileId, displayName)}
                                   disabled={isBulkDeletingSlips || isSlipsCategoryLoading}
                                   title={t('fileList.deleteFile')}
                                 >
@@ -2259,19 +2138,10 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                   </button>
                 </div>
                 <div class="ics-modal__body ics-fileListView__previewBody">
-                  {isImageFile(previewTarget.fileName) ? (
-                    <img
-                      src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=category`}
-                      alt={previewTarget.fileName || t('fileList.previewFile')}
-                      class="ics-fileListView__previewImage"
-                    />
-                  ) : (
-                    <iframe
-                      src={`/studio/api/v1/files/${previewTarget.fileId}/preview?upload_kind=category`}
-                      title={previewTarget.fileName || t('fileList.previewFile')}
-                      class="ics-fileListView__previewFrame"
-                    />
-                  )}
+                  <DocumentPreviewWorkspace
+                    fileIds={[previewTarget.fileId]}
+                    title={t('fileList.previewFile')}
+                  />
                 </div>
               </div>
             </div>
@@ -2375,6 +2245,12 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                             </button>
                           </th>
                           <th>
+                            <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('select_ai_profile_ready')}>
+                              {t('category.col.selectAiProfile')}
+                              {renderCategorySortIcon('select_ai_profile_ready')}
+                            </button>
+                          </th>
+                          <th>
                             <button type="button" class="ics-fileListView__sortBtn" onClick={() => handleCategorySort('created_at')}>
                               {t('category.col.createdAt')}
                               {renderCategorySortIcon('created_at')}
@@ -2426,8 +2302,34 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                   : t('category.status.inactive')}
                               </StatusBadge>
                             </td>
+                            <td class="ics-table__cell--center">
+                              <StatusBadge
+                                variant={cat.select_ai_profile_ready ? 'success' : 'inactive'}
+                                icon={cat.select_ai_profile_ready ? CheckCircle2 : MinusCircle}
+                              >
+                                {cat.select_ai_profile_ready
+                                  ? t('category.profile.ready')
+                                  : t('category.profile.notReady')}
+                              </StatusBadge>
+                            </td>
                             <td class="oj-text-color-secondary">{formatDateTime(cat.created_at)}</td>
                             <td class="ics-fileListView__actions" onClick={(e: Event) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                class="ics-ops-btn ics-ops-btn--ghost"
+                                onClick={() => handleCreateProfile(cat)}
+                                disabled={creatingProfileCategoryId === cat.id}
+                                title={
+                                  cat.select_ai_profile_ready
+                                    ? t('category.action.recreateProfile')
+                                    : t('category.action.createProfile')
+                                }
+                              >
+                                {creatingProfileCategoryId === cat.id
+                                  ? <Loader2 size={14} class="ics-spin" />
+                                  : <KeyRound size={14} />
+                                }
+                              </button>
                               <button
                                 type="button"
                                 class="ics-ops-btn ics-ops-btn--ghost"

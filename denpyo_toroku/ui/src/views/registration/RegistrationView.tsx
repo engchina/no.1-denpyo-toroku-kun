@@ -25,6 +25,7 @@ import {
   CheckCircle2,
   AlertCircle
 } from 'lucide-react';
+import { DocumentPreviewWorkspace } from '../../components/DocumentPreviewWorkspace';
 
 export function RegistrationView() {
   const dispatch = useAppDispatch();
@@ -344,101 +345,111 @@ export function RegistrationView() {
       </section>
 
       <section class="ics-ops-grid ics-ops-grid--one">
-        <div class="ics-card ics-ops-panel">
-          <div class="ics-card-header">
-            <span class="oj-typography-heading-xs">{t('registration.preview.title')}</span>
+        <div class="ics-registration-reviewLayout">
+          <div class="ics-category-image-panel">
+            <DocumentPreviewWorkspace
+              fileIds={[currentAnalysisResult.file_id]}
+              title={t('category.designer.reviewWorkspace')}
+              hint={t('category.designer.reviewHint')}
+            />
           </div>
-          <div class="ics-card-body">
-            <div class="ics-tabs" style={{ marginBottom: '8px' }}>
-              <button
-                type="button"
-                class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
-                onClick={() => setActiveTab('header')}
-              >
-                <FileText size={14} />
-                {t('registration.tabHeader')}
-              </button>
-              <button
-                type="button"
-                class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
-                onClick={() => setActiveTab('line')}
-              >
-                <Table2 size={14} />
-                {t('registration.tabLine')}
-              </button>
+
+          <div class="ics-card ics-ops-panel">
+            <div class="ics-card-header">
+              <span class="oj-typography-heading-xs">{t('registration.preview.title')}</span>
             </div>
-
-            {activeTab === 'header' && (
-              <div style={{ overflowX: 'auto' }}>
-                <table class="ics-table ics-table--compact">
-                  <thead>
-                    <tr>
-                      <th>{t('registration.col.no')}</th>
-                      <th>{t('registration.col.fieldName')}</th>
-                      <th>{t('registration.col.fieldNameEn')}</th>
-                      <th>{t('registration.col.dataType')}</th>
-                      <th>{t('registration.col.value')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {headerFields.map((field, i) => (
-                      <tr key={i}>
-                        <td>{i + 1}</td>
-                        <td>{field.field_name}</td>
-                        <td>{field.field_name_en || field.field_name}</td>
-                        <td>{field.data_type}</td>
-                        <td>
-                          <input
-                            type="text"
-                            class="ics-table-edit-input"
-                            value={String(field.value ?? '')}
-                            onInput={(e: Event) => updateHeaderFieldValue(i, (e.target as HTMLInputElement).value)}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <div class="ics-card-body">
+              <div class="ics-tabs" style={{ marginBottom: '8px' }}>
+                <button
+                  type="button"
+                  class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
+                  onClick={() => setActiveTab('header')}
+                >
+                  <FileText size={14} />
+                  {t('registration.tabHeader')}
+                </button>
+                <button
+                  type="button"
+                  class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
+                  onClick={() => setActiveTab('line')}
+                >
+                  <Table2 size={14} />
+                  {t('registration.tabLine')}
+                </button>
               </div>
-            )}
 
-            {activeTab === 'line' && (
-              <>
-                {lineRows.length > 0 ? (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table class="ics-table ics-table--compact">
-                      <thead>
-                        <tr>
-                          <th>{t('registration.col.rowNo')}</th>
-                          {lineColumns.map(col => (
-                            <th key={col}>{col}</th>
-                          ))}
+              {activeTab === 'header' && (
+                <div style={{ overflowX: 'auto' }}>
+                  <table class="ics-table ics-table--compact">
+                    <thead>
+                      <tr>
+                        <th>{t('registration.col.no')}</th>
+                        <th>{t('registration.col.fieldName')}</th>
+                        <th>{t('registration.col.fieldNameEn')}</th>
+                        <th>{t('registration.col.dataType')}</th>
+                        <th>{t('registration.col.value')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {headerFields.map((field, i) => (
+                        <tr key={i}>
+                          <td>{i + 1}</td>
+                          <td>{field.field_name}</td>
+                          <td>{field.field_name_en || field.field_name}</td>
+                          <td>{field.data_type}</td>
+                          <td>
+                            <input
+                              type="text"
+                              class="ics-table-edit-input"
+                              value={String(field.value ?? '')}
+                              onInput={(e: Event) => updateHeaderFieldValue(i, (e.target as HTMLInputElement).value)}
+                            />
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {lineRows.map((row, rowIndex) => (
-                          <tr key={rowIndex}>
-                            <td>{rowIndex + 1}</td>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {activeTab === 'line' && (
+                <>
+                  {lineRows.length > 0 ? (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table class="ics-table ics-table--compact">
+                        <thead>
+                          <tr>
+                            <th>{t('registration.col.rowNo')}</th>
                             {lineColumns.map(col => (
-                              <td key={`${rowIndex}-${col}`}>
-                                <input
-                                  type="text"
-                                  class="ics-table-edit-input"
-                                  value={String(row[col] ?? '')}
-                                  onInput={(e: Event) => updateLineCell(rowIndex, col, (e.target as HTMLInputElement).value)}
-                                />
-                              </td>
+                              <th key={col}>{col}</th>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div class="ics-empty-text">{t('registration.preview.noLineData')}</div>
-                )}
-              </>
-            )}
+                        </thead>
+                        <tbody>
+                          {lineRows.map((row, rowIndex) => (
+                            <tr key={rowIndex}>
+                              <td>{rowIndex + 1}</td>
+                              {lineColumns.map(col => (
+                                <td key={`${rowIndex}-${col}`}>
+                                  <input
+                                    type="text"
+                                    class="ics-table-edit-input"
+                                    value={String(row[col] ?? '')}
+                                    onInput={(e: Event) => updateLineCell(rowIndex, col, (e.target as HTMLInputElement).value)}
+                                  />
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div class="ics-empty-text">{t('registration.preview.noLineData')}</div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </section>

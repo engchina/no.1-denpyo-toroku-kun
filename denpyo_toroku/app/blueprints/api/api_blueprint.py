@@ -60,6 +60,11 @@ _OCI_KEY_PATTERN = re.compile(
     r"-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----"
 )
 _DEFAULT_OCI_REGION = "ap-osaka-1"
+_DEFAULT_SELECT_AI_REGION = "us-chicago-1"
+_DEFAULT_SELECT_AI_MODEL_ID = "xai.grok-code-fast-1"
+_DEFAULT_SELECT_AI_MAX_TOKENS = 32768
+_ANALYSIS_STALL_DETAIL = "ANALYSIS_TIMEOUT"
+_DEFAULT_ANALYSIS_STALL_MINUTES = 30
 
 
 def _to_bool(value, default: bool = True) -> bool:
@@ -85,6 +90,72 @@ def _normalize_text(value: Any, default: str = "") -> str:
     if value is None:
         return default
     return str(value).strip()
+
+
+def _analysis_stall_timeout_seconds() -> int:
+    raw_value = _normalize_text(os.environ.get("DENPYO_ANALYSIS_STALL_MINUTES"), "")
+    try:
+        minutes = int(raw_value) if raw_value else _DEFAULT_ANALYSIS_STALL_MINUTES
+    except ValueError:
+        minutes = _DEFAULT_ANALYSIS_STALL_MINUTES
+    return max(60, minutes * 60)
+
+
+def _parse_timestamp(value: Any) -> Optional[dt.datetime]:
+    if value is None:
+        return None
+    if isinstance(value, dt.datetime):
+        return value
+
+    text = _normalize_text(value, "")
+    if not text:
+        return None
+
+    normalized = text.replace("Z", "+00:00")
+    try:
+        return dt.datetime.fromisoformat(normalized)
+    except ValueError:
+        pass
+
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return dt.datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _is_analysis_stalled(record: Optional[Dict[str, Any]]) -> bool:
+    if not record:
+        return False
+    if _normalize_text(record.get("status"), "").upper() != "ANALYZING":
+        return False
+    if bool(record.get("has_analysis_result")):
+        return False
+
+    tracked_at = _parse_timestamp(
+        record.get("updated_at")
+        or record.get("created_at")
+        or record.get("uploaded_at")
+    )
+    if tracked_at is None:
+        return False
+
+    now = dt.datetime.now(tracked_at.tzinfo) if tracked_at.tzinfo else dt.datetime.now()
+    return (now - tracked_at).total_seconds() >= _analysis_stall_timeout_seconds()
+
+
+def _decorate_analysis_status(record: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not record:
+        return record
+
+    status = _normalize_text(record.get("status"), "").upper()
+    is_stalled = _is_analysis_stalled(record)
+    record["status"] = status or record.get("status", "")
+    record["status_detail"] = _ANALYSIS_STALL_DETAIL if is_stalled else ""
+    record["is_analysis_stalled"] = is_stalled
+    record["can_retry_analysis"] = is_stalled or status in ("UPLOADED", "ERROR")
+    return record
 
 
 def _expand_path(path_value: str, default: str) -> str:
@@ -158,12 +229,43 @@ def _runtime_oci_defaults() -> Dict[str, str]:
             os.environ.get("SELECT_AI_ENABLED", getattr(AppConfig, "SELECT_AI_ENABLED", True)),
             default=True,
         ),
+        "select_ai_region": _normalize_text(
+            os.environ.get("SELECT_AI_REGION"),
+            _normalize_text(getattr(AppConfig, "SELECT_AI_REGION", ""), _DEFAULT_SELECT_AI_REGION),
+        ) or _DEFAULT_SELECT_AI_REGION,
+        "select_ai_model_id": _normalize_text(
+            os.environ.get("SELECT_AI_MODEL_ID"),
+            _normalize_text(getattr(AppConfig, "SELECT_AI_MODEL_ID", ""), _DEFAULT_SELECT_AI_MODEL_ID),
+        ) or _DEFAULT_SELECT_AI_MODEL_ID,
+        "select_ai_embedding_model_id": _normalize_text(
+            os.environ.get("SELECT_AI_EMBEDDING_MODEL_ID"),
+            _normalize_text(getattr(AppConfig, "SELECT_AI_EMBEDDING_MODEL_ID", ""), _normalize_text(getattr(AppConfig, "EMBEDDING_MODEL_ID", ""), "cohere.embed-v4.0")),
+        ),
+        "select_ai_endpoint_id": _normalize_text(
+            os.environ.get("SELECT_AI_ENDPOINT_ID"),
+            _normalize_text(getattr(AppConfig, "SELECT_AI_ENDPOINT_ID", "")),
+        ),
+        "select_ai_max_tokens": int(
+            os.environ.get("SELECT_AI_MAX_TOKENS", getattr(AppConfig, "SELECT_AI_MAX_TOKENS", _DEFAULT_SELECT_AI_MAX_TOKENS))
+        ),
+        "select_ai_enforce_object_list": _to_bool(
+            os.environ.get("SELECT_AI_ENFORCE_OBJECT_LIST", getattr(AppConfig, "SELECT_AI_ENFORCE_OBJECT_LIST", True)),
+            default=True,
+        ),
         "select_ai_oci_apiformat": _normalize_text(
             os.environ.get("SELECT_AI_OCI_API_FORMAT"),
-            _normalize_text(getattr(AppConfig, "SELECT_AI_OCI_API_FORMAT", "")),
+            _normalize_text(getattr(AppConfig, "SELECT_AI_OCI_API_FORMAT", ""), "GENERIC"),
+        ) or "GENERIC",
+        "select_ai_use_annotations": _to_bool(
+            os.environ.get("SELECT_AI_USE_ANNOTATIONS", getattr(AppConfig, "SELECT_AI_USE_ANNOTATIONS", True)),
+            default=True,
         ),
         "select_ai_use_comments": _to_bool(
             os.environ.get("SELECT_AI_USE_COMMENTS", getattr(AppConfig, "SELECT_AI_USE_COMMENTS", True)),
+            default=True,
+        ),
+        "select_ai_use_constraints": _to_bool(
+            os.environ.get("SELECT_AI_USE_CONSTRAINTS", getattr(AppConfig, "SELECT_AI_USE_CONSTRAINTS", True)),
             default=True,
         ),
         "llm_max_tokens": int(
@@ -291,8 +393,16 @@ def _load_oci_settings_snapshot() -> Dict[str, Any]:
             "vlm_model_id": defaults["vlm_model_id"],
             "embedding_model_id": defaults["embedding_model_id"],
             "select_ai_enabled": defaults["select_ai_enabled"],
+            "select_ai_region": defaults["select_ai_region"],
+            "select_ai_model_id": defaults["select_ai_model_id"],
+            "select_ai_embedding_model_id": defaults["select_ai_embedding_model_id"],
+            "select_ai_endpoint_id": defaults["select_ai_endpoint_id"],
+            "select_ai_max_tokens": defaults["select_ai_max_tokens"],
+            "select_ai_enforce_object_list": defaults["select_ai_enforce_object_list"],
             "select_ai_oci_apiformat": defaults["select_ai_oci_apiformat"],
+            "select_ai_use_annotations": defaults["select_ai_use_annotations"],
             "select_ai_use_comments": defaults["select_ai_use_comments"],
+            "select_ai_use_constraints": defaults["select_ai_use_constraints"],
             "llm_max_tokens": defaults["llm_max_tokens"],
             "llm_temperature": defaults["llm_temperature"],
             "namespace": defaults["namespace"],
@@ -353,8 +463,16 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     os.environ["VLM_MODEL_ID"] = settings["vlm_model_id"]
     os.environ["EMBEDDING_MODEL_ID"] = settings["embedding_model_id"]
     os.environ["SELECT_AI_ENABLED"] = "true" if settings["select_ai_enabled"] else "false"
+    os.environ["SELECT_AI_REGION"] = settings["select_ai_region"]
+    os.environ["SELECT_AI_MODEL_ID"] = settings["select_ai_model_id"]
+    os.environ["SELECT_AI_EMBEDDING_MODEL_ID"] = settings["select_ai_embedding_model_id"]
+    os.environ["SELECT_AI_ENDPOINT_ID"] = settings["select_ai_endpoint_id"]
+    os.environ["SELECT_AI_MAX_TOKENS"] = str(settings["select_ai_max_tokens"])
+    os.environ["SELECT_AI_ENFORCE_OBJECT_LIST"] = "true" if settings["select_ai_enforce_object_list"] else "false"
     os.environ["SELECT_AI_OCI_API_FORMAT"] = settings["select_ai_oci_apiformat"]
+    os.environ["SELECT_AI_USE_ANNOTATIONS"] = "true" if settings["select_ai_use_annotations"] else "false"
     os.environ["SELECT_AI_USE_COMMENTS"] = "true" if settings["select_ai_use_comments"] else "false"
+    os.environ["SELECT_AI_USE_CONSTRAINTS"] = "true" if settings["select_ai_use_constraints"] else "false"
     os.environ["LLM_MAX_TOKENS"] = str(settings["llm_max_tokens"])
     os.environ["LLM_TEMPERATURE"] = str(settings["llm_temperature"])
     os.environ["OCI_NAMESPACE"] = settings["namespace"]
@@ -369,8 +487,16 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     AppConfig.VLM_MODEL_ID = settings["vlm_model_id"]
     AppConfig.EMBEDDING_MODEL_ID = settings["embedding_model_id"]
     AppConfig.SELECT_AI_ENABLED = bool(settings["select_ai_enabled"])
+    AppConfig.SELECT_AI_REGION = settings["select_ai_region"]
+    AppConfig.SELECT_AI_MODEL_ID = settings["select_ai_model_id"]
+    AppConfig.SELECT_AI_EMBEDDING_MODEL_ID = settings["select_ai_embedding_model_id"]
+    AppConfig.SELECT_AI_ENDPOINT_ID = settings["select_ai_endpoint_id"]
+    AppConfig.SELECT_AI_MAX_TOKENS = int(settings["select_ai_max_tokens"])
+    AppConfig.SELECT_AI_ENFORCE_OBJECT_LIST = bool(settings["select_ai_enforce_object_list"])
     AppConfig.SELECT_AI_OCI_API_FORMAT = settings["select_ai_oci_apiformat"]
+    AppConfig.SELECT_AI_USE_ANNOTATIONS = bool(settings["select_ai_use_annotations"])
     AppConfig.SELECT_AI_USE_COMMENTS = bool(settings["select_ai_use_comments"])
+    AppConfig.SELECT_AI_USE_CONSTRAINTS = bool(settings["select_ai_use_constraints"])
     AppConfig.LLM_MAX_TOKENS = int(settings["llm_max_tokens"])
     AppConfig.LLM_TEMPERATURE = float(settings["llm_temperature"])
     AppConfig.OCI_NAMESPACE = settings["namespace"]
@@ -487,13 +613,47 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             settings_payload.get("select_ai_enabled"),
             default=bool(current_settings.get("select_ai_enabled", True)),
         ),
+        "select_ai_region": _normalize_text(
+            settings_payload.get("select_ai_region"),
+            current_settings.get("select_ai_region", _DEFAULT_SELECT_AI_REGION),
+        )
+        or _DEFAULT_SELECT_AI_REGION,
+        "select_ai_model_id": _normalize_text(
+            settings_payload.get("select_ai_model_id"),
+            current_settings.get("select_ai_model_id", _DEFAULT_SELECT_AI_MODEL_ID),
+        )
+        or _DEFAULT_SELECT_AI_MODEL_ID,
+        "select_ai_embedding_model_id": _normalize_text(
+            settings_payload.get("select_ai_embedding_model_id"),
+            current_settings.get("select_ai_embedding_model_id", current_settings.get("embedding_model_id", "cohere.embed-v4.0")),
+        )
+        or current_settings.get("embedding_model_id", "cohere.embed-v4.0"),
+        "select_ai_endpoint_id": _normalize_text(
+            settings_payload.get("select_ai_endpoint_id"),
+            current_settings.get("select_ai_endpoint_id", ""),
+        ),
+        "select_ai_max_tokens": int(
+            settings_payload.get("select_ai_max_tokens", current_settings.get("select_ai_max_tokens", _DEFAULT_SELECT_AI_MAX_TOKENS))
+        ),
+        "select_ai_enforce_object_list": _to_bool(
+            settings_payload.get("select_ai_enforce_object_list"),
+            default=bool(current_settings.get("select_ai_enforce_object_list", True)),
+        ),
         "select_ai_oci_apiformat": _normalize_text(
             settings_payload.get("select_ai_oci_apiformat"),
-            current_settings.get("select_ai_oci_apiformat", ""),
-        ).upper(),
+            current_settings.get("select_ai_oci_apiformat", "GENERIC"),
+        ).upper() or "GENERIC",
+        "select_ai_use_annotations": _to_bool(
+            settings_payload.get("select_ai_use_annotations"),
+            default=bool(current_settings.get("select_ai_use_annotations", True)),
+        ),
         "select_ai_use_comments": _to_bool(
             settings_payload.get("select_ai_use_comments"),
             default=bool(current_settings.get("select_ai_use_comments", True)),
+        ),
+        "select_ai_use_constraints": _to_bool(
+            settings_payload.get("select_ai_use_constraints"),
+            default=bool(current_settings.get("select_ai_use_constraints", True)),
         ),
         "llm_max_tokens": int(
             settings_payload.get("llm_max_tokens", current_settings.get("llm_max_tokens", 65536))
@@ -523,8 +683,16 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             "VLM_MODEL_ID": settings_for_env["vlm_model_id"],
             "EMBEDDING_MODEL_ID": settings_for_env["embedding_model_id"],
             "SELECT_AI_ENABLED": "true" if settings_for_env["select_ai_enabled"] else "false",
+            "SELECT_AI_REGION": settings_for_env["select_ai_region"],
+            "SELECT_AI_MODEL_ID": settings_for_env["select_ai_model_id"],
+            "SELECT_AI_EMBEDDING_MODEL_ID": settings_for_env["select_ai_embedding_model_id"],
+            "SELECT_AI_ENDPOINT_ID": settings_for_env["select_ai_endpoint_id"],
+            "SELECT_AI_MAX_TOKENS": str(settings_for_env["select_ai_max_tokens"]),
+            "SELECT_AI_ENFORCE_OBJECT_LIST": "true" if settings_for_env["select_ai_enforce_object_list"] else "false",
             "SELECT_AI_OCI_API_FORMAT": settings_for_env["select_ai_oci_apiformat"],
+            "SELECT_AI_USE_ANNOTATIONS": "true" if settings_for_env["select_ai_use_annotations"] else "false",
             "SELECT_AI_USE_COMMENTS": "true" if settings_for_env["select_ai_use_comments"] else "false",
+            "SELECT_AI_USE_CONSTRAINTS": "true" if settings_for_env["select_ai_use_constraints"] else "false",
             "LLM_MAX_TOKENS": str(settings_for_env["llm_max_tokens"]),
             "LLM_TEMPERATURE": str(settings_for_env["llm_temperature"]),
             "OCI_NAMESPACE": settings_for_env["namespace"],
@@ -1566,6 +1734,255 @@ def database_init():
 # Files API (SCR-001, SCR-002)
 # ========================================
 
+def _resolve_upload_object_prefix(upload_kind: str) -> str:
+    normalized_kind = _normalize_text(upload_kind, "raw").lower()
+    if normalized_kind == "category":
+        object_prefix = _normalize_text(
+            os.environ.get("OCI_SLIPS_CATEGORY_PREFIX"),
+            _normalize_text(getattr(AppConfig, "OCI_SLIPS_CATEGORY_PREFIX", ""), "denpyo-category"),
+        ).strip("/")
+        return object_prefix or "denpyo-category"
+
+    object_prefix = _normalize_text(
+        os.environ.get("OCI_SLIPS_RAW_PREFIX"),
+        _normalize_text(getattr(AppConfig, "OCI_SLIPS_RAW_PREFIX", ""), "denpyo-raw"),
+    ).strip("/")
+    return object_prefix or "denpyo-raw"
+
+
+def _safe_cleanup_uploaded_artifact(
+    storage_service,
+    db_service,
+    upload_kind: str,
+    object_name: str = "",
+    file_id: Optional[int] = None,
+    slip_id: Optional[int] = None,
+) -> None:
+    """上传后续处理失败时，尽力回滚 Object Storage 与 DB 记录。"""
+    normalized_object_name = _normalize_text(object_name)
+
+    if normalized_object_name:
+        try:
+            rollback_result = storage_service.delete_file(normalized_object_name)
+            if rollback_result.get("success"):
+                logging.info("files/upload 回滚成功: object=%s", normalized_object_name)
+            else:
+                logging.warning(
+                    "files/upload 回滚失败: object=%s message=%s",
+                    normalized_object_name,
+                    rollback_result.get("message", ""),
+                )
+        except Exception as rollback_error:
+            logging.warning(
+                "files/upload 回滚异常: object=%s error=%s",
+                normalized_object_name,
+                rollback_error,
+                exc_info=True,
+            )
+
+    delete_file_record = getattr(db_service, "delete_file_record", None)
+    if file_id is not None and callable(delete_file_record):
+        try:
+            delete_result = delete_file_record(file_id)
+            if delete_result.get("success"):
+                logging.info("files/upload DB回滚成功: file_id=%s", file_id)
+            else:
+                logging.warning(
+                    "files/upload DB回滚失敗: file_id=%s message=%s",
+                    file_id,
+                    delete_result.get("message", ""),
+                )
+        except Exception as rollback_error:
+            logging.warning(
+                "files/upload DB回滚異常: file_id=%s error=%s",
+                file_id,
+                rollback_error,
+                exc_info=True,
+            )
+
+    needs_slip_cleanup = slip_id is not None and (file_id is None or _normalize_text(upload_kind).lower() == "category")
+    delete_slip_record = getattr(db_service, "delete_slip_record", None)
+    if needs_slip_cleanup and callable(delete_slip_record):
+        try:
+            delete_result = delete_slip_record(upload_kind, slip_id)
+            if delete_result.get("success"):
+                logging.info("files/upload SLIPS回滚成功: kind=%s slip_id=%s", upload_kind, slip_id)
+            else:
+                logging.warning(
+                    "files/upload SLIPS回滚失敗: kind=%s slip_id=%s message=%s",
+                    upload_kind,
+                    slip_id,
+                    delete_result.get("message", ""),
+                )
+        except Exception as rollback_error:
+            logging.warning(
+                "files/upload SLIPS回滚異常: kind=%s slip_id=%s error=%s",
+                upload_kind,
+                slip_id,
+                rollback_error,
+                exc_info=True,
+            )
+
+
+def _upload_single_document(
+    *,
+    storage_service,
+    db_service,
+    doc_processor,
+    filename: str,
+    file_data: bytes,
+    upload_kind: str,
+    user: str,
+    bucket_name: str,
+    namespace: str,
+    read_elapsed: float = 0.0,
+    content_type_override: str = "",
+    skip_validation: bool = False,
+) -> Dict[str, Any]:
+    object_name = ""
+    file_id = None
+    slip_id = None
+    file_started_at = time.time()
+    validate_elapsed = 0.0
+
+    try:
+        if not skip_validation:
+            validate_started_at = time.time()
+            validation = doc_processor.validate_file(filename, file_data)
+            validate_elapsed = time.time() - validate_started_at
+            if not validation.get("valid"):
+                logging.warning(
+                    "files/upload バリデーションNG: name=%s size=%d read=%.2fs validate=%.2fs",
+                    filename, len(file_data), read_elapsed, validate_elapsed
+                )
+                return {
+                    "success": False,
+                    "error": f"{filename}: {validation.get('message', '無効なファイル')}",
+                }
+
+        content_type = content_type_override or doc_processor.detect_content_type(filename, file_data)
+        object_name = doc_processor.generate_object_name(
+            filename,
+            prefix=_resolve_upload_object_prefix(upload_kind),
+        )
+
+        upload_started_at = time.time()
+        upload_result = storage_service.upload_file(
+            object_name=object_name,
+            file_data=file_data,
+            content_type=content_type,
+            original_filename=filename,
+        )
+        upload_elapsed = time.time() - upload_started_at
+        if not upload_result.get("success"):
+            logging.error(
+                "files/upload ObjectStorage NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs err=%s",
+                filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed,
+                upload_result.get("message", "")
+            )
+            return {
+                "success": False,
+                "error": f"{filename}: {upload_result.get('message', 'アップロード失敗')}",
+            }
+
+        slip_db_started_at = time.time()
+        slip_id = db_service.insert_slip_record(
+            slip_kind=upload_kind,
+            object_name=object_name,
+            bucket_name=bucket_name,
+            namespace=namespace,
+            file_name=filename,
+            file_size_bytes=len(file_data),
+            content_type=content_type,
+        )
+        slip_db_elapsed = time.time() - slip_db_started_at
+        if slip_id is None:
+            logging.error(
+                "files/upload SLIPS登録NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs slips_db=%.2fs",
+                filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed, slip_db_elapsed
+            )
+            _safe_cleanup_uploaded_artifact(
+                storage_service=storage_service,
+                db_service=db_service,
+                upload_kind=upload_kind,
+                object_name=object_name,
+            )
+            return {
+                "success": False,
+                "error": f"{filename}: SLIPS テーブル登録失敗",
+            }
+
+        db_started_at = time.time()
+        file_id = db_service.insert_file_record(
+            file_name=object_name,
+            original_file_name=filename,
+            object_storage_path=object_name,
+            content_type=content_type,
+            file_size=len(file_data),
+            uploaded_by=user,
+        )
+        db_elapsed = time.time() - db_started_at
+        if file_id is None:
+            logging.error(
+                "files/upload DB登録NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs db=%.2fs",
+                filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed, db_elapsed
+            )
+            _safe_cleanup_uploaded_artifact(
+                storage_service=storage_service,
+                db_service=db_service,
+                upload_kind=upload_kind,
+                object_name=object_name,
+                slip_id=slip_id,
+            )
+            return {
+                "success": False,
+                "error": f"{filename}: データベース登録失敗",
+            }
+
+        db_service.log_activity(
+            activity_type="UPLOAD",
+            description=f"ファイル '{filename}' をアップロードしました",
+            file_id=file_id,
+            user_name=user,
+        )
+
+        uploaded_file = {
+            "file_id": str(file_id),
+            "file_name": object_name,
+            "original_file_name": filename,
+            "file_type": content_type,
+            "file_size": len(file_data),
+            "uploaded_at": dt.datetime.now().isoformat(),
+            "status": "UPLOADED",
+        }
+        logging.info(
+            "files/upload 完了: name=%s object=%s file_id=%s slip_id=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs slips_db=%.2fs db=%.2fs total=%.2fs",
+            filename, object_name, file_id, slip_id, len(file_data),
+            read_elapsed, validate_elapsed, upload_elapsed, slip_db_elapsed, db_elapsed, time.time() - file_started_at
+        )
+        return {
+            "success": True,
+            "uploaded_file": uploaded_file,
+            "artifact": {
+                "object_name": object_name,
+                "file_id": file_id,
+                "slip_id": slip_id,
+            },
+        }
+    except Exception as e:
+        logging.error("ファイルアップロードエラー (%s): %s", filename, e, exc_info=True)
+        if object_name:
+            _safe_cleanup_uploaded_artifact(
+                storage_service=storage_service,
+                db_service=db_service,
+                upload_kind=upload_kind,
+                object_name=object_name,
+                file_id=file_id,
+                slip_id=slip_id,
+            )
+        return {"success": False, "error": f"{filename}: {str(e)}"}
+
+
 @api_blueprint.route("/api/v1/files/upload", methods=["POST"])
 def upload_files():
     """伝票ファイルのアップロード（multipart/form-data）"""
@@ -1609,127 +2026,26 @@ def upload_files():
 
     for f in files:
         filename = f.filename or ""
-        file_started_at = time.time()
-        try:
-            read_started_at = time.time()
-            file_data = f.read()
-            read_elapsed = time.time() - read_started_at
+        read_started_at = time.time()
+        file_data = f.read()
+        read_elapsed = time.time() - read_started_at
 
-            # バリデーション
-            validate_started_at = time.time()
-            validation = doc_processor.validate_file(filename, file_data)
-            validate_elapsed = time.time() - validate_started_at
-            if not validation.get("valid"):
-                errors.append(f"{filename}: {validation.get('message', '無効なファイル')}")
-                logging.warning(
-                    "files/upload バリデーションNG: name=%s size=%d read=%.2fs validate=%.2fs",
-                    filename, len(file_data), read_elapsed, validate_elapsed
-                )
-                continue
-
-            content_type = doc_processor.detect_content_type(filename, file_data)
-            if upload_kind == "category":
-                object_prefix = _normalize_text(
-                    os.environ.get("OCI_SLIPS_CATEGORY_PREFIX"),
-                    _normalize_text(getattr(AppConfig, "OCI_SLIPS_CATEGORY_PREFIX", ""), "denpyo-category"),
-                ).strip("/")
-            else:
-                object_prefix = _normalize_text(
-                    os.environ.get("OCI_SLIPS_RAW_PREFIX"),
-                    _normalize_text(getattr(AppConfig, "OCI_SLIPS_RAW_PREFIX", ""), "denpyo-raw"),
-                ).strip("/")
-            object_name = doc_processor.generate_object_name(
-                filename,
-                prefix=object_prefix or ("denpyo-category" if upload_kind == "category" else "denpyo-raw"),
-            )
-
-            # Object Storage アップロード
-            upload_started_at = time.time()
-            upload_result = storage_service.upload_file(
-                object_name=object_name,
-                file_data=file_data,
-                content_type=content_type,
-                original_filename=filename,
-            )
-            upload_elapsed = time.time() - upload_started_at
-            if not upload_result.get("success"):
-                errors.append(f"{filename}: {upload_result.get('message', 'アップロード失敗')}")
-                logging.error(
-                    "files/upload ObjectStorage NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs err=%s",
-                    filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed,
-                    upload_result.get("message", "")
-                )
-                continue
-
-            slip_db_started_at = time.time()
-            slip_id = db_service.insert_slip_record(
-                slip_kind=upload_kind,
-                object_name=object_name,
-                bucket_name=bucket_name,
-                namespace=namespace,
-                file_name=filename,
-                file_size_bytes=len(file_data),
-                content_type=content_type,
-            )
-            slip_db_elapsed = time.time() - slip_db_started_at
-
-            if slip_id is None:
-                errors.append(f"{filename}: SLIPS テーブル登録失敗")
-                logging.error(
-                    "files/upload SLIPS登録NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs slips_db=%.2fs",
-                    filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed, slip_db_elapsed
-                )
-                _safe_cleanup_uploaded_object(storage_service, object_name)
-                continue
-
-            # DB レコード作成
-            db_started_at = time.time()
-            file_id = db_service.insert_file_record(
-                file_name=object_name,
-                original_file_name=filename,
-                object_storage_path=object_name,
-                content_type=content_type,
-                file_size=len(file_data),
-                uploaded_by=user,
-            )
-            db_elapsed = time.time() - db_started_at
-
-            if file_id is None:
-                errors.append(f"{filename}: データベース登録失敗")
-                logging.error(
-                    "files/upload DB登録NG: name=%s object=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs db=%.2fs",
-                    filename, object_name, len(file_data), read_elapsed, validate_elapsed, upload_elapsed, db_elapsed
-                )
-                _safe_cleanup_uploaded_object(storage_service, object_name)
-                continue
-
-            # アクティビティログ
-            db_service.log_activity(
-                activity_type="UPLOAD",
-                description=f"ファイル '{filename}' をアップロードしました",
-                file_id=file_id,
-                user_name=user,
-            )
-
-            uploaded_files.append({
-                "file_id": str(file_id),
-                "file_name": object_name,
-                "original_file_name": filename,
-                "file_type": content_type,
-                "file_size": len(file_data),
-                "uploaded_at": dt.datetime.now().isoformat(),
-                "status": "UPLOADED",
-            })
-            logging.info(
-                "files/upload 完了: name=%s object=%s file_id=%s slip_id=%s size=%d read=%.2fs validate=%.2fs upload=%.2fs slips_db=%.2fs db=%.2fs total=%.2fs",
-                filename, object_name, file_id, slip_id, len(file_data),
-                read_elapsed, validate_elapsed, upload_elapsed, slip_db_elapsed, db_elapsed, time.time() - file_started_at
-            )
-        except Exception as e:
-            logging.error("ファイルアップロードエラー (%s): %s", filename, e, exc_info=True)
-            if 'object_name' in locals():
-                _safe_cleanup_uploaded_object(storage_service, object_name)
-            errors.append(f"{filename}: {str(e)}")
+        upload_result = _upload_single_document(
+            storage_service=storage_service,
+            db_service=db_service,
+            doc_processor=doc_processor,
+            filename=filename,
+            file_data=file_data,
+            upload_kind=upload_kind,
+            user=user,
+            bucket_name=bucket_name,
+            namespace=namespace,
+            read_elapsed=read_elapsed,
+        )
+        if upload_result.get("success"):
+            uploaded_files.append(upload_result["uploaded_file"])
+        else:
+            errors.append(upload_result.get("error", f"{filename}: アップロードに失敗しました"))
 
     success = len(uploaded_files) > 0
     g.response.set_data({
@@ -1742,30 +2058,6 @@ def upload_files():
         len(uploaded_files), len(errors), time.time() - batch_started_at
     )
     return jsonify(g.response.get_result())
-
-
-def _safe_cleanup_uploaded_object(storage_service, object_name: str) -> None:
-    """上传流程中发生后续失败时，尽力回滚已上传的 Object Storage 文件。"""
-    normalized_object_name = _normalize_text(object_name)
-    if not normalized_object_name:
-        return
-    try:
-        rollback_result = storage_service.delete_file(normalized_object_name)
-        if rollback_result.get("success"):
-            logging.info("files/upload 回滚成功: object=%s", normalized_object_name)
-        else:
-            logging.warning(
-                "files/upload 回滚失败: object=%s message=%s",
-                normalized_object_name,
-                rollback_result.get("message", ""),
-            )
-    except Exception as rollback_error:
-        logging.warning(
-            "files/upload 回滚异常: object=%s error=%s",
-            normalized_object_name,
-            rollback_error,
-            exc_info=True,
-        )
 
 
 @api_blueprint.route("/api/v1/files", methods=["GET"])
@@ -1787,6 +2079,7 @@ def list_files():
     try:
         db_service = DatabaseService()
         files = db_service.get_files(status=status, limit=page_size, offset=offset, upload_kind=upload_kind or None)
+        files = [_decorate_analysis_status(file_record) for file_record in files]
         total = db_service.get_files_count(status=status, upload_kind=upload_kind or None)
         total_pages = max(1, (total + page_size - 1) // page_size)
 
@@ -1821,6 +2114,7 @@ def get_file_detail(file_id: int):
         if not file_record:
             g.response.add_error_message("ファイルが見つかりません")
             return jsonify(g.response.get_result()), 404
+        _decorate_analysis_status(file_record)
 
         g.response.set_data({
             "file_id": str(file_record.get("id")),
@@ -1833,8 +2127,12 @@ def get_file_detail(file_id: int):
             "analysis_kind": file_record.get("analysis_kind", ""),
             "has_analysis_result": bool(file_record.get("has_analysis_result")),
             "analyzed_at": file_record.get("analyzed_at", ""),
+            "updated_at": file_record.get("updated_at", ""),
             "uploaded_by": file_record.get("uploaded_by", ""),
             "uploaded_at": file_record.get("uploaded_at", ""),
+            "status_detail": file_record.get("status_detail", ""),
+            "is_analysis_stalled": bool(file_record.get("is_analysis_stalled")),
+            "can_retry_analysis": bool(file_record.get("can_retry_analysis")),
         })
         return jsonify(g.response.get_result())
     except Exception as e:
@@ -1850,8 +2148,12 @@ def get_file_analysis_result(file_id: int):
         db_service = DatabaseService()
         file_record = db_service.get_file_by_id(file_id)
         if file_record:
+            _decorate_analysis_status(file_record)
             analysis_result = db_service.get_analysis_result(file_id)
             if not analysis_result:
+                if file_record.get("is_analysis_stalled"):
+                    g.response.add_error_message("AI分析が長時間完了していません。再分析してください")
+                    return jsonify(g.response.get_result()), 409
                 if file_record.get("status") == "ANALYZING":
                     g.response.add_error_message("AI分析はまだ完了していません")
                     return jsonify(g.response.get_result()), 409
@@ -1867,8 +2169,12 @@ def get_file_analysis_result(file_id: int):
             return jsonify(g.response.get_result()), 404
 
         slips_category_record = slips_category_records[0]
+        _decorate_analysis_status(slips_category_record)
         analysis_result = db_service.get_slips_category_analysis_result(file_id)
         if not analysis_result:
+            if slips_category_record.get("is_analysis_stalled"):
+                g.response.add_error_message("AI分析が長時間完了していません。再分析してください")
+                return jsonify(g.response.get_result()), 409
             if slips_category_record.get("status") == "ANALYZING":
                 g.response.add_error_message("AI分析はまだ完了していません")
                 return jsonify(g.response.get_result()), 409
@@ -1918,6 +2224,96 @@ def preview_file(file_id: int):
     except Exception as e:
         logging.error("ファイルプレビュー取得エラー (id=%s): %s", file_id, e, exc_info=True)
         g.response.add_error_message(f"ファイルプレビューの取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+def _load_preview_pages(file_id: int) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], Optional[str], int]:
+    """伝票ファイルをページ画像列として読み込む"""
+    from denpyo_toroku.app.services.database_service import DatabaseService
+    from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
+    from denpyo_toroku.app.services.document_processor import DocumentProcessor
+
+    db_service = DatabaseService()
+    file_record = db_service.get_file_by_id(file_id)
+    if not file_record:
+        return None, [], "ファイルが見つかりません", 404
+
+    storage_path = file_record.get("object_storage_path", "")
+    if not storage_path:
+        return file_record, [], "ファイルの保存先情報がありません", 400
+
+    storage_service = OCIStorageService()
+    content = storage_service.download_file(storage_path)
+    if content is None:
+        return file_record, [], "ファイルプレビューの取得に失敗しました", 500
+
+    doc_processor = DocumentProcessor(max_size_mb=AppConfig.UPLOAD_MAX_SIZE_MB)
+    pages = doc_processor.prepare_document_pages(content, file_record.get("original_file_name", ""))
+    if not pages:
+        return file_record, [], "ページ画像を生成できませんでした", 500
+
+    return file_record, pages, None, 200
+
+
+@api_blueprint.route("/api/v1/files/<int:file_id>/preview-pages", methods=["GET"])
+def preview_file_pages(file_id: int):
+    """伝票ファイルをページ画像一覧として返す"""
+    try:
+        file_record, pages, error_message, status_code = _load_preview_pages(file_id)
+        if error_message:
+            g.response.add_error_message(error_message)
+            return jsonify(g.response.get_result()), status_code
+
+        preview_name = file_record.get("original_file_name") or file_record.get("file_name") or f"file_{file_id}"
+        g.response.set_data({
+            "file_id": str(file_id),
+            "file_name": preview_name,
+            "page_count": len(pages),
+            "pages": [
+                {
+                    "page_index": page.get("page_index", index),
+                    "page_label": page.get("page_label") or f"ページ {index + 1}",
+                    "source_name": page.get("source_name") or preview_name,
+                    "content_type": page.get("content_type", "image/jpeg"),
+                }
+                for index, page in enumerate(pages)
+            ],
+        })
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("ファイルプレビュー一覧取得エラー (id=%s): %s", file_id, e, exc_info=True)
+        g.response.add_error_message(f"ファイルプレビュー一覧の取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/files/<int:file_id>/preview-pages/<int:page_index>", methods=["GET"])
+def preview_file_page_image(file_id: int, page_index: int):
+    """伝票ファイルの指定ページ画像を返す"""
+    try:
+        file_record, pages, error_message, status_code = _load_preview_pages(file_id)
+        if error_message:
+            g.response.add_error_message(error_message)
+            return jsonify(g.response.get_result()), status_code
+
+        if page_index < 0 or page_index >= len(pages):
+            g.response.add_error_message("指定されたページが見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        page = pages[page_index]
+        content = page.get("image_data", b"")
+        content_type = page.get("content_type", "image/jpeg")
+        preview_name = file_record.get("original_file_name") or f"file_{file_id}"
+        preview_stem = Path(preview_name).stem or f"file_{file_id}"
+        preview_ext = ".jpg" if content_type in ("image/jpeg", "image/jpg") else ".png"
+        rendered_name = f"{preview_stem}_page_{page_index + 1}{preview_ext}"
+
+        response = make_response(content)
+        response.headers["Content-Type"] = content_type
+        response.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(rendered_name)}"
+        return response
+    except Exception as e:
+        logging.error("ファイルプレビュー画像取得エラー (id=%s, page=%s): %s", file_id, page_index, e, exc_info=True)
+        g.response.add_error_message(f"ファイルプレビュー画像の取得に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
 
 
@@ -2116,6 +2512,27 @@ def bulk_delete_files():
     return jsonify(g.response.get_result())
 
 
+def _write_image_tempfiles(images: List[Any]) -> List[str]:
+    """画像列を /tmp に保存して OCR 入力用パス一覧を返す"""
+    tmp_paths: List[str] = []
+    for image_data, content_type in images:
+        suffix = ".jpg" if content_type in ("image/jpeg", "image/jpg") else ".png"
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+        with os.fdopen(fd, "wb") as temp_file:
+            temp_file.write(image_data)
+        tmp_paths.append(tmp_path)
+    return tmp_paths
+
+
+def _cleanup_tempfiles(paths: List[str]) -> None:
+    for path in paths:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as cleanup_error:
+            logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", path, cleanup_error)
+
+
 def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> None:
     """本登録用伝票の AI 分析をバックグラウンド実行する"""
     from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
@@ -2147,7 +2564,6 @@ def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> 
         file_record = db_service.get_file_by_id(file_id)
         if not file_record:
             raise ValueError("ファイルが見つかりません")
-
         storage_path = file_record.get("object_storage_path", "")
         if not storage_path:
             raise ValueError("ストレージパスが設定されていません")
@@ -2162,25 +2578,16 @@ def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> 
         if not images:
             raise ValueError("ファイルをAI分析用に変換できませんでした")
 
-        image_data, content_type = images[0]
         ai_service = AIService()
-
-        suffix = ".jpg" if content_type in ("image/jpeg", "image/jpg") else ".png"
-        fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+        tmp_paths: List[str] = []
         try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(image_data)
-
-            ocr_result = ai_service.extract_text_from_images([tmp_path])
+            tmp_paths = _write_image_tempfiles(images)
+            ocr_result = ai_service.extract_text_from_images(tmp_paths)
             if not ocr_result.get("success"):
                 raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
             extracted_text = ocr_result.get("extracted_text", "")
         finally:
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except Exception as cleanup_error:
-                    logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", tmp_path, cleanup_error)
+            _cleanup_tempfiles(tmp_paths)
 
         extraction = ai_service.extract_data_from_text(
             ocr_text=extracted_text,
@@ -2258,9 +2665,6 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
     from denpyo_toroku.app.services.ai_service import AIService
 
     db_service = DatabaseService()
-    storage_service = OCIStorageService()
-    doc_processor = DocumentProcessor()
-    ai_service = AIService()
     tmp_filepaths: List[str] = []
 
     try:
@@ -2270,6 +2674,9 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
         if not file_records:
             raise ValueError("指定されたファイルが見つかりません")
 
+        storage_service = OCIStorageService()
+        doc_processor = DocumentProcessor()
+        ai_service = AIService()
         processed_file_ids: List[int] = []
         for rec in file_records:
             object_name = rec.get("object_name", "")
@@ -2400,6 +2807,7 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
         for file_id in list(dict.fromkeys(file_ids)):
             if not db_service.save_category_analysis_result(file_id, result):
                 raise RuntimeError(f"分析結果の保存に失敗しました (file_id={file_id})")
+            db_service.update_file_status(file_id, "ANALYZED")
             db_service.update_category_file_status(file_id, "ANALYZED")
             db_service.log_activity(
                 activity_type="CATEGORY_ANALYZE_COMPLETE",
@@ -2410,6 +2818,7 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
     except Exception as e:
         logging.error("分類用サンプル伝票のAI分析エラー (file_ids=%s): %s", file_ids, e, exc_info=True)
         for file_id in file_ids:
+            db_service.update_file_status(file_id, "ERROR")
             db_service.update_category_file_status(file_id, "ERROR")
             db_service.log_activity(
                 activity_type="CATEGORY_ANALYZE_ERROR",
@@ -2473,10 +2882,16 @@ def analyze_file(file_id: int):
         if not file_record:
             g.response.set_data({"success": False, "message": "ファイルが見つかりません"})
             return jsonify(g.response.get_result()), 404
-
-        # 2. ステータスチェック（UPLOADED / ERROR / ANALYZED のみ分析可能）
-        current_status = file_record.get("status", "")
-        if current_status not in ("UPLOADED", "ERROR", "ANALYZED"):
+        _decorate_analysis_status(file_record)
+        # 2. ステータスチェック（UPLOADED / ERROR / ANALYZED または停滞した ANALYZING のみ再分析可能）
+        current_status = _normalize_text(file_record.get("status"), "").upper()
+        if current_status == "ANALYZING" and not file_record.get("is_analysis_stalled"):
+            g.response.set_data({
+                "success": False,
+                "message": "このファイルは現在分析中です。しばらく待ってから再取得してください"
+            })
+            return jsonify(g.response.get_result()), 400
+        if current_status not in ("UPLOADED", "ERROR", "ANALYZED", "ANALYZING"):
             g.response.set_data({
                 "success": False,
                 "message": f"このファイルは分析できません（現在のステータス: {current_status}）"
@@ -2522,7 +2937,7 @@ def analyze_file(file_id: int):
             g.response.set_data({"success": False, "message": "Object Storage からファイルをダウンロードできませんでした"})
             return jsonify(g.response.get_result()), 500
 
-        # 5. AI分析用に画像を準備（最初の1ページのみ）
+        # 5. AI分析用にページ画像を準備
         doc_processor = DocumentProcessor()
         images = doc_processor.prepare_for_ai(file_data, file_record.get("original_file_name", ""))
         if not images:
@@ -2530,33 +2945,21 @@ def analyze_file(file_id: int):
             g.response.set_data({"success": False, "message": "ファイルをAI分析用に変換できませんでした"})
             return jsonify(g.response.get_result()), 500
 
-        image_data, content_type = images[0]
-
         ai_service = AIService()
 
-        # 6. VLM経由でのOCRテキスト抽出
-        import tempfile
-        import os
-        suffix = ".jpg" if content_type in ("image/jpeg", "image/jpg") else ".png"
-        fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+        # 6. VLM経由でのOCRテキスト抽出（ページごとに実行し、最後に結合）
+        tmp_paths: List[str] = []
         try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(image_data)
-            
-            ocr_result = ai_service.extract_text_from_images([tmp_path])
+            tmp_paths = _write_image_tempfiles(images)
+            ocr_result = ai_service.extract_text_from_images(tmp_paths)
             if not ocr_result.get("success"):
                 db_service.update_file_status(file_id, "ERROR")
                 g.response.set_data({"success": False, "message": f"テキスト抽出に失敗しました: {ocr_result.get('message')}"})
                 return jsonify(g.response.get_result()), 500
-                
+
             extracted_text = ocr_result.get("extracted_text", "")
-            
         finally:
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except Exception as e:
-                    logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", tmp_path, e)
+            _cleanup_tempfiles(tmp_paths)
 
         # 7. AI抽出（カテゴリ構造を指定してLLMでデータ生成）
         extraction = ai_service.extract_data_from_text(
@@ -2952,8 +3355,8 @@ def analyze_slips_for_category():
     analysis_mode = body.get("analysis_mode", "header_line")
     run_async = _to_bool(body.get("async"), False)
 
-    if not isinstance(file_ids, list) or not (1 <= len(file_ids) <= 5):
-        g.response.add_error_message("file_idsは1〜5件のIDリストを指定してください")
+    if not isinstance(file_ids, list) or not file_ids:
+        g.response.add_error_message("file_ids は1件以上のIDリストを指定してください")
         return jsonify(g.response.get_result()), 400
     try:
         normalized_file_ids = [int(fid) for fid in file_ids]
@@ -2965,8 +3368,44 @@ def analyze_slips_for_category():
         analysis_mode = "header_line"
 
     db_service = DatabaseService()
+    file_records = db_service.get_files_by_ids(normalized_file_ids)
+    if not file_records:
+        file_records = db_service.get_slips_category_files_by_ids(normalized_file_ids)
+    if not file_records:
+        g.response.add_error_message("指定されたファイルが見つかりません")
+        return jsonify(g.response.get_result()), 404
+
+    for file_record in file_records:
+        _decorate_analysis_status(file_record)
+
+    record_by_id = {
+        int(file_record.get("id")): file_record
+        for file_record in file_records
+        if file_record.get("id") is not None
+    }
+    missing_ids = [file_id for file_id in normalized_file_ids if file_id not in record_by_id]
+    if missing_ids:
+        g.response.add_error_message(f"指定されたファイルが見つかりません: {', '.join(map(str, missing_ids))}")
+        return jsonify(g.response.get_result()), 404
+
+    blocked_records = []
+    for file_id in normalized_file_ids:
+        file_record = record_by_id[file_id]
+        current_status = _normalize_text(file_record.get("status"), "").upper()
+        if current_status == "ANALYZING" and not file_record.get("is_analysis_stalled"):
+            blocked_records.append(file_record.get("original_file_name") or file_record.get("file_name") or str(file_id))
+        elif current_status not in ("UPLOADED", "ERROR", "ANALYZED", "ANALYZING"):
+            blocked_records.append(file_record.get("original_file_name") or file_record.get("file_name") or str(file_id))
+
+    if blocked_records:
+        g.response.add_error_message(
+            f"分析を開始できないファイルが含まれています: {', '.join(blocked_records[:3])}"
+        )
+        return jsonify(g.response.get_result()), 400
+
     for file_id in normalized_file_ids:
         db_service.update_file_status(file_id, "ANALYZING")
+        db_service.update_category_file_status(file_id, "ANALYZING")
         db_service.log_activity(
             activity_type="CATEGORY_ANALYZE_START",
             description=f"分類用サンプル伝票の分析を開始しました (file_id={file_id})",
@@ -2988,15 +3427,6 @@ def analyze_slips_for_category():
             "message": "AI分析を受け付けました",
         })
         return jsonify(g.response.get_result()), 202
-
-    file_records = db_service.get_files_by_ids(normalized_file_ids)
-    if not file_records:
-        file_records = db_service.get_slips_category_files_by_ids(normalized_file_ids)
-    if not file_records:
-        for file_id in normalized_file_ids:
-            db_service.update_category_file_status(file_id, "ERROR")
-        g.response.add_error_message("指定されたファイルが見つかりません")
-        return jsonify(g.response.get_result()), 404
 
     storage_service = OCIStorageService()
     doc_processor = DocumentProcessor()
@@ -3190,6 +3620,7 @@ def analyze_slips_for_category():
             db_service.update_category_file_status(file_id, "ERROR")
             g.response.add_error_message(f"分析結果の保存に失敗しました (file_id={file_id})")
             return jsonify(g.response.get_result()), 500
+        db_service.update_file_status(file_id, "ANALYZED")
         db_service.update_category_file_status(file_id, "ANALYZED")
     g.response.set_data(result)
     return jsonify(g.response.get_result())
@@ -3305,6 +3736,39 @@ def get_category(category_id: int):
     except Exception as e:
         logging.error("カテゴリ取得エラー (id=%s): %s", category_id, e, exc_info=True)
         g.response.add_error_message(f"カテゴリの取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/categories/<int:category_id>/select-ai-profile", methods=["POST"])
+def create_category_select_ai_profile(category_id: int):
+    """カテゴリ単位で Select AI Agent profile / team を作成する"""
+    try:
+        db_service = DatabaseService()
+        existing = db_service.get_category_by_id(category_id)
+        if not existing:
+            g.response.add_error_message("カテゴリが見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        settings_snapshot = _load_oci_settings_snapshot()
+        settings = settings_snapshot.get("settings", {})
+        oci_auth_config = _build_oci_test_config(settings)
+        result = db_service.create_select_ai_profile_for_category(
+            category_id=category_id,
+            oci_auth_config=oci_auth_config,
+            model_settings=settings,
+        )
+        if not result.get("success"):
+            message = result.get("message", "Select AI profile の作成に失敗しました")
+            g.response.add_error_message(message)
+            if any(token in message for token in ("不足", "ありません", "無効")):
+                return jsonify(g.response.get_result()), 400
+            return jsonify(g.response.get_result()), 500
+
+        g.response.set_data(result)
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("Select AI profile 作成エラー (id=%s): %s", category_id, e, exc_info=True)
+        g.response.add_error_message(f"Select AI profile の作成に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
 
 
@@ -3470,11 +3934,15 @@ def _build_search_table_schemas(db_service: DatabaseService, allowed_tables: Lis
 def _should_fallback_from_select_ai(select_ai_result: Dict[str, Any]) -> bool:
     if select_ai_result.get("success") or select_ai_result.get("generated_sql"):
         return False
+    if bool(select_ai_result.get("fallback_to_direct_llm")):
+        return True
     message = str(select_ai_result.get("message") or "").upper()
     fallback_tokens = (
         "DBMS_CLOUD_AI",
         "DBMS_CLOUD_AI_AGENT",
         "DBMS_CLOUD",
+        "ORA-20053",
+        "ORA-20404",
         "ORA-01031",
         "ORA-00904",
         "ORA-06550",
@@ -3559,6 +4027,9 @@ def natural_language_search():
         if not query:
             g.response.add_error_message("検索クエリを入力してください")
             return jsonify(g.response.get_result()), 400
+        if category_id is None:
+            g.response.add_error_message("伝票分類を選択してください")
+            return jsonify(g.response.get_result()), 400
 
         db_service = DatabaseService()
 
@@ -3568,18 +4039,16 @@ def natural_language_search():
             g.response.add_error_message("検索可能なテーブルがありません")
             return jsonify(g.response.get_result()), 400
 
-        # category_id が指定されていれば絞り込み
-        if category_id is not None:
-            try:
-                category_id = int(category_id)
-            except (TypeError, ValueError):
-                g.response.add_error_message("category_id は整数で指定してください")
-                return jsonify(g.response.get_result()), 400
+        try:
+            category_id = int(category_id)
+        except (TypeError, ValueError):
+            g.response.add_error_message("category_id は整数で指定してください")
+            return jsonify(g.response.get_result()), 400
 
-            allowed_tables = [t for t in allowed_tables if t["category_id"] == category_id]
-            if not allowed_tables:
-                g.response.add_error_message("指定されたカテゴリに検索可能なテーブルがありません")
-                return jsonify(g.response.get_result()), 400
+        allowed_tables = [t for t in allowed_tables if t["category_id"] == category_id]
+        if not allowed_tables:
+            g.response.add_error_message("指定されたカテゴリに検索可能なテーブルがありません")
+            return jsonify(g.response.get_result()), 400
 
         allowed_table_set = db_service._build_allowed_table_set_from_entries(allowed_tables)
         settings_snapshot = _load_oci_settings_snapshot()

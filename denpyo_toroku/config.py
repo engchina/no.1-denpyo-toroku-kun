@@ -68,8 +68,16 @@ class AppConfig:
     ))
     EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
     SELECT_AI_ENABLED = os.environ.get("SELECT_AI_ENABLED", "true").strip().lower() in ("1", "true", "yes", "y", "on")
-    SELECT_AI_OCI_API_FORMAT = os.environ.get("SELECT_AI_OCI_API_FORMAT", "")
+    SELECT_AI_REGION = os.environ.get("SELECT_AI_REGION", "us-chicago-1")
+    SELECT_AI_MODEL_ID = os.environ.get("SELECT_AI_MODEL_ID", "xai.grok-code-fast-1")
+    SELECT_AI_EMBEDDING_MODEL_ID = os.environ.get("SELECT_AI_EMBEDDING_MODEL_ID", EMBEDDING_MODEL_ID)
+    SELECT_AI_ENDPOINT_ID = os.environ.get("SELECT_AI_ENDPOINT_ID", "")
+    SELECT_AI_MAX_TOKENS = int(os.environ.get("SELECT_AI_MAX_TOKENS", "32768"))
+    SELECT_AI_ENFORCE_OBJECT_LIST = os.environ.get("SELECT_AI_ENFORCE_OBJECT_LIST", "true").strip().lower() in ("1", "true", "yes", "y", "on")
+    SELECT_AI_OCI_API_FORMAT = os.environ.get("SELECT_AI_OCI_API_FORMAT", "GENERIC")
+    SELECT_AI_USE_ANNOTATIONS = os.environ.get("SELECT_AI_USE_ANNOTATIONS", "true").strip().lower() in ("1", "true", "yes", "y", "on")
     SELECT_AI_USE_COMMENTS = os.environ.get("SELECT_AI_USE_COMMENTS", "true").strip().lower() in ("1", "true", "yes", "y", "on")
+    SELECT_AI_USE_CONSTRAINTS = os.environ.get("SELECT_AI_USE_CONSTRAINTS", "true").strip().lower() in ("1", "true", "yes", "y", "on")
 
     # Storage limits
     UPLOAD_MAX_SIZE_MB = int(os.environ.get(
