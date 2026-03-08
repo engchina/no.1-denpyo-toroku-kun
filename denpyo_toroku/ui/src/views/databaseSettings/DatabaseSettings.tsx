@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
 import { Upload, CheckCircle, XCircle, Database, RefreshCw } from 'lucide-react';
-import { StatusBadge, type StatusBadgeVariant } from '../../components/common/StatusBadge';
 import { apiGet, apiPost, apiPostWithTimeout } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -25,19 +24,6 @@ interface DatabaseSettingsSnapshot {
   is_configured?: boolean;
   status: string;
   wallet_location?: string | null;
-}
-
-interface DatabaseEnvInfo {
-  success: boolean;
-  message: string;
-  username: string | null;
-  password: string | null;
-  dsn: string | null;
-  adb_ocid?: string | null;
-  region?: string | null;
-  wallet_exists: boolean;
-  wallet_location?: string | null;
-  available_services: string[];
 }
 
 interface DatabaseConnectionTestResult {
@@ -75,16 +61,6 @@ const EMPTY_DB_SETTINGS: DatabaseSettingsForm = {
   available_services: []
 };
 
-function isConfiguredStatus(status: string): boolean {
-  return status === 'configured' || status === 'saved';
-}
-
-function statusLabel(status: string): string {
-  return isConfiguredStatus(status) ? t('common.configured') : t('common.notConfigured');
-}
-
-
-
 const ADB_LIFECYCLE_LABEL_KEYS: Record<string, Parameters<typeof t>[0]> = {
   AVAILABLE: 'settings.adb.lifecycle.AVAILABLE',
   STARTING: 'settings.adb.lifecycle.STARTING',
@@ -110,12 +86,10 @@ export function DatabaseSettings() {
   const walletFileInputRef = useRef<HTMLInputElement>(null);
 
   const [dbSettings, setDbSettings] = useState<DatabaseSettingsForm>(EMPTY_DB_SETTINGS);
-  const [dbStatus, setDbStatus] = useState<string>('not_configured');
   const [dbWalletLocation, setDbWalletLocation] = useState<string>('');
   const [dbIsLoading, setDbIsLoading] = useState<boolean>(true);
   const [dbIsSaving, setDbIsSaving] = useState<boolean>(false);
   const [dbIsTesting, setDbIsTesting] = useState<boolean>(false);
-  const [dbIsRefreshingEnv, setDbIsRefreshingEnv] = useState<boolean>(false);
   const [dbIsUploadingWallet, setDbIsUploadingWallet] = useState<boolean>(false);
   const [dbTestResult, setDbTestResult] = useState<DatabaseConnectionTestResult | null>(null);
   const [walletFileName, setWalletFileName] = useState<string>('');
@@ -134,7 +108,6 @@ export function DatabaseSettings() {
       available_services: Array.isArray(snapshot.settings?.available_services) ? snapshot.settings.available_services : []
     };
     setDbSettings(next);
-    setDbStatus(snapshot.status || (snapshot.is_configured ? 'configured' : 'not_configured'));
     setDbWalletLocation(snapshot.wallet_location || '');
   }, []);
 
@@ -193,37 +166,6 @@ export function DatabaseSettings() {
     }
     return true;
   }, [dbSettings.dsn, dbSettings.password, dbSettings.username, dispatch]);
-
-  const handleDbRefreshFromEnv = useCallback(async () => {
-    setDbIsRefreshingEnv(true);
-    try {
-      const envInfo = await apiGet<DatabaseEnvInfo>('/api/v1/database/settings/env');
-      setDbSettings(prev => ({
-        ...prev,
-        username: envInfo.username || prev.username,
-        password: envInfo.password || (prev.password || ''),
-        dsn: envInfo.dsn || prev.dsn,
-        adb_ocid: envInfo.adb_ocid || prev.adb_ocid || '',
-        region: envInfo.region || prev.region || '',
-        wallet_uploaded: envInfo.wallet_exists,
-        available_services: Array.isArray(envInfo.available_services) ? envInfo.available_services : prev.available_services
-      }));
-      setDbWalletLocation(envInfo.wallet_location || '');
-      if (envInfo.success) {
-        setDbStatus(envInfo.wallet_exists && !!(envInfo.username && envInfo.dsn) ? 'configured' : 'not_configured');
-        dispatch(addNotification({ type: 'success', message: t('notify.dbSettings.envLoadedOk'), autoClose: true }));
-      } else {
-        dispatch(addNotification({ type: 'warning', message: envInfo.message || t('notify.dbSettings.envLoadFailed') }));
-      }
-    } catch (err: any) {
-      dispatch(addNotification({
-        type: 'error',
-        message: err.message || t('notify.dbSettings.envLoadFailed')
-      }));
-    } finally {
-      setDbIsRefreshingEnv(false);
-    }
-  }, [dispatch]);
 
   const handleDbSave = useCallback(async () => {
     if (!validateDbBeforeAction(true)) return;
@@ -310,7 +252,6 @@ export function DatabaseSettings() {
         available_services: Array.isArray(result.available_services) ? result.available_services : prev.available_services,
         dsn: prev.dsn || (Array.isArray(result.available_services) && result.available_services.length > 0 ? result.available_services[0] : prev.dsn)
       }));
-      setDbStatus('saved');
       dispatch(addNotification({ type: 'success', message: result.message || t('notify.dbSettings.walletUploadedOk'), autoClose: true }));
     } catch (err: any) {
       dispatch(addNotification({ type: 'error', message: err.message || t('notify.dbSettings.walletUploadFailed') }));
@@ -404,27 +345,6 @@ export function DatabaseSettings() {
     return key ? t(key) : state;
   }, []);
 
-  const getAdbStatusVariant = useCallback((state: string | null | undefined): StatusBadgeVariant => {
-    if (!state) return 'unknown';
-    switch (state) {
-      case 'AVAILABLE':
-        return 'success';
-      case 'STARTING':
-      case 'STOPPING':
-      case 'UPDATING':
-      case 'RESTORING':
-        return 'warning';
-      case 'STOPPED':
-      case 'UNAVAILABLE':
-        return 'inactive';
-      case 'FAILED':
-      case 'INACCESSIBLE':
-        return 'error';
-      default:
-        return 'unknown';
-    }
-  }, []);
-
   return (
     <div class="applicationSettingsView applicationSettingsView--enhanced">
       <section class="applicationSettingsView__hero">
@@ -432,16 +352,10 @@ export function DatabaseSettings() {
           <div class="genericHeading">
             <div class="genericHeading--headings">
               <h1 class="genericHeading--headings__title genericHeading--headings__title--default">{t('settings.db.title')}</h1>
+              <p class="genericHeading--headings__subtitle genericHeading--headings__subtitle--default oj-sm-margin-2x-top">
+                {t('settings.db.subtitle')}
+              </p>
             </div>
-          </div>
-          <div class="applicationSettingsView__heroMeta">
-            <StatusBadge
-              class="applicationSettingsView__heroBadge"
-              variant={isConfiguredStatus(dbStatus) ? 'success' : 'unknown'}
-              icon={isConfiguredStatus(dbStatus) ? CheckCircle : XCircle}
-            >
-              {statusLabel(dbStatus)}
-            </StatusBadge>
           </div>
         </div>
       </section>
@@ -462,9 +376,6 @@ export function DatabaseSettings() {
               <RefreshCw size={14} class={adbIsLoading ? 'ics-spin' : ''} />
               <span>{adbIsLoading ? t('settings.adb.refreshing') : t('settings.adb.refresh')}</span>
             </button>
-            <StatusBadge variant={getAdbStatusVariant(adbInfo?.lifecycle_state)}>
-              {adbInfo?.lifecycle_state ? getAdbLifecycleLabel(adbInfo.lifecycle_state) : t('settings.adb.statusUnknown')}
-            </StatusBadge>
           </div>
         </div>
         <div class="ics-card-body">
@@ -543,25 +454,6 @@ export function DatabaseSettings() {
             <Database size={16} />
             <span class="oj-typography-heading-xs">{t('settings.db.title')}</span>
           </div>
-          <div class="applicationSettingsView__headerActions">
-            <div class="ics-action-bar">
-              <button
-                class="ics-ops-btn ics-ops-btn--ghost"
-                onClick={() => { void loadDatabaseSettings(); }}
-                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
-              >
-                <RefreshCw size={14} class={dbIsLoading ? 'ics-spin' : ''} />
-                <span>{dbIsLoading ? t('settings.refreshing') : t('settings.refresh')}</span>
-              </button>
-              <button
-                class="ics-ops-btn ics-ops-btn--ghost"
-                onClick={() => { void handleDbRefreshFromEnv(); }}
-                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
-              >
-                <span>{dbIsRefreshingEnv ? t('settings.db.refreshingFromEnv') : t('settings.db.refreshFromEnv')}</span>
-              </button>
-            </div>
-          </div>
         </div>
 
         <div class="ics-card-body">
@@ -615,14 +507,14 @@ export function DatabaseSettings() {
               <button
                 class="ics-ops-btn ics-ops-btn--primary"
                 onClick={() => { void handleDbSave(); }}
-                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
+                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsUploadingWallet}
               >
                 {dbIsSaving ? t('settings.action.saving') : t('settings.db.action.save')}
               </button>
               <button
                 class="ics-ops-btn ics-ops-btn--ghost"
                 onClick={() => { void handleDbTest(); }}
-                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsRefreshingEnv || dbIsUploadingWallet}
+                disabled={dbIsLoading || dbIsSaving || dbIsTesting || dbIsUploadingWallet}
               >
                 {dbIsTesting ? t('settings.action.testing') : t('settings.db.action.test')}
               </button>

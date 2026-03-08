@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
 
 import { Cpu, Bot, Network, Sparkles, RefreshCw } from 'lucide-react';
 import { apiGet, apiPost } from '../../utils/apiUtils';
@@ -240,16 +240,6 @@ export function OciGenAiModelSettings() {
   }, [dispatch, settings]);
 
   const isActionLocked = isLoading || isSaving || isLlmTesting || isVlmTesting || isEmbeddingTesting;
-  const endpointDomain = useMemo(() => {
-    try {
-      return new URL(settings.service_endpoint || DEFAULT_ENDPOINT).host;
-    } catch {
-      return settings.service_endpoint || DEFAULT_ENDPOINT;
-    }
-  }, [settings.service_endpoint]);
-  const selectAiModelSummary = settings.select_ai_model_id || DEFAULT_SELECT_AI_MODEL;
-  const selectAiRegionSummary = settings.select_ai_region || DEFAULT_SELECT_AI_REGION;
-
   return (
     <div class="applicationSettingsView applicationSettingsView--enhanced applicationSettingsView--model">
       <section class="applicationSettingsView__hero">
@@ -261,38 +251,6 @@ export function OciGenAiModelSettings() {
                 {t('settings.model.subtitle')}
               </p>
             </div>
-          </div>
-        </div>
-        <div class="applicationSettingsView__heroMetrics applicationSettingsView__heroMetrics--model">
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">Endpoint</div>
-            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{endpointDomain}</div>
-          </div>
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">LLM</div>
-            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{settings.llm_model_id || DEFAULT_LLM_MODEL}</div>
-          </div>
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">VLM</div>
-            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{settings.vlm_model_id || DEFAULT_VLM_MODEL}</div>
-          </div>
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">Embedding</div>
-            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{settings.embedding_model_id || DEFAULT_EMBEDDING_MODEL}</div>
-          </div>
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">{t('settings.model.selectAi.summaryLabel')}</div>
-            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">
-              {settings.select_ai_enabled ? t('settings.model.selectAi.engine.agent') : t('settings.model.selectAi.engine.direct')}
-            </div>
-          </div>
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">{t('settings.model.selectAi.region')}</div>
-            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{selectAiRegionSummary}</div>
-          </div>
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">{t('settings.model.selectAi.modelId')}</div>
-            <div class="applicationSettingsView__heroMetricValue applicationSettingsView__heroMetricValue--compact">{selectAiModelSummary}</div>
           </div>
         </div>
       </section>

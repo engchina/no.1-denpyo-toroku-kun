@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
 
-import { HardDrive, RefreshCw } from 'lucide-react';
+import { HardDrive } from 'lucide-react';
 import { apiGet, apiPost } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -103,16 +103,6 @@ export function OciObjectStorageSettings() {
           <div class="applicationSettingsView__titleWrap">
             <HardDrive size={16} />
             <span class="oj-typography-heading-xs">{t('settings.storage.title')}</span>
-          </div>
-          <div class="applicationSettingsView__headerActions">
-            <button
-              class="ics-ops-btn ics-ops-btn--ghost"
-              onClick={() => { void loadSettings(); }}
-              disabled={isLoading || isSaving}
-            >
-              <RefreshCw size={14} class={isLoading ? 'ics-spin' : ''} />
-              <span>{isLoading ? t('settings.refreshing') : t('settings.refresh')}</span>
-            </button>
           </div>
         </div>
         <div class="ics-card-body">

@@ -4,8 +4,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
-import { Upload, KeyRound, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
-import { StatusBadge } from '../../components/common/StatusBadge';
+import { Upload, KeyRound, CheckCircle, XCircle } from 'lucide-react';
 import { apiGet, apiPost } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -49,16 +48,6 @@ const EMPTY_SETTINGS: OciSettingsForm = {
   profile: 'DEFAULT'
 };
 
-function isConfiguredStatus(status: string): boolean {
-  return status === 'configured' || status === 'saved';
-}
-
-function statusLabel(status: string): string {
-  return isConfiguredStatus(status) ? t('common.configured') : t('common.notConfigured');
-}
-
-
-
 function readTextFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -73,7 +62,6 @@ export function ApplicationSettings() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [settings, setSettings] = useState<OciSettingsForm>(EMPTY_SETTINGS);
-  const [status, setStatus] = useState<string>('not_configured');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isTesting, setIsTesting] = useState<boolean>(false);
@@ -86,7 +74,6 @@ export function ApplicationSettings() {
       ...snapshot.settings
     };
     setSettings(next);
-    setStatus(snapshot.status || (snapshot.is_configured ? 'configured' : 'not_configured'));
     if (next.key_content && next.key_content !== MASKED_KEY) {
       setPrivateKeyPreview(next.key_content.slice(0, 240));
     } else {
@@ -236,37 +223,6 @@ export function ApplicationSettings() {
               </p>
             </div>
           </div>
-
-          <div class="applicationSettingsView__heroMeta">
-            <StatusBadge
-              class="applicationSettingsView__heroBadge"
-              variant={isConfiguredStatus(status) ? 'success' : 'unknown'}
-              icon={isConfiguredStatus(status) ? CheckCircle : XCircle}
-            >
-              {statusLabel(status)}
-            </StatusBadge>
-          </div>
-        </div>
-
-        <div class="applicationSettingsView__heroMetrics">
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">{t('settings.oci.authStatus')}</div>
-            <div class="applicationSettingsView__heroMetricValue">{statusLabel(status)}</div>
-          </div>
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">{t('settings.oci.region')}</div>
-            <div class="applicationSettingsView__heroMetricValue">{settings.region || DEFAULT_REGION}</div>
-          </div>
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">{t('settings.field.profile')}</div>
-            <div class="applicationSettingsView__heroMetricValue">{settings.profile || 'DEFAULT'}</div>
-          </div>
-          <div class="applicationSettingsView__heroMetric">
-            <div class="applicationSettingsView__heroMetricLabel">{t('settings.field.privateKey')}</div>
-            <div class="applicationSettingsView__heroMetricValue">
-              {settings.key_content ? (settings.key_content === MASKED_KEY ? t('common.configured') : t('settings.privateKey.loaded')) : t('common.notConfigured')}
-            </div>
-          </div>
         </div>
       </section>
 
@@ -275,16 +231,6 @@ export function ApplicationSettings() {
           <div class="applicationSettingsView__titleWrap">
             <KeyRound size={16} />
             <span class="oj-typography-heading-xs">{t('settings.oci.authSettingsTitle')}</span>
-          </div>
-          <div class="applicationSettingsView__headerActions">
-            <button
-              class="ics-ops-btn ics-ops-btn--ghost"
-              onClick={() => { void loadSettings(); }}
-              disabled={isLoading || isSaving || isTesting}
-            >
-              <RefreshCw size={14} class={isLoading ? 'ics-spin' : ''} />
-              <span>{isLoading ? t('settings.refreshing') : t('settings.refresh')}</span>
-            </button>
           </div>
         </div>
         <div class="ics-card-body">
