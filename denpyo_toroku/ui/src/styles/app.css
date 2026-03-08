@@ -7064,7 +7064,7 @@ html[dir="rtl"] .oracle-icon {
 /* Fixed-height designer panel body */
 .ics-card-body--designer {
     height: calc(100vh - 320px);
-    min-height: 500px;
+    min-height: 620px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -7127,13 +7127,21 @@ html[dir="rtl"] .oracle-icon {
     flex-direction: column;
 }
 
+.ics-category-designer-layout>.ics-category-image-panel,
+.ics-registration-reviewLayout>.ics-category-image-panel {
+    --ics-document-preview-panel-min-height: 620px;
+    --ics-document-preview-viewer-min-height: clamp(360px, 42vh, 520px);
+    min-height: var(--ics-document-preview-panel-min-height);
+}
+
 .ics-category-review-panel {
     height: 100%;
-    min-height: 0;
+    min-height: var(--ics-document-preview-panel-min-height, 0);
 }
 
 .ics-category-review-card {
     height: 100%;
+    min-height: var(--ics-document-preview-panel-min-height, 0);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -7224,7 +7232,7 @@ html[dir="rtl"] .oracle-icon {
 
 .ics-category-viewer {
     flex: 1;
-    min-height: 0;
+    min-height: var(--ics-document-preview-viewer-min-height, 0);
     overflow: auto;
     border: 1px solid #d7e3ef;
     border-radius: 14px;
