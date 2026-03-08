@@ -127,9 +127,8 @@ const DEFAULT_COLUMN_DATA_TYPE: TableColumnDef['data_type'] = 'VARCHAR2';
 const PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
 const CATEGORY_SAMPLES_QUERY_SCOPE = 'cs';
 const CATEGORY_MANAGEMENT_QUERY_SCOPE = 'cm';
-const SYSTEM_ID_COLUMN_NAME = 'ID';
-const SYSTEM_ID_COLUMN_JP = 'ID';
 const SYSTEM_ID_COLUMN_MAX_LENGTH = 32;
+const RESERVED_SYSTEM_COLUMN_NAMES = new Set(['HEADER_ID', 'LINE_ID']);
 type SortDirection = 'asc' | 'desc';
 type SlipsSortKey = 'file_name' | 'file_type' | 'file_size' | 'uploaded_at';
 type CategorySortKey =
@@ -154,7 +153,7 @@ function createTableDesignerColumnKey(): string {
 }
 
 function isSystemIdColumn(column: Partial<TableDesignerColumn> | null | undefined): boolean {
-  return Boolean(column?.is_system) || ['ID', 'HEADER_ID', 'LINE_ID'].includes(String(column?.column_name || '').trim().toUpperCase());
+  return Boolean(column?.is_system) || RESERVED_SYSTEM_COLUMN_NAMES.has(String(column?.column_name || '').trim().toUpperCase());
 }
 
 function getSystemIdJapaneseName(columnName: string): string {
@@ -178,6 +177,12 @@ function createSystemIdColumn(systemIdName: string, isPrimaryKey = true): TableD
     is_primary_key: isPrimaryKey,
     is_system: true,
   };
+}
+
+function getPrimarySystemIdName(columns: TableDesignerColumn[]): string {
+  return String(
+    columns.find((column) => column.is_system && column.is_primary_key)?.column_name || 'HEADER_ID'
+  ).trim().toUpperCase();
 }
 
 function compareValues(a: unknown, b: unknown): number {
@@ -506,6 +511,7 @@ function ColumnRow({
   onChange,
   onMove,
   onDelete,
+  systemIdName,
 }: {
   col: TableDesignerColumn;
   index: number;
@@ -514,13 +520,13 @@ function ColumnRow({
   onChange: (index: number, updated: TableDesignerColumn) => void;
   onMove: (index: number, direction: 'up' | 'down') => void;
   onDelete: (index: number) => void;
+  systemIdName: string;
 }) {
   const normalizedDataType = normalizeColumnDataType(col.data_type);
   const isLocked = Boolean(col.is_system);
   const update = (patch: Partial<TableDesignerColumn>) => {
     if (isLocked) return;
-    const sysIdName = col.column_name; // Fallback, not strictly needed since isLocked is handled above
-    onChange(index, normalizeColumnDef({ ...col, ...patch }, 'ID')); // Temporary fallback, unused for system column
+    onChange(index, normalizeColumnDef({ ...col, ...patch }, systemIdName));
   };
 
   return (
@@ -663,10 +669,10 @@ function TableDesigner({
 }) {
   const [showPreview, setShowPreview] = useState(false);
   const lockedPrefixCount = columns.filter((col) => col.is_system).length;
+  const systemIdName = getPrimarySystemIdName(columns);
 
   const addColumn = () => {
     const businessColumnCount = getBusinessColumns(columns).length;
-    // Note: The systemIdName passed here doesn't matter for business columns, so we pass a fallback
     onColumnsChange([
       ...columns,
       normalizeColumnDef({
@@ -676,7 +682,7 @@ function TableDesigner({
         max_length: 500,
         is_nullable: true,
         is_primary_key: false,
-      }, 'ID'),
+      }, systemIdName),
     ]);
   };
 
@@ -745,6 +751,7 @@ function TableDesigner({
                 onChange={updateColumn}
                 onMove={moveColumn}
                 onDelete={deleteColumn}
+                systemIdName={systemIdName}
               />
             ))}
           </tbody>

@@ -170,9 +170,15 @@ SLIPS_CATEGORY_INDEX_DDL = """
 CREATE INDEX IDX_SLIPS_CATEGORY_BUCKET ON SLIPS_CATEGORY(BUCKET_NAME, NAMESPACE)
 """
 
-_SYSTEM_ID_COLUMN_NAME = "ID"
+_HEADER_ID_COLUMN_NAME = "HEADER_ID"
+_LINE_ID_COLUMN_NAME = "LINE_ID"
+_LEGACY_USER_TABLE_ID_COLUMN_NAME = "ID"
+_USER_TABLE_SYSTEM_ID_COLUMN_NAMES = {_HEADER_ID_COLUMN_NAME, _LINE_ID_COLUMN_NAME}
 _SYSTEM_ID_COLUMN_MAX_LENGTH = 32
-_SYSTEM_ID_COLUMN_COMMENT = "ID"
+_SYSTEM_ID_JP_NAMES = {
+    _HEADER_ID_COLUMN_NAME: "ヘッダーID",
+    _LINE_ID_COLUMN_NAME: "明細ID",
+}
 
 _SELECT_AI_CREDENTIAL_PREFIX = "DTAICR_"
 _SELECT_AI_PROFILE_PREFIX = "DTAIPR_"
@@ -1004,12 +1010,12 @@ END;"""
                             header_cols = []
                             header_vals = []
                             generated_header_id = self._generate_business_id(cursor, header_table_name)
-                            header_cols.append("HEADER_ID")
+                            header_cols.append(_HEADER_ID_COLUMN_NAME)
                             header_vals.append(generated_header_id)
                             for field in header_fields:
                                 col_name = field.get("field_name_en", "").upper()
                                 value = field.get("value")
-                                if col_name in (_SYSTEM_ID_COLUMN_NAME, "HEADER_ID"):
+                                if col_name == _HEADER_ID_COLUMN_NAME:
                                     continue
                                 if col_name and value is not None:
                                     header_cols.append(col_name)
@@ -1054,12 +1060,12 @@ END;"""
                             for line in raw_lines:
                                 for col_name in line.keys():
                                     normalized_col_name = str(col_name or "").upper()
-                                    if normalized_col_name not in (_SYSTEM_ID_COLUMN_NAME, "HEADER_ID", "LINE_ID"):
+                                    if normalized_col_name not in (_HEADER_ID_COLUMN_NAME, _LINE_ID_COLUMN_NAME):
                                         all_cols_set.add(normalized_col_name)
 
-                            line_cols = ["LINE_ID"]
+                            line_cols = [_LINE_ID_COLUMN_NAME]
                             if generated_header_id is not None:
-                                line_cols.append("HEADER_ID")
+                                line_cols.append(_HEADER_ID_COLUMN_NAME)
                             
                             ordered_dynamic_cols = sorted(list(all_cols_set))
                             line_cols.extend(ordered_dynamic_cols)
@@ -1075,7 +1081,7 @@ END;"""
                                 processed_line = {}
                                 for col_name, value in line.items():
                                     normalized_col_name = str(col_name or "").upper()
-                                    if normalized_col_name in (_SYSTEM_ID_COLUMN_NAME, "HEADER_ID", "LINE_ID") or value is None:
+                                    if normalized_col_name in (_HEADER_ID_COLUMN_NAME, _LINE_ID_COLUMN_NAME) or value is None:
                                         continue
                                     processed_line[normalized_col_name] = self._coerce_insert_value(
                                         value,
@@ -1858,7 +1864,7 @@ END;"""
     def _build_ddl_from_columns(
         table_name: str,
         columns: List[Dict[str, Any]],
-        id_column_name: str = _SYSTEM_ID_COLUMN_NAME,
+        id_column_name: str,
         fk_column_name: Optional[str] = None,
     ) -> str:
         """カラム定義リストからCREATE TABLE DDLを生成"""
@@ -1910,7 +1916,7 @@ END;"""
     def _build_column_comment_ddls(
         table_name: str,
         columns: List[Dict[str, Any]],
-        id_column_name: str = _SYSTEM_ID_COLUMN_NAME,
+        id_column_name: str,
         fk_column_name: Optional[str] = None,
     ) -> List[str]:
         """カラム定義リストから COMMENT ON COLUMN DDL を生成"""
@@ -1930,14 +1936,12 @@ END;"""
         return ddls
 
     @staticmethod
-    def _system_id_column(id_column_name: str = _SYSTEM_ID_COLUMN_NAME) -> Dict[str, Any]:
-        _SYSTEM_ID_JP_NAMES = {
-            "HEADER_ID": "ヘッダーID",
-            "LINE_ID": "明細ID",
-        }
+    def _system_id_column(id_column_name: str) -> Dict[str, Any]:
+        if id_column_name not in _USER_TABLE_SYSTEM_ID_COLUMN_NAMES:
+            raise ValueError(f"サポートされていないシステム列です: {id_column_name}")
         return {
             "column_name": id_column_name,
-            "column_name_jp": _SYSTEM_ID_JP_NAMES.get(id_column_name, _SYSTEM_ID_COLUMN_COMMENT),
+            "column_name_jp": _SYSTEM_ID_JP_NAMES[id_column_name],
             "data_type": "VARCHAR2",
             "max_length": _SYSTEM_ID_COLUMN_MAX_LENGTH,
             "is_nullable": False,
@@ -1947,7 +1951,7 @@ END;"""
     @staticmethod
     def _normalize_designer_columns(
         columns: Optional[List[Dict[str, Any]]],
-        id_column_name: str = _SYSTEM_ID_COLUMN_NAME,
+        id_column_name: str,
         fk_column_name: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         normalized: List[Dict[str, Any]] = [dict(DatabaseService._system_id_column(id_column_name))]
@@ -1959,8 +1963,14 @@ END;"""
 
         for raw_col in columns or []:
             col_name = str(raw_col.get("column_name") or "").strip().upper()
-            if not col_name or col_name in (_SYSTEM_ID_COLUMN_NAME, id_column_name, fk_column_name):
+            if not col_name:
                 continue
+            if col_name == _LEGACY_USER_TABLE_ID_COLUMN_NAME:
+                raise ValueError("ユーザーテーブルでは ID 列は使用できません。HEADER_ID / LINE_ID を使用してください")
+            if col_name in (id_column_name, fk_column_name):
+                continue
+            if col_name in _USER_TABLE_SYSTEM_ID_COLUMN_NAMES:
+                raise ValueError(f"{col_name} はこのテーブルではシステム列として予約されています")
             normalized.append(
                 {
                     **raw_col,
@@ -1989,7 +1999,9 @@ END;"""
         return f"{base_name}-{type_code}"
 
     @staticmethod
-    def _build_id_immutability_trigger_ddl(table_name: str, id_column_name: str = _SYSTEM_ID_COLUMN_NAME) -> str:
+    def _build_id_immutability_trigger_ddl(table_name: str, id_column_name: str) -> str:
+        if id_column_name not in _USER_TABLE_SYSTEM_ID_COLUMN_NAMES:
+            raise ValueError(f"サポートされていないシステム列です: {id_column_name}")
         normalized_table_name = (table_name or "").strip().upper()
         trigger_name = f"TRG_{normalized_table_name[:20]}_ID_IMM"
         return f"""
@@ -3019,6 +3031,36 @@ END;"""
             logger.error("カラム情報取得エラー (%s): %s", table_name, e, exc_info=True)
             return []
 
+    def _get_primary_key_columns(self, cursor, table_name: str) -> List[str]:
+        """テーブルの主キー列を順序付きで取得する。見つからない場合は空配列。"""
+        normalized_table_name = (table_name or "").strip().upper()
+        if not normalized_table_name:
+            return []
+
+        cursor.execute(
+            """SELECT cols.COLUMN_NAME
+                 FROM USER_CONSTRAINTS cons
+                 JOIN USER_CONS_COLUMNS cols
+                   ON cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME
+                  AND cols.TABLE_NAME = cons.TABLE_NAME
+                WHERE cons.TABLE_NAME = :1
+                  AND cons.CONSTRAINT_TYPE = 'P'
+                ORDER BY cols.POSITION""",
+            [normalized_table_name],
+        )
+        return [
+            str(row[0]).strip().upper()
+            for row in cursor.fetchall()
+            if row and row[0] and self._is_safe_table_name(str(row[0]).strip().upper())
+        ]
+
+    def _build_table_data_order_by_clause(self, cursor, table_name: str) -> str:
+        """テーブルブラウザの安定した並び順を返す。主キー優先、なければ ROWID。"""
+        pk_columns = self._get_primary_key_columns(cursor, table_name)
+        if pk_columns:
+            return ", ".join(f"t.{column_name}" for column_name in pk_columns)
+        return "t.ROWID"
+
     def _validate_select_only(self, sql: str) -> None:
         """SQL が SELECT 文のみかを検証（禁止キーワードチェック）"""
         normalized_sql = self._normalize_generated_select(sql)
@@ -3285,6 +3327,13 @@ END;"""
     def _validate_tables_in_whitelist(self, sql: str, allowed: set) -> None:
         """SQL 内のテーブルが許可リストにあるか検証"""
         references = self._extract_table_references_from_sql(sql)
+        qualified = [
+            ".".join(ref.get("qualified_name") or [])
+            for ref in references
+            if ref.get("is_qualified")
+        ]
+        if qualified:
+            raise ValueError(f"スキーマ修飾されたテーブル参照は許可されていません: {', '.join(qualified)}")
 
         referenced = {str(ref.get("table_name") or "").upper() for ref in references if ref.get("table_name")}
         unauthorized = referenced - allowed
@@ -3515,7 +3564,8 @@ END;"""
 
         # セキュリティ: 許可テーブルかチェック
         allowed = self._get_allowed_table_set()
-        if table_name.upper() not in allowed:
+        table_name_upper = table_name.upper()
+        if table_name_upper not in allowed:
             logger.warning("許可されていないテーブルへのアクセス試行: %s", table_name)
             return {"success": False, "message": "許可されていないテーブルです",
                     "table_name": table_name, "columns": [], "rows": [], "total": 0}
@@ -3524,15 +3574,16 @@ END;"""
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     # 総件数取得
-                    cursor.execute(f"SELECT COUNT(*) FROM {table_name.upper()}")
+                    cursor.execute(f"SELECT COUNT(*) FROM {table_name_upper}")
                     total = cursor.fetchone()[0]
+                    order_by_clause = self._build_table_data_order_by_clause(cursor, table_name_upper)
 
                     # データ取得（ページング）
                     # 行削除に使うため、ROWIDを ROW_ID_META として含める（表示カラムからは除外可能）
                     cursor.execute(
                         f"""SELECT ROWIDTOCHAR(t.ROWID) AS ROW_ID_META, t.*
-                          FROM {table_name.upper()} t
-                         ORDER BY t.ID
+                          FROM {table_name_upper} t
+                         ORDER BY {order_by_clause}
                          OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY""",
                         {"offset": offset, "limit": limit}
                     )
@@ -3543,7 +3594,7 @@ END;"""
 
                     return {
                         "success": True,
-                        "table_name": table_name.upper(),
+                        "table_name": table_name_upper,
                         "columns": display_columns,
                         "rows": rows,
                         "total": total,

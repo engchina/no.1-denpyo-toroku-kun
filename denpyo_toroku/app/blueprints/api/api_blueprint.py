@@ -4092,31 +4092,40 @@ def register_file(file_id: int):
 
 _CATEGORY_TABLE_NAME_PATTERN = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,127}$')
 _ALLOWED_COL_DATA_TYPES = {"VARCHAR2", "NUMBER", "DATE", "TIMESTAMP"}
-_SYSTEM_CATEGORY_COLUMN_NAME = "ID"
+_LEGACY_CATEGORY_SYSTEM_COLUMN_NAME = "ID"
+_HEADER_TABLE_SYSTEM_COLUMN_NAMES = {"HEADER_ID"}
+_LINE_TABLE_SYSTEM_COLUMN_NAMES = {"HEADER_ID", "LINE_ID"}
 
 
-def _count_business_columns(columns: list) -> int:
+def _count_business_columns(columns: list, system_column_names: set[str]) -> int:
+    ignored = {str(name).strip().upper() for name in system_column_names}
     return sum(
         1
         for col in columns or []
-        if (col.get("column_name") or "").strip().upper() != _SYSTEM_CATEGORY_COLUMN_NAME
+        if (col.get("column_name") or "").strip().upper() not in ignored
     )
 
 
-def _validate_column_defs(columns: list) -> Optional[str]:
+def _validate_column_defs(columns: list, allowed_system_column_names: set[str]) -> Optional[str]:
     """カラム定義リストを検証し、問題があればエラーメッセージを返す"""
     if not columns:
         return "カラム定義が空です"
     seen_names = set()
+    normalized_allowed_system_names = {str(name).strip().upper() for name in allowed_system_column_names}
     for col in columns:
         col_name = (col.get("column_name") or "").strip()
         if not col_name:
             return "カラム名が未入力のカラムがあります"
+        normalized_col_name = col_name.upper()
         if not re.match(r'^[A-Za-z][A-Za-z0-9_]{0,127}$', col_name):
             return f"カラム名 '{col_name}' は英字始まりの英数字・アンダースコアのみ使用できます"
-        if col_name.upper() in seen_names:
+        if normalized_col_name in seen_names:
             return f"カラム名 '{col_name}' が重複しています"
-        seen_names.add(col_name.upper())
+        if normalized_col_name == _LEGACY_CATEGORY_SYSTEM_COLUMN_NAME:
+            return "カラム名 'ID' は使用できません。ヘッダーは HEADER_ID、明細は LINE_ID / HEADER_ID を使用してください"
+        if normalized_col_name in _LINE_TABLE_SYSTEM_COLUMN_NAMES and normalized_col_name not in normalized_allowed_system_names:
+            return f"カラム名 '{col_name}' はこのテーブルでは使用できません"
+        seen_names.add(normalized_col_name)
         col_name_jp = (col.get("column_name_jp") or col.get("comment") or "").strip()
         if not col_name_jp:
             return f"カラム名 '{col_name}' の日本語名は必須です"
@@ -4530,12 +4539,12 @@ def create_category():
             g.response.add_error_message("ヘッダーテーブル名が無効です")
             return jsonify(g.response.get_result()), 400
 
-        col_err = _validate_column_defs(header_columns)
+        col_err = _validate_column_defs(header_columns, _HEADER_TABLE_SYSTEM_COLUMN_NAMES)
         if col_err:
             g.response.add_error_message(f"ヘッダーカラム定義エラー: {col_err}")
             return jsonify(g.response.get_result()), 400
-        if _count_business_columns(header_columns) == 0:
-            g.response.add_error_message("ヘッダーテーブルに ID 以外のカラムを1つ以上定義してください")
+        if _count_business_columns(header_columns, _HEADER_TABLE_SYSTEM_COLUMN_NAMES) == 0:
+            g.response.add_error_message("ヘッダーテーブルに HEADER_ID 以外のカラムを1つ以上定義してください")
             return jsonify(g.response.get_result()), 400
 
         if line_table_name:
@@ -4543,12 +4552,12 @@ def create_category():
                 g.response.add_error_message("明細テーブル名が無効です")
                 return jsonify(g.response.get_result()), 400
             if line_columns:
-                line_col_err = _validate_column_defs(line_columns)
+                line_col_err = _validate_column_defs(line_columns, _LINE_TABLE_SYSTEM_COLUMN_NAMES)
                 if line_col_err:
                     g.response.add_error_message(f"明細カラム定義エラー: {line_col_err}")
                     return jsonify(g.response.get_result()), 400
-                if _count_business_columns(line_columns) == 0:
-                    g.response.add_error_message("明細テーブルに ID 以外のカラムを1つ以上定義してください")
+                if _count_business_columns(line_columns, _LINE_TABLE_SYSTEM_COLUMN_NAMES) == 0:
+                    g.response.add_error_message("明細テーブルに LINE_ID / HEADER_ID 以外のカラムを1つ以上定義してください")
                     return jsonify(g.response.get_result()), 400
 
         db_service = DatabaseService()

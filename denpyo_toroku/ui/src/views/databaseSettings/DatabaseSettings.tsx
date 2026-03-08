@@ -466,6 +466,7 @@ export function DatabaseSettings() {
               <span class="applicationSettingsView__fieldLabel">{t('settings.db.field.password')}*</span>
               <input class="ics-input" type="password" value={dbSettings.password} onInput={updateDbField('password')} placeholder="******" />
             </label>
+            {/* DSN options are parsed from the uploaded wallet's tnsnames.ora on the backend. */}
             {dbSettings.available_services.length > 0 ? (
               <label class="applicationSettingsView__field applicationSettingsView__field--wide">
                 <span class="applicationSettingsView__fieldLabel">{t('settings.db.field.dsn')}*</span>

@@ -6026,6 +6026,34 @@ html[dir="rtl"] .oracle-icon {
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
 }
 
+.ics-table-edit-input--readonly {
+    background: #f8fafc;
+    border-color: #d7e1ea;
+    color: #64748b;
+    cursor: default;
+}
+
+.ics-table-edit-input--readonly:focus {
+    border-color: #d7e1ea;
+    box-shadow: none;
+}
+
+.ics-registration-lineToolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
+}
+
+.ics-registration-rowActionCell {
+    width: 1%;
+    white-space: nowrap;
+}
+
+.ics-registration-rowActionBtn {
+    min-width: 30px;
+    padding: 0 8px;
+}
+
 .ics-registration-confirm {
     background: #f8fafc;
     border: 1px solid #e2e8f0;
