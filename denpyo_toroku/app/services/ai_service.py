@@ -69,6 +69,7 @@ class AIService:
             self._client = oci.generative_ai_inference.GenerativeAiInferenceClient(
                 config=config,
                 service_endpoint=self._service_endpoint,
+                retry_strategy=oci.retry.NoneRetryStrategy(),
                 timeout=(10, 240),
             )
             logger.info("OCI Generative AI クライアントを初期化しました (model=%s)", self._llm_model_id)

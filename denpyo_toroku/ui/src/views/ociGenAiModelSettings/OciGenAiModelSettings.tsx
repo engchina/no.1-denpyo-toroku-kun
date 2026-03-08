@@ -245,19 +245,7 @@ export function OciGenAiModelSettings() {
               </p>
             </div>
           </div>
-
-          <div class="applicationSettingsView__heroMeta">
-            <button
-              class="ics-ops-btn ics-ops-btn--primary"
-              onClick={() => { void loadSettings(); }}
-              disabled={isLoading || isSaving}
-            >
-              <RefreshCw size={14} class={isLoading ? 'ics-spin' : ''} />
-              <span>{isLoading ? t('settings.refreshing') : t('settings.refresh')}</span>
-            </button>
-          </div>
         </div>
-
         <div class="applicationSettingsView__heroMetrics applicationSettingsView__heroMetrics--model">
           <div class="applicationSettingsView__heroMetric">
             <div class="applicationSettingsView__heroMetricLabel">Endpoint</div>

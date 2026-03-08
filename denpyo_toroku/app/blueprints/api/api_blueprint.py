@@ -158,6 +158,88 @@ def _decorate_analysis_status(record: Optional[Dict[str, Any]]) -> Optional[Dict
     return record
 
 
+def _resolve_category_file_links(
+    db_service: DatabaseService,
+    *,
+    file_id: Optional[int] = None,
+    file_record: Optional[Dict[str, Any]] = None,
+) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    management_record: Optional[Dict[str, Any]] = None
+    category_record: Optional[Dict[str, Any]] = None
+
+    if file_record:
+        if file_record.get("object_storage_path") is not None:
+            management_record = file_record
+        elif file_record.get("object_name") is not None:
+            category_record = file_record
+
+    if management_record is None and file_id is not None:
+        management_record = db_service.get_file_by_id(file_id)
+
+    object_name = _normalize_text(
+        (management_record or {}).get("object_storage_path")
+        or (category_record or {}).get("object_name"),
+        "",
+    )
+
+    if category_record is None and object_name:
+        category_record = db_service.get_slips_category_file_by_object_name(object_name)
+
+    if category_record is None and file_id is not None:
+        slips_category_records = db_service.get_slips_category_files_by_ids([file_id])
+        if slips_category_records:
+            category_record = slips_category_records[0]
+            object_name = _normalize_text(category_record.get("object_name"), object_name)
+
+    if management_record is None and object_name:
+        management_record = db_service.get_file_by_object_storage_path(object_name)
+
+    return management_record, category_record
+
+
+def _build_category_analysis_targets(
+    db_service: DatabaseService,
+    file_records: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    targets: List[Dict[str, Any]] = []
+    seen_keys = set()
+
+    for source_record in file_records:
+        management_record, category_record = _resolve_category_file_links(
+            db_service,
+            file_record=source_record,
+        )
+        management_file_id = management_record.get("id") if management_record else None
+        category_file_id = category_record.get("id") if category_record else None
+        object_name = _normalize_text(
+            (management_record or {}).get("object_storage_path")
+            or (category_record or {}).get("object_name")
+            or source_record.get("object_storage_path")
+            or source_record.get("object_name"),
+            "",
+        )
+
+        target_key = (management_file_id, category_file_id, object_name)
+        if target_key in seen_keys:
+            continue
+        seen_keys.add(target_key)
+
+        targets.append({
+            "source_file_id": source_record.get("id"),
+            "management_file_id": management_file_id,
+            "category_file_id": category_file_id,
+            "object_name": object_name,
+            "display_name": (
+                source_record.get("original_file_name")
+                or source_record.get("file_name")
+                or object_name
+                or str(source_record.get("id") or "")
+            ),
+        })
+
+    return targets
+
+
 def _expand_path(path_value: str, default: str) -> str:
     raw = _normalize_text(path_value, default)
     if not raw:
@@ -917,6 +999,7 @@ def _save_database_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
     os.environ[_DB_CONN_ENV_KEY] = conn_string
     os.environ[_DB_ADB_OCID_ENV_KEY] = adb_ocid
     AppConfig.ADB_OCID = adb_ocid
+    DatabaseService.close_shared_pool()
 
     snapshot = _load_database_settings_snapshot()
     snapshot["status"] = "saved"
@@ -1087,6 +1170,7 @@ def _upload_database_wallet(uploaded_file: Any) -> Dict[str, Any]:
             )
 
         services = _extract_services_from_tnsnames(wallet_location)
+        DatabaseService.close_shared_pool()
         return {
             "success": True,
             "message": "Walletをアップロードしました。",
@@ -2146,43 +2230,42 @@ def get_file_analysis_result(file_id: int):
     """保存済みの AI 分析結果を取得"""
     try:
         db_service = DatabaseService()
-        file_record = db_service.get_file_by_id(file_id)
+        file_record, slips_category_record = _resolve_category_file_links(db_service, file_id=file_id)
         if file_record:
             _decorate_analysis_status(file_record)
+        if slips_category_record:
+            _decorate_analysis_status(slips_category_record)
+
+        analysis_result = None
+        if file_record:
             analysis_result = db_service.get_analysis_result(file_id)
             if not analysis_result:
-                if file_record.get("is_analysis_stalled"):
-                    g.response.add_error_message("AI分析が長時間完了していません。再分析してください")
-                    return jsonify(g.response.get_result()), 409
-                if file_record.get("status") == "ANALYZING":
-                    g.response.add_error_message("AI分析はまだ完了していません")
-                    return jsonify(g.response.get_result()), 409
-                g.response.add_error_message("分析結果がありません")
-                return jsonify(g.response.get_result()), 404
+                storage_path = _normalize_text(file_record.get("object_storage_path"), "")
+                if storage_path:
+                    analysis_result = db_service.get_slips_category_analysis_result_by_object_name(storage_path)
 
+        if not analysis_result and slips_category_record:
+            analysis_result = db_service.get_slips_category_analysis_result(
+                int(slips_category_record.get("id"))
+            )
+
+        if analysis_result:
             g.response.set_data(analysis_result)
             return jsonify(g.response.get_result())
 
-        slips_category_records = db_service.get_slips_category_files_by_ids([file_id])
-        if not slips_category_records:
+        analysis_status_record = slips_category_record or file_record
+        if not analysis_status_record:
             g.response.add_error_message("ファイルが見つかりません")
             return jsonify(g.response.get_result()), 404
 
-        slips_category_record = slips_category_records[0]
-        _decorate_analysis_status(slips_category_record)
-        analysis_result = db_service.get_slips_category_analysis_result(file_id)
-        if not analysis_result:
-            if slips_category_record.get("is_analysis_stalled"):
-                g.response.add_error_message("AI分析が長時間完了していません。再分析してください")
-                return jsonify(g.response.get_result()), 409
-            if slips_category_record.get("status") == "ANALYZING":
-                g.response.add_error_message("AI分析はまだ完了していません")
-                return jsonify(g.response.get_result()), 409
-            g.response.add_error_message("分析結果がありません")
-            return jsonify(g.response.get_result()), 404
-
-        g.response.set_data(analysis_result)
-        return jsonify(g.response.get_result())
+        if analysis_status_record.get("is_analysis_stalled"):
+            g.response.add_error_message("AI分析が長時間完了していません。再分析してください")
+            return jsonify(g.response.get_result()), 409
+        if analysis_status_record.get("status") == "ANALYZING":
+            g.response.add_error_message("AI分析はまだ完了していません")
+            return jsonify(g.response.get_result()), 409
+        g.response.add_error_message("分析結果がありません")
+        return jsonify(g.response.get_result()), 404
     except Exception as e:
         logging.error("分析結果取得エラー (id=%s): %s", file_id, e, exc_info=True)
         g.response.add_error_message(f"分析結果の取得に失敗しました: {str(e)}")
@@ -2673,6 +2756,7 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
             file_records = db_service.get_slips_category_files_by_ids(file_ids)
         if not file_records:
             raise ValueError("指定されたファイルが見つかりません")
+        linked_targets = _build_category_analysis_targets(db_service, file_records)
 
         storage_service = OCIStorageService()
         doc_processor = DocumentProcessor()
@@ -2804,26 +2888,41 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
             "analyzed_file_ids": analyzed_file_ids,
         }
 
-        for file_id in list(dict.fromkeys(file_ids)):
-            if not db_service.save_category_analysis_result(file_id, result):
-                raise RuntimeError(f"分析結果の保存に失敗しました (file_id={file_id})")
-            db_service.update_file_status(file_id, "ANALYZED")
-            db_service.update_category_file_status(file_id, "ANALYZED")
+        for target in linked_targets:
+            management_file_id = target.get("management_file_id")
+            category_file_id = target.get("category_file_id")
+            source_file_id = target.get("source_file_id")
+
+            if management_file_id is not None and not db_service.save_analysis_result(int(management_file_id), "category", result):
+                raise RuntimeError(f"分析結果の保存に失敗しました (file_id={management_file_id})")
+            if category_file_id is not None and not db_service.save_category_analysis_result(int(category_file_id), result):
+                raise RuntimeError(f"分析結果の保存に失敗しました (file_id={category_file_id})")
+
+            if management_file_id is not None:
+                db_service.update_file_status(int(management_file_id), "ANALYZED")
+            if category_file_id is not None:
+                db_service.update_category_file_status(int(category_file_id), "ANALYZED")
             db_service.log_activity(
                 activity_type="CATEGORY_ANALYZE_COMPLETE",
-                description=f"分類用サンプル伝票の分析が完了しました (file_id={file_id})",
-                file_id=file_id,
+                description=f"分類用サンプル伝票の分析が完了しました (file_id={management_file_id or source_file_id})",
+                file_id=management_file_id or source_file_id,
                 user_name=user_name,
             )
     except Exception as e:
         logging.error("分類用サンプル伝票のAI分析エラー (file_ids=%s): %s", file_ids, e, exc_info=True)
-        for file_id in file_ids:
-            db_service.update_file_status(file_id, "ERROR")
-            db_service.update_category_file_status(file_id, "ERROR")
+        targets = locals().get("linked_targets") or [{"management_file_id": file_id, "category_file_id": file_id, "source_file_id": file_id} for file_id in file_ids]
+        for target in targets:
+            management_file_id = target.get("management_file_id")
+            category_file_id = target.get("category_file_id")
+            source_file_id = target.get("source_file_id")
+            if management_file_id is not None:
+                db_service.update_file_status(int(management_file_id), "ERROR")
+            if category_file_id is not None:
+                db_service.update_category_file_status(int(category_file_id), "ERROR")
             db_service.log_activity(
                 activity_type="CATEGORY_ANALYZE_ERROR",
                 description=f"分類用サンプル伝票の分析エラー: {str(e)[:200]}",
-                file_id=file_id,
+                file_id=management_file_id or source_file_id,
                 user_name=user_name,
             )
     finally:
@@ -3374,6 +3473,7 @@ def analyze_slips_for_category():
     if not file_records:
         g.response.add_error_message("指定されたファイルが見つかりません")
         return jsonify(g.response.get_result()), 404
+    linked_targets = _build_category_analysis_targets(db_service, file_records)
 
     for file_record in file_records:
         _decorate_analysis_status(file_record)
@@ -3403,13 +3503,18 @@ def analyze_slips_for_category():
         )
         return jsonify(g.response.get_result()), 400
 
-    for file_id in normalized_file_ids:
-        db_service.update_file_status(file_id, "ANALYZING")
-        db_service.update_category_file_status(file_id, "ANALYZING")
+    for target in linked_targets:
+        management_file_id = target.get("management_file_id")
+        category_file_id = target.get("category_file_id")
+        source_file_id = target.get("source_file_id")
+        if management_file_id is not None:
+            db_service.update_file_status(int(management_file_id), "ANALYZING")
+        if category_file_id is not None:
+            db_service.update_category_file_status(int(category_file_id), "ANALYZING")
         db_service.log_activity(
             activity_type="CATEGORY_ANALYZE_START",
-            description=f"分類用サンプル伝票の分析を開始しました (file_id={file_id})",
-            file_id=file_id,
+            description=f"分類用サンプル伝票の分析を開始しました (file_id={management_file_id or source_file_id})",
+            file_id=management_file_id or source_file_id,
             user_name=session.get("user", ""),
         )
 
@@ -3467,18 +3572,26 @@ def analyze_slips_for_category():
                 continue
 
         if not tmp_filepaths:
-            for file_id in normalized_file_ids:
-                db_service.update_file_status(file_id, "ERROR")
-                db_service.update_category_file_status(file_id, "ERROR")
+            for target in linked_targets:
+                management_file_id = target.get("management_file_id")
+                category_file_id = target.get("category_file_id")
+                if management_file_id is not None:
+                    db_service.update_file_status(int(management_file_id), "ERROR")
+                if category_file_id is not None:
+                    db_service.update_category_file_status(int(category_file_id), "ERROR")
             g.response.add_error_message("処理できる画像ファイルがありませんでした")
             return jsonify(g.response.get_result()), 500
 
         # 2. VLMで画像からテキストを抽出（OCRの代替）
         ocr_result = ai_service.extract_text_from_images(tmp_filepaths)
         if not ocr_result.get("success"):
-            for file_id in normalized_file_ids:
-                db_service.update_file_status(file_id, "ERROR")
-                db_service.update_category_file_status(file_id, "ERROR")
+            for target in linked_targets:
+                management_file_id = target.get("management_file_id")
+                category_file_id = target.get("category_file_id")
+                if management_file_id is not None:
+                    db_service.update_file_status(int(management_file_id), "ERROR")
+                if category_file_id is not None:
+                    db_service.update_category_file_status(int(category_file_id), "ERROR")
             g.response.add_error_message(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
             return jsonify(g.response.get_result()), 500
 
@@ -3487,9 +3600,13 @@ def analyze_slips_for_category():
         # 3. LLMで抽出テキストからスキーマ（JSON）を生成
         schema_result = ai_service.generate_sql_schema_from_text(extracted_text, analysis_mode)
         if not schema_result.get("success"):
-            for file_id in normalized_file_ids:
-                db_service.update_file_status(file_id, "ERROR")
-                db_service.update_category_file_status(file_id, "ERROR")
+            for target in linked_targets:
+                management_file_id = target.get("management_file_id")
+                category_file_id = target.get("category_file_id")
+                if management_file_id is not None:
+                    db_service.update_file_status(int(management_file_id), "ERROR")
+                if category_file_id is not None:
+                    db_service.update_category_file_status(int(category_file_id), "ERROR")
             g.response.add_error_message(f"AIによるスキーマ設計に失敗しました: {schema_result.get('message')}")
             return jsonify(g.response.get_result()), 500
             
@@ -3510,9 +3627,13 @@ def analyze_slips_for_category():
 
 
     if not all_header_fields:
-        for file_id in normalized_file_ids:
-            db_service.update_file_status(file_id, "ERROR")
-            db_service.update_category_file_status(file_id, "ERROR")
+        for target in linked_targets:
+            management_file_id = target.get("management_file_id")
+            category_file_id = target.get("category_file_id")
+            if management_file_id is not None:
+                db_service.update_file_status(int(management_file_id), "ERROR")
+            if category_file_id is not None:
+                db_service.update_category_file_status(int(category_file_id), "ERROR")
         g.response.add_error_message("分析できるファイルがありませんでした")
         return jsonify(g.response.get_result()), 500
 
@@ -3614,14 +3735,30 @@ def analyze_slips_for_category():
         "line_columns": line_columns,
         "analyzed_file_ids": analyzed_file_ids,
     }
-    for file_id in normalized_file_ids:
-        if not db_service.save_category_analysis_result(file_id, result):
-            db_service.update_file_status(file_id, "ERROR")
-            db_service.update_category_file_status(file_id, "ERROR")
-            g.response.add_error_message(f"分析結果の保存に失敗しました (file_id={file_id})")
+    for target in linked_targets:
+        management_file_id = target.get("management_file_id")
+        category_file_id = target.get("category_file_id")
+        source_file_id = target.get("source_file_id")
+
+        if management_file_id is not None and not db_service.save_analysis_result(int(management_file_id), "category", result):
+            if management_file_id is not None:
+                db_service.update_file_status(int(management_file_id), "ERROR")
+            if category_file_id is not None:
+                db_service.update_category_file_status(int(category_file_id), "ERROR")
+            g.response.add_error_message(f"分析結果の保存に失敗しました (file_id={management_file_id})")
             return jsonify(g.response.get_result()), 500
-        db_service.update_file_status(file_id, "ANALYZED")
-        db_service.update_category_file_status(file_id, "ANALYZED")
+        if category_file_id is not None and not db_service.save_category_analysis_result(int(category_file_id), result):
+            if management_file_id is not None:
+                db_service.update_file_status(int(management_file_id), "ERROR")
+            if category_file_id is not None:
+                db_service.update_category_file_status(int(category_file_id), "ERROR")
+            g.response.add_error_message(f"分析結果の保存に失敗しました (file_id={category_file_id})")
+            return jsonify(g.response.get_result()), 500
+
+        if management_file_id is not None:
+            db_service.update_file_status(int(management_file_id), "ANALYZED")
+        if category_file_id is not None:
+            db_service.update_category_file_status(int(category_file_id), "ANALYZED")
     g.response.set_data(result)
     return jsonify(g.response.get_result())
 

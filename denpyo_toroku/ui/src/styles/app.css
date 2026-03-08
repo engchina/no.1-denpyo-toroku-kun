@@ -1300,12 +1300,18 @@ html[dir="rtl"] .oracle-icon {
     text-transform: uppercase;
     letter-spacing: 0.03em;
     border-bottom: 2px solid var(--aai-neutral-interactive-1);
+    white-space: nowrap;
 }
 
 .ics-table td {
     padding: 10px 12px;
     border-bottom: 1px solid var(--aai-neutral-interactive-1);
     color: var(--aai-neutral-dark-2);
+    min-width: 80px;
+    max-width: 400px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .ics-table tbody tr:last-child td {
@@ -6675,9 +6681,12 @@ html[dir="rtl"] .oracle-icon {
     min-width: max-content;
 }
 
-.ics-browser-results .ics-table th,
-.ics-browser-results .ics-table td {
+.ics-browser-results .ics-table th {
     white-space: nowrap;
+    vertical-align: middle;
+}
+
+.ics-browser-results .ics-table td {
     vertical-align: middle;
 }
 

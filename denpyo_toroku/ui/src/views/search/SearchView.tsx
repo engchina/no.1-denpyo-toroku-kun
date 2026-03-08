@@ -382,7 +382,9 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
                       {t('search.nl.resultCount').replace('{count}', String(result.results.total || 0))}
                     </label>
                     {result.results.rows && result.results.rows.length > 0 ? (
-                      <ResultsTable columns={result.results.columns} rows={result.results.rows} />
+                      <div class="ics-browser-results">
+                        <ResultsTable columns={result.results.columns} rows={result.results.rows} />
+                      </div>
                     ) : (
                       <p class="oj-typography-body-sm">{t('search.nl.noResult')}</p>
                     )}
@@ -778,7 +780,7 @@ function TableBrowserTab({
 
           <div class="ics-card-body">
             {tableBrowserTables.length > 0 ? (
-              <>
+              <div class="ics-browser-results">
                 <div class="ics-table-wrapper">
                   <table class="ics-table ics-search-tableBrowserTableList">
                     <thead>
@@ -902,7 +904,7 @@ function TableBrowserTab({
                   show
                   summaryPlacement="controls"
                 />
-              </>
+              </div>
             ) : (
               <p class="ics-search-panelMessage">{t('search.browser.noTableList')}</p>
             )}

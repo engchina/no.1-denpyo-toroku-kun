@@ -13,6 +13,7 @@ import logging
 import json
 import os
 import re
+import threading
 import time
 import hashlib
 import datetime as dt
@@ -225,12 +226,67 @@ class DatabaseService:
     POOL_MAX = 10
     POOL_INCREMENT = 1
     TCP_CONNECT_TIMEOUT = 10
+    _shared_pool = None
+    _shared_pool_config_key: Optional[str] = None
+    _pool_lock = threading.RLock()
+    _shared_management_tables_initialized = False
+    _management_tables_lock = threading.RLock()
+    _shared_slips_tables_initialized = False
+    _slips_tables_lock = threading.RLock()
 
     def __init__(self):
         self._pool = None
         self._management_tables_initialized = False
         self._slips_tables_initialized = False
         self._user_ai_agent_teams_team_name_supported: Optional[bool] = None
+
+    @classmethod
+    def _reset_shared_initialization_flags(cls) -> None:
+        cls._shared_management_tables_initialized = False
+        cls._shared_slips_tables_initialized = False
+
+    @staticmethod
+    def _wallet_fingerprint(wallet_location: Optional[str]) -> str:
+        if not wallet_location or not os.path.isdir(wallet_location):
+            return ""
+
+        fingerprints = []
+        try:
+            for entry_name in sorted(os.listdir(wallet_location)):
+                entry_path = os.path.join(wallet_location, entry_name)
+                try:
+                    stat_result = os.stat(entry_path)
+                    fingerprints.append(
+                        f"{entry_name}:{stat_result.st_size}:{stat_result.st_mtime_ns}"
+                    )
+                except OSError:
+                    fingerprints.append(f"{entry_name}:unavailable")
+        except OSError:
+            return wallet_location
+
+        return "|".join(fingerprints)
+
+    def _build_pool_config_key(
+        self,
+        conn_info: Dict[str, str],
+        wallet_location: Optional[str],
+    ) -> str:
+        raw_value = "|".join(
+            [
+                conn_info.get("username", ""),
+                conn_info.get("password", ""),
+                conn_info.get("dsn", ""),
+                wallet_location or "",
+                self._wallet_fingerprint(wallet_location),
+            ]
+        )
+        return hashlib.sha256(raw_value.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _is_pool_not_open_error(error: Exception) -> bool:
+        message = str(error or "")
+        upper_message = message.upper()
+        return "DPY-1002" in upper_message or "CONNECTION POOL IS NOT OPEN" in upper_message
 
     def _parse_connection_string(self) -> Dict[str, str]:
         """環境変数から接続文字列をパース"""
@@ -259,57 +315,118 @@ class DatabaseService:
 
     def _ensure_pool(self) -> bool:
         """接続プールの初期化を保証"""
-        if self._pool is not None:
+        cls = type(self)
+        conn_info = self._parse_connection_string()
+        shared_pool = cls._shared_pool
+
+        if shared_pool is not None and (not conn_info["username"] or not conn_info["dsn"]):
+            self._pool = shared_pool
             return True
 
         if not ORACLEDB_AVAILABLE:
             logger.error("oracledb モジュールが利用できません")
             return False
 
-        conn_info = self._parse_connection_string()
         if not conn_info["username"] or not conn_info["dsn"]:
             logger.error("データベース接続文字列が未設定です")
             return False
 
         wallet_location = self._get_wallet_location()
+        pool_config_key = self._build_pool_config_key(conn_info, wallet_location)
 
-        try:
-            pool_kwargs = {
-                "user": conn_info["username"],
-                "password": conn_info["password"],
-                "dsn": conn_info["dsn"],
-                "min": self.POOL_MIN,
-                "max": self.POOL_MAX,
-                "increment": self.POOL_INCREMENT,
-                "tcp_connect_timeout": self.TCP_CONNECT_TIMEOUT,
-            }
-            if wallet_location:
-                pool_kwargs["config_dir"] = wallet_location
-                pool_kwargs["wallet_location"] = wallet_location
-                pool_kwargs["wallet_password"] = conn_info["password"]
-
-            self._pool = oracledb.create_pool(**pool_kwargs)
-            logger.info("データベース接続プールを作成しました (min=%d, max=%d)", self.POOL_MIN, self.POOL_MAX)
+        if shared_pool is not None and cls._shared_pool_config_key == pool_config_key:
+            self._pool = shared_pool
             return True
-        except Exception as e:
-            logger.error("接続プール作成エラー: %s", e, exc_info=True)
-            self._pool = None
-            return False
+
+        with cls._pool_lock:
+            shared_pool = cls._shared_pool
+            if shared_pool is not None and cls._shared_pool_config_key == pool_config_key:
+                self._pool = shared_pool
+                return True
+
+            if shared_pool is not None:
+                try:
+                    shared_pool.close()
+                    logger.info("データベース接続設定の変更を検知したため既存プールを閉じました")
+                except Exception as e:
+                    logger.warning("既存接続プール閉鎖エラー: %s", e)
+                finally:
+                    cls._shared_pool = None
+                    cls._shared_pool_config_key = None
+                    cls._reset_shared_initialization_flags()
+
+            try:
+                pool_kwargs = {
+                    "user": conn_info["username"],
+                    "password": conn_info["password"],
+                    "dsn": conn_info["dsn"],
+                    "min": self.POOL_MIN,
+                    "max": self.POOL_MAX,
+                    "increment": self.POOL_INCREMENT,
+                    "tcp_connect_timeout": self.TCP_CONNECT_TIMEOUT,
+                }
+                if wallet_location:
+                    pool_kwargs["config_dir"] = wallet_location
+                    pool_kwargs["wallet_location"] = wallet_location
+                    pool_kwargs["wallet_password"] = conn_info["password"]
+
+                cls._shared_pool = oracledb.create_pool(**pool_kwargs)
+                cls._shared_pool_config_key = pool_config_key
+                cls._reset_shared_initialization_flags()
+                self._pool = cls._shared_pool
+                logger.info(
+                    "データベース接続プールを作成しました (min=%d, max=%d)",
+                    self.POOL_MIN,
+                    self.POOL_MAX,
+                )
+                return True
+            except Exception as e:
+                logger.error("接続プール作成エラー: %s", e, exc_info=True)
+                self._pool = None
+                cls._shared_pool = None
+                cls._shared_pool_config_key = None
+                return False
 
     @contextmanager
     def get_connection(self):
         """接続プールからコネクションを取得するコンテキストマネージャー"""
-        if not self._ensure_pool():
-            raise ConnectionError("データベース接続プールが利用できません")
-
+        cls = type(self)
         connection = None
+        pool = None
+
+        for attempt in range(2):
+            if not self._ensure_pool():
+                raise ConnectionError("データベース接続プールが利用できません")
+
+            pool = cls._shared_pool
+            if pool is None:
+                raise ConnectionError("データベース接続プールが初期化されていません")
+
+            try:
+                connection = pool.acquire()
+                break
+            except Exception as e:
+                if attempt > 0 or not self._is_pool_not_open_error(e):
+                    raise
+
+                logger.warning("closed な接続プールを検知したため再初期化します: %s", e)
+                with cls._pool_lock:
+                    if cls._shared_pool is pool:
+                        cls._shared_pool = None
+                        cls._shared_pool_config_key = None
+                        cls._reset_shared_initialization_flags()
+                self._pool = None
+                pool = None
+
+        if connection is None or pool is None:
+            raise ConnectionError("データベース接続の取得に失敗しました")
+
         try:
-            connection = self._pool.acquire()
             yield connection
         finally:
             if connection is not None:
                 try:
-                    self._pool.release(connection)
+                    pool.release(connection)
                 except Exception:
                     pass
 
@@ -359,40 +476,48 @@ class DatabaseService:
 
     def _ensure_management_tables(self) -> bool:
         """DENPYO_* 管理テーブルの存在を保証"""
-        if self._management_tables_initialized:
-            return True
-
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    for ddl in _MANAGEMENT_TABLES_DDL:
-                        try:
-                            cursor.execute(ddl)
-                        except Exception as e:
-                            if "ORA-00955" not in str(e):
-                                logger.error("管理テーブル DDL 実行エラー: %s", e, exc_info=True)
-                                return False
-                    self._ensure_table_columns(
-                        cursor,
-                        "DENPYO_FILES",
-                        [
-                            ("ANALYSIS_KIND", "ANALYSIS_KIND VARCHAR2(30)"),
-                            ("ANALYSIS_RESULT", "ANALYSIS_RESULT BLOB"),
-                            ("ANALYZED_AT", "ANALYZED_AT TIMESTAMP"),
-                        ],
-                    )
-                    self._ensure_table_columns(
-                        cursor,
-                        "DENPYO_CATEGORIES",
-                        _CATEGORY_SELECT_AI_COLUMN_DEFINITIONS,
-                    )
-                    self._ensure_blob_column(cursor, "DENPYO_FILES", "ANALYSIS_RESULT")
-                conn.commit()
+        cls = type(self)
+        if cls._shared_management_tables_initialized:
             self._management_tables_initialized = True
             return True
-        except Exception as e:
-            logger.error("管理テーブル初期化エラー: %s", e, exc_info=True)
-            return False
+
+        with cls._management_tables_lock:
+            if cls._shared_management_tables_initialized:
+                self._management_tables_initialized = True
+                return True
+
+            try:
+                with self.get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        for ddl in _MANAGEMENT_TABLES_DDL:
+                            try:
+                                cursor.execute(ddl)
+                            except Exception as e:
+                                if "ORA-00955" not in str(e):
+                                    logger.error("管理テーブル DDL 実行エラー: %s", e, exc_info=True)
+                                    return False
+                        self._ensure_table_columns(
+                            cursor,
+                            "DENPYO_FILES",
+                            [
+                                ("ANALYSIS_KIND", "ANALYSIS_KIND VARCHAR2(30)"),
+                                ("ANALYSIS_RESULT", "ANALYSIS_RESULT BLOB"),
+                                ("ANALYZED_AT", "ANALYZED_AT TIMESTAMP"),
+                            ],
+                        )
+                        self._ensure_table_columns(
+                            cursor,
+                            "DENPYO_CATEGORIES",
+                            _CATEGORY_SELECT_AI_COLUMN_DEFINITIONS,
+                        )
+                        self._ensure_blob_column(cursor, "DENPYO_FILES", "ANALYSIS_RESULT")
+                    conn.commit()
+                cls._shared_management_tables_initialized = True
+                self._management_tables_initialized = True
+                return True
+            except Exception as e:
+                logger.error("管理テーブル初期化エラー: %s", e, exc_info=True)
+                return False
 
     def _ensure_table_columns(
         self,
@@ -714,38 +839,46 @@ END;"""
 
     def _ensure_slips_tables(self) -> bool:
         """SLIPS_RAW / SLIPS_CATEGORY テーブルとインデックスの存在を保証"""
-        if self._slips_tables_initialized:
-            return True
-
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    for ddl in (
-                        SLIPS_RAW_TABLE_DDL,
-                        SLIPS_RAW_INDEX_DDL,
-                        SLIPS_CATEGORY_TABLE_DDL,
-                        SLIPS_CATEGORY_INDEX_DDL,
-                    ):
-                        try:
-                            cursor.execute(ddl)
-                        except Exception as e:
-                            if "ORA-00955" not in str(e):
-                                logger.error("SLIPS テーブル DDL 実行エラー: %s", e, exc_info=True)
-                                return False
-                    # 既存テーブルにカラム追加（ORA-01430 は無視）
-                    for alter_ddl in _SLIPS_CATEGORY_ALTER_DDLS:
-                        try:
-                            cursor.execute(alter_ddl)
-                        except Exception as e:
-                            if "ORA-01430" not in str(e):
-                                logger.warning("SLIPS_CATEGORY ALTER エラー (無視可): %s", e)
-                    self._ensure_blob_column(cursor, "SLIPS_CATEGORY", "ANALYSIS_RESULT")
-                conn.commit()
+        cls = type(self)
+        if cls._shared_slips_tables_initialized:
             self._slips_tables_initialized = True
             return True
-        except Exception as e:
-            logger.error("SLIPS テーブル初期化エラー: %s", e, exc_info=True)
-            return False
+
+        with cls._slips_tables_lock:
+            if cls._shared_slips_tables_initialized:
+                self._slips_tables_initialized = True
+                return True
+
+            try:
+                with self.get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        for ddl in (
+                            SLIPS_RAW_TABLE_DDL,
+                            SLIPS_RAW_INDEX_DDL,
+                            SLIPS_CATEGORY_TABLE_DDL,
+                            SLIPS_CATEGORY_INDEX_DDL,
+                        ):
+                            try:
+                                cursor.execute(ddl)
+                            except Exception as e:
+                                if "ORA-00955" not in str(e):
+                                    logger.error("SLIPS テーブル DDL 実行エラー: %s", e, exc_info=True)
+                                    return False
+                        # 既存テーブルにカラム追加（ORA-01430 は無視）
+                        for alter_ddl in _SLIPS_CATEGORY_ALTER_DDLS:
+                            try:
+                                cursor.execute(alter_ddl)
+                            except Exception as e:
+                                if "ORA-01430" not in str(e):
+                                    logger.warning("SLIPS_CATEGORY ALTER エラー (無視可): %s", e)
+                        self._ensure_blob_column(cursor, "SLIPS_CATEGORY", "ANALYSIS_RESULT")
+                    conn.commit()
+                cls._shared_slips_tables_initialized = True
+                self._slips_tables_initialized = True
+                return True
+            except Exception as e:
+                logger.error("SLIPS テーブル初期化エラー: %s", e, exc_info=True)
+                return False
 
     def insert_slip_record(
         self,
@@ -1493,6 +1626,48 @@ END;"""
             logger.error("SLIPS_CATEGORY ファイル取得エラー (ids=%s): %s", ids, e, exc_info=True)
             return []
 
+    def get_slips_category_file_by_object_name(self, object_name: str) -> Optional[Dict[str, Any]]:
+        """OBJECT_NAME で SLIPS_CATEGORY レコードを取得"""
+        if not self._ensure_slips_tables():
+            return None
+
+        normalized_object_name = (object_name or "").strip()
+        if not normalized_object_name:
+            return None
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT ID, OBJECT_NAME, BUCKET_NAME, NAMESPACE,
+                                  FILE_NAME, FILE_SIZE_BYTES, CONTENT_TYPE, STATUS, CREATED_AT,
+                                  CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT,
+                                  UPDATED_AT
+                             FROM SLIPS_CATEGORY
+                            WHERE OBJECT_NAME = :1""",
+                        [normalized_object_name],
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+                    return {
+                        "id": row[0],
+                        "object_name": row[1],
+                        "bucket_name": row[2],
+                        "namespace": row[3],
+                        "file_name": row[4],
+                        "original_file_name": row[4],
+                        "file_size": row[5],
+                        "content_type": row[6] or "image/jpeg",
+                        "status": row[7] or "UPLOADED",
+                        "created_at": str(row[8]) if row[8] else "",
+                        "has_analysis_result": bool(row[9]),
+                        "updated_at": str(row[10]) if row[10] else "",
+                    }
+        except Exception as e:
+            logger.error("SLIPS_CATEGORY ファイル取得エラー (object_name=%s): %s", object_name, e, exc_info=True)
+            return None
+
     def get_slips_category_analysis_result(self, file_id: int) -> Optional[Dict[str, Any]]:
         """SLIPS_CATEGORY に保存された分析結果を取得"""
         if not self._ensure_slips_tables():
@@ -1524,6 +1699,43 @@ END;"""
                     }
         except Exception as e:
             logger.error("SLIPS_CATEGORY 分析結果取得エラー (id=%s): %s", file_id, e, exc_info=True)
+            return None
+
+    def get_slips_category_analysis_result_by_object_name(self, object_name: str) -> Optional[Dict[str, Any]]:
+        """OBJECT_NAME で SLIPS_CATEGORY に保存された分析結果を取得"""
+        if not self._ensure_slips_tables():
+            return None
+
+        normalized_object_name = (object_name or "").strip()
+        if not normalized_object_name:
+            return None
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT ANALYSIS_RESULT, ANALYZED_AT
+                             FROM SLIPS_CATEGORY
+                            WHERE OBJECT_NAME = :1""",
+                        [normalized_object_name],
+                    )
+                    row = cursor.fetchone()
+                    if not row or row[0] is None:
+                        return None
+
+                    raw_payload = row[0].read() if hasattr(row[0], "read") else row[0]
+                    if isinstance(raw_payload, memoryview):
+                        raw_payload = raw_payload.tobytes()
+                    if isinstance(raw_payload, bytes):
+                        raw_payload = raw_payload.decode("utf-8")
+                    parsed_result = json.loads(raw_payload)
+                    return {
+                        "analysis_kind": "category",
+                        "result": parsed_result,
+                        "analyzed_at": str(row[1]) if row[1] else "",
+                    }
+        except Exception as e:
+            logger.error("SLIPS_CATEGORY 分析結果取得エラー (object_name=%s): %s", object_name, e, exc_info=True)
             return None
 
     def update_category_file_status(self, file_id: int, status: str) -> bool:
@@ -2070,6 +2282,23 @@ END;"""
         if not match:
             return ""
         candidate = match.group(0).strip()
+        
+        # If the extracted statement caught trailing JSON structure (e.g. from Select AI)
+        json_tail_match = re.search(r'",\s*"[a-zA-Z0-9_]+"\s*:', candidate)
+        if json_tail_match:
+            candidate = candidate[:json_tail_match.start()]
+            
+        if candidate.endswith('"}'):
+            candidate = candidate[:-2]
+        elif candidate.endswith('}'):
+            candidate = candidate[:-1].rstrip().rstrip('"')
+            
+        # Unescape quotes and slashes if string was a JSON literal
+        try:
+            candidate = candidate.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\')
+        except Exception:
+            pass
+
         if candidate.endswith(";"):
             candidate = candidate[:-1].rstrip()
         return candidate
@@ -2114,33 +2343,44 @@ END;"""
         credential_name: str,
         oci_auth_config: Dict[str, str],
     ) -> None:
-        if self._object_exists(
-            cursor,
-            "SELECT COUNT(*) FROM USER_CREDENTIALS WHERE UPPER(CREDENTIAL_NAME) = :credential_name",
-            {"credential_name": credential_name.upper()},
-        ):
-            return
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD.DROP_CREDENTIAL(credential_name => :credential_name);
+                END;
+                """,
+                {"credential_name": credential_name},
+            )
+        except Exception as e:
+            logger.debug("Credential drop failed or skipped: %s", e)
 
-        cursor.execute(
-            """
-            BEGIN
-                DBMS_CLOUD.CREATE_CREDENTIAL(
-                    credential_name => :credential_name,
-                    user_ocid => :user_ocid,
-                    tenancy_ocid => :tenancy_ocid,
-                    private_key => :private_key,
-                    fingerprint => :fingerprint
-                );
-            END;
-            """,
-            {
-                "credential_name": credential_name,
-                "user_ocid": oci_auth_config["user"],
-                "tenancy_ocid": oci_auth_config["tenancy"],
-                "private_key": oci_auth_config["key_content"],
-                "fingerprint": oci_auth_config["fingerprint"],
-            },
-        )
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD.CREATE_CREDENTIAL(
+                        credential_name => :credential_name,
+                        user_ocid => :user_ocid,
+                        tenancy_ocid => :tenancy_ocid,
+                        private_key => :private_key,
+                        fingerprint => :fingerprint
+                    );
+                END;
+                """,
+                {
+                    "credential_name": credential_name,
+                    "user_ocid": oci_auth_config["user"],
+                    "tenancy_ocid": oci_auth_config["tenancy"],
+                    "private_key": oci_auth_config["key_content"],
+                    "fingerprint": oci_auth_config["fingerprint"],
+                },
+            )
+        except Exception as e:
+            if self._is_oracle_already_exists_error(e):
+                logger.debug("Credential already exists: %s", credential_name)
+            else:
+                raise
 
     def _ensure_select_ai_profile(
         self,
@@ -2149,27 +2389,38 @@ END;"""
         profile_name: str,
         attributes_json: str,
     ) -> None:
-        if self._object_exists(
-            cursor,
-            "SELECT COUNT(*) FROM USER_CLOUD_AI_PROFILES WHERE UPPER(PROFILE_NAME) = :profile_name",
-            {"profile_name": profile_name.upper()},
-        ):
-            return
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI.DROP_PROFILE(profile_name => :profile_name);
+                END;
+                """,
+                {"profile_name": profile_name},
+            )
+        except Exception as e:
+            logger.debug("Profile drop failed or skipped: %s", e)
 
-        cursor.execute(
-            """
-            BEGIN
-                DBMS_CLOUD_AI.CREATE_PROFILE(
-                    profile_name => :profile_name,
-                    attributes => :attributes
-                );
-            END;
-            """,
-            {
-                "profile_name": profile_name,
-                "attributes": attributes_json,
-            },
-        )
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI.CREATE_PROFILE(
+                        profile_name => :profile_name,
+                        attributes => :attributes
+                    );
+                END;
+                """,
+                {
+                    "profile_name": profile_name,
+                    "attributes": attributes_json,
+                },
+            )
+        except Exception as e:
+            if self._is_oracle_already_exists_error(e):
+                logger.debug("Profile already exists: %s", profile_name)
+            else:
+                raise
 
     def _ensure_select_ai_tool(
         self,
@@ -2178,27 +2429,38 @@ END;"""
         tool_name: str,
         attributes_json: str,
     ) -> None:
-        if self._object_exists(
-            cursor,
-            "SELECT COUNT(*) FROM USER_AI_AGENT_TOOLS WHERE UPPER(TOOL_NAME) = :tool_name",
-            {"tool_name": tool_name.upper()},
-        ):
-            return
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI_AGENT.DROP_TOOL(tool_name => :tool_name);
+                END;
+                """,
+                {"tool_name": tool_name},
+            )
+        except Exception as e:
+            logger.debug("Tool drop failed or skipped: %s", e)
 
-        cursor.execute(
-            """
-            BEGIN
-                DBMS_CLOUD_AI_AGENT.CREATE_TOOL(
-                    tool_name => :tool_name,
-                    attributes => :attributes
-                );
-            END;
-            """,
-            {
-                "tool_name": tool_name,
-                "attributes": attributes_json,
-            },
-        )
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI_AGENT.CREATE_TOOL(
+                        tool_name => :tool_name,
+                        attributes => :attributes
+                    );
+                END;
+                """,
+                {
+                    "tool_name": tool_name,
+                    "attributes": attributes_json,
+                },
+            )
+        except Exception as e:
+            if self._is_oracle_already_exists_error(e):
+                logger.debug("Tool already exists: %s", tool_name)
+            else:
+                raise
 
     def _ensure_select_ai_agent(
         self,
@@ -2207,27 +2469,38 @@ END;"""
         agent_name: str,
         attributes_json: str,
     ) -> None:
-        if self._object_exists(
-            cursor,
-            "SELECT COUNT(*) FROM USER_AI_AGENTS WHERE UPPER(AGENT_NAME) = :agent_name",
-            {"agent_name": agent_name.upper()},
-        ):
-            return
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI_AGENT.DROP_AGENT(agent_name => :agent_name);
+                END;
+                """,
+                {"agent_name": agent_name},
+            )
+        except Exception as e:
+            logger.debug("Agent drop failed or skipped: %s", e)
 
-        cursor.execute(
-            """
-            BEGIN
-                DBMS_CLOUD_AI_AGENT.CREATE_AGENT(
-                    agent_name => :agent_name,
-                    attributes => :attributes
-                );
-            END;
-            """,
-            {
-                "agent_name": agent_name,
-                "attributes": attributes_json,
-            },
-        )
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI_AGENT.CREATE_AGENT(
+                        agent_name => :agent_name,
+                        attributes => :attributes
+                    );
+                END;
+                """,
+                {
+                    "agent_name": agent_name,
+                    "attributes": attributes_json,
+                },
+            )
+        except Exception as e:
+            if self._is_oracle_already_exists_error(e):
+                logger.debug("Agent already exists: %s", agent_name)
+            else:
+                raise
 
     def _ensure_select_ai_task(
         self,
@@ -2236,27 +2509,38 @@ END;"""
         task_name: str,
         attributes_json: str,
     ) -> None:
-        if self._object_exists(
-            cursor,
-            "SELECT COUNT(*) FROM USER_AI_AGENT_TASKS WHERE UPPER(TASK_NAME) = :task_name",
-            {"task_name": task_name.upper()},
-        ):
-            return
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI_AGENT.DROP_TASK(task_name => :task_name);
+                END;
+                """,
+                {"task_name": task_name},
+            )
+        except Exception as e:
+            logger.debug("Task drop failed or skipped: %s", e)
 
-        cursor.execute(
-            """
-            BEGIN
-                DBMS_CLOUD_AI_AGENT.CREATE_TASK(
-                    task_name => :task_name,
-                    attributes => :attributes
-                );
-            END;
-            """,
-            {
-                "task_name": task_name,
-                "attributes": attributes_json,
-            },
-        )
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI_AGENT.CREATE_TASK(
+                        task_name => :task_name,
+                        attributes => :attributes
+                    );
+                END;
+                """,
+                {
+                    "task_name": task_name,
+                    "attributes": attributes_json,
+                },
+            )
+        except Exception as e:
+            if self._is_oracle_already_exists_error(e):
+                logger.debug("Task already exists: %s", task_name)
+            else:
+                raise
 
     def _ensure_select_ai_team(
         self,
@@ -2265,28 +2549,17 @@ END;"""
         team_name: str,
         attributes_json: str,
     ) -> None:
-        skip_duplicate_create_error = False
-        if self._user_ai_agent_teams_team_name_supported is not False:
-            try:
-                if self._object_exists(
-                    cursor,
-                    "SELECT COUNT(*) FROM USER_AI_AGENT_TEAMS WHERE UPPER(TEAM_NAME) = :team_name",
-                    {"team_name": team_name.upper()},
-                ):
-                    self._user_ai_agent_teams_team_name_supported = True
-                    return
-                self._user_ai_agent_teams_team_name_supported = True
-            except Exception as e:
-                if not self._is_oracle_invalid_identifier_error(e, "TEAM_NAME"):
-                    raise
-                self._user_ai_agent_teams_team_name_supported = False
-                skip_duplicate_create_error = True
-                logger.info(
-                    "USER_AI_AGENT_TEAMS の TEAM_NAME 列は利用できないため CREATE_TEAM で存在確認を代替します: %s",
-                    e,
-                )
-        else:
-            skip_duplicate_create_error = True
+        try:
+            cursor.execute(
+                """
+                BEGIN
+                    DBMS_CLOUD_AI_AGENT.DROP_TEAM(team_name => :team_name);
+                END;
+                """,
+                {"team_name": team_name},
+            )
+        except Exception as e:
+            logger.debug("Team drop failed or skipped: %s", e)
 
         try:
             cursor.execute(
@@ -2304,10 +2577,10 @@ END;"""
                 },
             )
         except Exception as e:
-            if skip_duplicate_create_error and self._is_oracle_already_exists_error(e):
+            if self._is_oracle_already_exists_error(e):
                 logger.info("Select AI team は既に存在するため再作成をスキップします: %s", team_name)
-                return
-            raise
+            else:
+                raise
 
     def _ensure_select_ai_agent_assets(
         self,
@@ -2964,15 +3237,6 @@ END;"""
     def _validate_tables_in_whitelist(self, sql: str, allowed: set) -> None:
         """SQL 内のテーブルが許可リストにあるか検証"""
         references = self._extract_table_references_from_sql(sql)
-        qualified = sorted({
-            ".".join(ref["qualified_name"])
-            for ref in references
-            if ref.get("is_qualified")
-        })
-        if qualified:
-            raise ValueError(
-                "スキーマ修飾されたテーブル参照は許可されていません: %s" % ", ".join(qualified)
-            )
 
         referenced = {str(ref.get("table_name") or "").upper() for ref in references if ref.get("table_name")}
         unauthorized = referenced - allowed
@@ -3378,21 +3642,35 @@ END;"""
 
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    query = """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT,
-                                      CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT,
-                                      UPDATED_AT
-                               FROM DENPYO_FILES WHERE 1=1"""
+                    if kind == "category":
+                        query = """SELECT f.ID, f.FILE_NAME, f.ORIGINAL_FILE_NAME, f.CONTENT_TYPE, f.FILE_SIZE, f.STATUS, f.UPLOADED_BY, f.UPLOADED_AT,
+                                          CASE
+                                              WHEN f.ANALYSIS_RESULT IS NOT NULL OR sc.ANALYSIS_RESULT IS NOT NULL THEN 1
+                                              ELSE 0
+                                          END AS HAS_ANALYSIS_RESULT,
+                                          f.UPDATED_AT
+                                   FROM DENPYO_FILES f
+                                   LEFT JOIN SLIPS_CATEGORY sc ON sc.OBJECT_NAME = f.OBJECT_STORAGE_PATH
+                                   WHERE 1=1"""
+                    else:
+                        query = """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, CONTENT_TYPE, FILE_SIZE, STATUS, UPLOADED_BY, UPLOADED_AT,
+                                          CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT,
+                                          UPDATED_AT
+                                   FROM DENPYO_FILES WHERE 1=1"""
                     params = []
 
                     if path_prefix:
-                        query += f" AND OBJECT_STORAGE_PATH LIKE :{len(params)+1}"
+                        path_column = "f.OBJECT_STORAGE_PATH" if kind == "category" else "OBJECT_STORAGE_PATH"
+                        query += f" AND {path_column} LIKE :{len(params)+1}"
                         params.append(f"{path_prefix}/%")
                     
                     if normalized_status:
-                        query += f" AND STATUS = :{len(params)+1}"
+                        status_column = "f.STATUS" if kind == "category" else "STATUS"
+                        query += f" AND {status_column} = :{len(params)+1}"
                         params.append(normalized_status)
                     
-                    query += f" ORDER BY UPLOADED_AT DESC OFFSET :{len(params)+1} ROWS FETCH NEXT :{len(params)+2} ROWS ONLY"
+                    order_column = "f.UPLOADED_AT" if kind == "category" else "UPLOADED_AT"
+                    query += f" ORDER BY {order_column} DESC OFFSET :{len(params)+1} ROWS FETCH NEXT :{len(params)+2} ROWS ONLY"
                     params.extend([offset, limit])
                     
                     cursor.execute(query, params)
@@ -3489,6 +3767,49 @@ END;"""
             logger.error("ファイル取得エラー (id=%s): %s", file_id, e, exc_info=True)
             return None
 
+    def get_file_by_object_storage_path(self, object_storage_path: str) -> Optional[Dict[str, Any]]:
+        """OBJECT_STORAGE_PATH でファイルレコードを取得"""
+        if not self._ensure_management_tables():
+            return None
+
+        normalized_path = (object_storage_path or "").strip()
+        if not normalized_path:
+            return None
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT ID, FILE_NAME, ORIGINAL_FILE_NAME, OBJECT_STORAGE_PATH,
+                                  CONTENT_TYPE, FILE_SIZE, STATUS, ANALYSIS_KIND, UPLOADED_BY, UPLOADED_AT,
+                                  CASE WHEN ANALYSIS_RESULT IS NOT NULL THEN 1 ELSE 0 END AS HAS_ANALYSIS_RESULT,
+                                  ANALYZED_AT, UPDATED_AT
+                           FROM DENPYO_FILES
+                          WHERE OBJECT_STORAGE_PATH = :1""",
+                        [normalized_path],
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+                    return {
+                        "id": row[0],
+                        "file_name": row[1],
+                        "original_file_name": row[2],
+                        "object_storage_path": row[3],
+                        "content_type": row[4],
+                        "file_size": row[5],
+                        "status": row[6],
+                        "analysis_kind": row[7],
+                        "uploaded_by": row[8],
+                        "uploaded_at": str(row[9]) if row[9] else "",
+                        "has_analysis_result": bool(row[10]),
+                        "analyzed_at": str(row[11]) if row[11] else "",
+                        "updated_at": str(row[12]) if row[12] else "",
+                    }
+        except Exception as e:
+            logger.error("ファイル取得エラー (object_storage_path=%s): %s", object_storage_path, e, exc_info=True)
+            return None
+
     def get_files_by_ids(self, ids: List[int]) -> List[Dict[str, Any]]:
         """IDのリストでDENPYO_FILESレコードを取得"""
         if not ids:
@@ -3516,6 +3837,7 @@ END;"""
                             "file_name": row[1],
                             "original_file_name": row[2],
                             "object_name": row[3],
+                            "object_storage_path": row[3],
                             "content_type": row[4] or "image/jpeg",
                             "file_size": row[5],
                             "status": row[6],
@@ -3683,13 +4005,24 @@ END;"""
             logger.error("ステータス更新エラー (id=%s): %s", file_id, e, exc_info=True)
             return False
 
+    @classmethod
+    def close_shared_pool(cls) -> None:
+        """共有接続プールを閉じる"""
+        with cls._pool_lock:
+            if cls._shared_pool is not None:
+                try:
+                    cls._shared_pool.close()
+                    logger.info("データベース接続プールを閉じました")
+                except Exception as e:
+                    logger.error("接続プール閉鎖エラー: %s", e)
+                finally:
+                    cls._shared_pool = None
+                    cls._shared_pool_config_key = None
+                    cls._reset_shared_initialization_flags()
+
     def close_pool(self) -> None:
         """接続プールを閉じる"""
-        if self._pool is not None:
-            try:
-                self._pool.close()
-                logger.info("データベース接続プールを閉じました")
-            except Exception as e:
-                logger.error("接続プール閉鎖エラー: %s", e)
-            finally:
-                self._pool = None
+        type(self).close_shared_pool()
+        self._pool = None
+        self._management_tables_initialized = False
+        self._slips_tables_initialized = False
