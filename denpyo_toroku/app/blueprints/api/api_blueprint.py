@@ -2,9 +2,12 @@ import configparser
 import logging
 import time
 import json
+import math
 import os
+import random
 import shutil
 import tempfile
+import threading
 import zipfile
 import datetime as dt
 import hashlib
@@ -27,6 +30,7 @@ except Exception:  # pragma: no cover - optional dependency
 from denpyo_toroku.app.util.response import Response
 from denpyo_toroku.config import AppConfig
 from denpyo_toroku.app.services.database_service import DatabaseService
+from denpyo_toroku.app.services.ai_service import AIRateLimitError
 
 api_blueprint = Blueprint("api_blueprint", __name__)
 
@@ -65,6 +69,19 @@ _DEFAULT_SELECT_AI_MODEL_ID = "xai.grok-code-fast-1"
 _DEFAULT_SELECT_AI_MAX_TOKENS = 32768
 _ANALYSIS_STALL_DETAIL = "ANALYSIS_TIMEOUT"
 _DEFAULT_ANALYSIS_STALL_MINUTES = 30
+_GENAI_REQUEUE_MAX_ATTEMPTS = max(0, int(os.environ.get("GENAI_REQUEUE_MAX_ATTEMPTS", "4")))
+_GENAI_REQUEUE_BASE_DELAY_SECONDS = max(
+    1.0,
+    float(os.environ.get("GENAI_REQUEUE_BASE_DELAY_SECONDS", "60.0")),
+)
+_GENAI_REQUEUE_MAX_DELAY_SECONDS = max(
+    _GENAI_REQUEUE_BASE_DELAY_SECONDS,
+    float(os.environ.get("GENAI_REQUEUE_MAX_DELAY_SECONDS", "900.0")),
+)
+_GENAI_REQUEUE_JITTER_RATIO = min(
+    0.5,
+    max(0.0, float(os.environ.get("GENAI_REQUEUE_JITTER_RATIO", "0.25"))),
+)
 
 
 def _to_bool(value, default: bool = True) -> bool:
@@ -92,6 +109,23 @@ def _normalize_text(value: Any, default: str = "") -> str:
     return str(value).strip()
 
 
+def _generate_request_id(prefix: str = "req") -> str:
+    return f"{prefix}-{int(time.time() * 1000)}-{random.getrandbits(32):08x}"
+
+
+def _build_background_request_id(prefix: str, *parts: Any) -> str:
+    seed = "|".join(_normalize_text(part) for part in parts if part is not None)
+    if not seed:
+        return _generate_request_id(prefix)
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}-{digest}"
+
+
+def _get_request_id() -> str:
+    request_id = _normalize_text(getattr(g, "request_id", ""), "")
+    return request_id or _generate_request_id()
+
+
 def _analysis_stall_timeout_seconds() -> int:
     raw_value = _normalize_text(os.environ.get("DENPYO_ANALYSIS_STALL_MINUTES"), "")
     try:
@@ -99,6 +133,43 @@ def _analysis_stall_timeout_seconds() -> int:
     except ValueError:
         minutes = _DEFAULT_ANALYSIS_STALL_MINUTES
     return max(60, minutes * 60)
+
+
+def _calculate_genai_requeue_delay(retry_count: int, retry_after_hint: Optional[float] = None) -> float:
+    exponent = max(0, retry_count - 1)
+    exponential_delay = _GENAI_REQUEUE_BASE_DELAY_SECONDS * (2 ** exponent)
+    capped_delay = min(exponential_delay, _GENAI_REQUEUE_MAX_DELAY_SECONDS)
+    lower_bound = max(1.0, capped_delay * (1.0 - _GENAI_REQUEUE_JITTER_RATIO))
+    planned_delay = random.uniform(lower_bound, capped_delay)
+    if retry_after_hint is None:
+        return planned_delay
+    return max(planned_delay, max(1.0, float(retry_after_hint)))
+
+
+def _submit_analysis_job(fn, *args, delay_seconds: float = 0.0):
+    if delay_seconds <= 0:
+        return _ANALYSIS_EXECUTOR.submit(fn, *args)
+
+    def _enqueue():
+        _ANALYSIS_EXECUTOR.submit(fn, *args)
+
+    timer = threading.Timer(delay_seconds, _enqueue)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def _build_rate_limited_json_response(message: str, retry_after_seconds: float, status_code: int = 503):
+    retry_after = max(1, int(math.ceil(retry_after_seconds)))
+    g.response.set_data({
+        "success": False,
+        "message": message,
+        "retry_after_seconds": retry_after,
+    })
+    response = jsonify(g.response.get_result())
+    response.status_code = status_code
+    response.headers["Retry-After"] = str(retry_after)
+    return response
 
 
 def _parse_timestamp(value: Any) -> Optional[dt.datetime]:
@@ -1188,6 +1259,8 @@ def _upload_database_wallet(uploaded_file: Any) -> Dict[str, Any]:
 def before_request():
     g.response = Response()
     g.request_start_time = time.time()
+    incoming_request_id = _normalize_text(request.headers.get("X-Request-ID"), "")
+    g.request_id = incoming_request_id or _generate_request_id()
 
 
 @api_blueprint.after_request
@@ -1200,6 +1273,9 @@ def after_request(response):
     if REQUEST_COUNT is not None and REQUEST_LATENCY_SECONDS is not None:
         REQUEST_COUNT.labels(method=method, endpoint=endpoint, status_code=status_code).inc()
         REQUEST_LATENCY_SECONDS.labels(method=method, endpoint=endpoint).observe(duration)
+    request_id = _normalize_text(getattr(g, "request_id", ""), "")
+    if request_id:
+        response.headers["X-Request-ID"] = request_id
     return response
 
 
@@ -2616,13 +2692,60 @@ def _cleanup_tempfiles(paths: List[str]) -> None:
             logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", path, cleanup_error)
 
 
-def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> None:
+def _schedule_rate_limited_analysis_retry(
+    *,
+    job_name: str,
+    retry_count: int,
+    retry_after_seconds: float,
+    submit_fn,
+    submit_args: tuple,
+    log_fn,
+) -> bool:
+    if retry_count > _GENAI_REQUEUE_MAX_ATTEMPTS:
+        return False
+
+    delay_seconds = _calculate_genai_requeue_delay(retry_count, retry_after_seconds)
+    logging.warning(
+        "%s: OCI GenAI のレート制限により %d/%d 回目の遅延再試行を %.1f 秒後に予約します",
+        job_name,
+        retry_count,
+        _GENAI_REQUEUE_MAX_ATTEMPTS,
+        delay_seconds,
+    )
+    log_fn(delay_seconds)
+    _submit_analysis_job(submit_fn, *submit_args, delay_seconds=delay_seconds)
+    return True
+
+
+def _queue_raw_file_analysis(
+    file_id: int,
+    category_id: int,
+    user_name: str,
+    rate_limit_retry_count: int = 0,
+) -> None:
     """本登録用伝票の AI 分析をバックグラウンド実行する"""
     from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
     from denpyo_toroku.app.services.document_processor import DocumentProcessor
     from denpyo_toroku.app.services.ai_service import AIService
 
     db_service = DatabaseService()
+    ocr_log_context = {
+        "file_id": file_id,
+        "category_id": category_id,
+        "request_id": _build_background_request_id("bg-raw-analyze", file_id, category_id),
+    }
+
+    logging.info(
+        "バックグラウンドAI分析(本登録用)を開始します",
+        extra={
+            "file_id": file_id,
+            "category_id": category_id,
+            "request_id": ocr_log_context["request_id"],
+            "user": user_name,
+            "action": "ANALYZE_START",
+            "retry_count": rate_limit_retry_count,
+        }
+    )
 
     try:
         category = db_service.get_category_by_id(category_id)
@@ -2655,6 +2778,7 @@ def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> 
         file_data = storage_service.download_file(storage_path)
         if not file_data:
             raise ValueError("Object Storage からファイルをダウンロードできませんでした")
+        logging.info("ファイルダウンロード完了", extra={"file_id": file_id, "action": "DOWNLOAD_COMPLETE"})
 
         doc_processor = DocumentProcessor()
         images = doc_processor.prepare_for_ai(file_data, file_record.get("original_file_name", ""))
@@ -2665,13 +2789,25 @@ def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> 
         tmp_paths: List[str] = []
         try:
             tmp_paths = _write_image_tempfiles(images)
-            ocr_result = ai_service.extract_text_from_images(tmp_paths)
+            logging.info(
+                "画像変換完了、OCRテキスト抽出を開始します",
+                extra={**ocr_log_context, "action": "OCR_START"},
+            )
+            ocr_result = ai_service.extract_text_from_images(tmp_paths, log_context=ocr_log_context)
             if not ocr_result.get("success"):
                 raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
             extracted_text = ocr_result.get("extracted_text", "")
+            logging.info(
+                "OCRテキスト抽出完了",
+                extra={**ocr_log_context, "text_length": len(extracted_text), "action": "OCR_COMPLETE"},
+            )
         finally:
             _cleanup_tempfiles(tmp_paths)
 
+        logging.info(
+            "LLMによるフィールドデータ抽出を開始します",
+            extra={**ocr_log_context, "action": "LLM_START"},
+        )
         extraction = ai_service.extract_data_from_text(
             ocr_text=extracted_text,
             category=category.get("category_name", ""),
@@ -2681,6 +2817,11 @@ def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> 
                 "header_columns": table_schema.get("header_columns", []),
                 "line_columns": table_schema.get("line_columns", []),
             },
+            log_context=ocr_log_context,
+        )
+        logging.info(
+            "フィールドデータ抽出完了",
+            extra={**ocr_log_context, "action": "LLM_COMPLETE"},
         )
         if not extraction.get("success"):
             raise ValueError(extraction.get("message", "フィールド抽出に失敗しました"))
@@ -2730,8 +2871,51 @@ def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> 
             file_id=file_id,
             user_name=user_name,
         )
+        logging.info("バックグラウンドAI分析(本登録用)が正常終了しました", extra={"file_id": file_id, "action": "ANALYZE_COMPLETE"})
+    except AIRateLimitError as e:
+        next_retry_count = rate_limit_retry_count + 1
+
+        def _log_retry(delay_seconds: float) -> None:
+            db_service.log_activity(
+                activity_type="ANALYZE_RETRY",
+                description=(
+                    f"OCI GenAI のレート制限により分析を再試行待ちにしました "
+                    f"({next_retry_count}/{_GENAI_REQUEUE_MAX_ATTEMPTS}, 約{int(math.ceil(delay_seconds))}秒後)"
+                ),
+                file_id=file_id,
+                user_name=user_name,
+            )
+
+        if _schedule_rate_limited_analysis_retry(
+            job_name="バックグラウンドAI分析(本登録用)",
+            retry_count=next_retry_count,
+            retry_after_seconds=e.retry_after_seconds,
+            submit_fn=_queue_raw_file_analysis,
+            submit_args=(file_id, category_id, user_name, next_retry_count),
+            log_fn=_log_retry,
+        ):
+            db_service.update_file_status(file_id, "ANALYZING")
+            return
+
+        logging.error(
+            "バックグラウンドAI分析(本登録用)がレート制限の再試行上限に到達しました: file_id=%s retry_count=%s error=%s",
+            file_id,
+            next_retry_count,
+            e,
+        )
+        error_message = (
+            f"OCI GenAI のレート制限により分析を完了できませんでした。"
+            f"再試行上限({_GENAI_REQUEUE_MAX_ATTEMPTS})に達しました。"
+        )
+        db_service.update_file_status(file_id, "ERROR")
+        db_service.log_activity(
+            activity_type="ANALYZE_ERROR",
+            description=error_message,
+            file_id=file_id,
+            user_name=user_name,
+        )
     except Exception as e:
-        logging.error("AI分析エラー (file_id=%s): %s", file_id, e, exc_info=True)
+        logging.error(f"AI分析エラー: {e}", exc_info=True, extra={"file_id": file_id, "action": "ANALYZE_ERROR"})
         db_service.update_file_status(file_id, "ERROR")
         db_service.log_activity(
             activity_type="ANALYZE_ERROR",
@@ -2741,7 +2925,12 @@ def _queue_raw_file_analysis(file_id: int, category_id: int, user_name: str) -> 
         )
 
 
-def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_name: str) -> None:
+def _queue_category_slip_analysis(
+    file_ids: List[int],
+    analysis_mode: str,
+    user_name: str,
+    rate_limit_retry_count: int = 0,
+) -> None:
     """分類用サンプル伝票の AI 分析をバックグラウンド実行する"""
     from denpyo_toroku.app.services.oci_storage_service import OCIStorageService
     from denpyo_toroku.app.services.document_processor import DocumentProcessor
@@ -2749,6 +2938,27 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
 
     db_service = DatabaseService()
     tmp_filepaths: List[str] = []
+    ocr_log_context = {
+        "file_ids": file_ids,
+        "analysis_mode": analysis_mode,
+        "request_id": _build_background_request_id(
+            "bg-category-analyze",
+            analysis_mode,
+            ",".join(str(file_id) for file_id in sorted(file_ids)),
+        ),
+    }
+
+    logging.info(
+        "バックグラウンドAI分析(分類用サンプル)を開始します",
+        extra={
+            "file_ids": file_ids,
+            "analysis_mode": analysis_mode,
+            "request_id": ocr_log_context["request_id"],
+            "user": user_name,
+            "action": "CATEGORY_ANALYZE_START",
+            "retry_count": rate_limit_retry_count,
+        }
+    )
 
     try:
         file_records = db_service.get_files_by_ids(file_ids)
@@ -2766,12 +2976,12 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
             object_name = rec.get("object_name", "")
             file_data = storage_service.download_file(object_name)
             if not file_data:
-                logging.warning("ファイルダウンロード失敗: %s", object_name)
+                logging.warning("ファイルダウンロード失敗", extra={"object_name": object_name, "action": "DOWNLOAD_FAILED"})
                 continue
 
             images = doc_processor.prepare_for_ai(file_data, rec.get("original_file_name", ""))
             if not images:
-                logging.warning("AI分析用画像の生成に失敗: %s", object_name)
+                logging.warning("AI分析用画像の生成に失敗", extra={"object_name": object_name, "action": "IMAGE_CONVERSION_FAILED"})
                 continue
 
             for image_data, img_content_type in images:
@@ -2782,18 +2992,37 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
                 tmp_filepaths.append(tmp_path)
             if rec.get("id"):
                 processed_file_ids.append(rec.get("id"))
+                logging.info("ファイルの前処理(ダウンロード・画像変換)完了", extra={"file_id": rec.get("id"), "action": "PREPROCESS_COMPLETE"})
 
         if not tmp_filepaths:
             raise ValueError("処理できる画像ファイルがありませんでした")
 
-        ocr_result = ai_service.extract_text_from_images(tmp_filepaths)
+        logging.info("OCRテキスト抽出を開始します", extra={**ocr_log_context, "action": "OCR_START"})
+        ocr_result = ai_service.extract_text_from_images(tmp_filepaths, log_context=ocr_log_context)
         if not ocr_result.get("success"):
             raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
 
         extracted_text = ocr_result.get("extracted_text", "")
-        schema_result = ai_service.generate_sql_schema_from_text(extracted_text, analysis_mode)
+        logging.info(
+            "OCRテキスト抽出完了",
+            extra={**ocr_log_context, "text_length": len(extracted_text), "action": "OCR_COMPLETE"},
+        )
+
+        logging.info(
+            "LLMによるスキーマ設計を開始します",
+            extra={**ocr_log_context, "action": "SCHEMA_DESIGN_START"},
+        )
+        schema_result = ai_service.generate_sql_schema_from_text(
+            extracted_text,
+            analysis_mode,
+            log_context=ocr_log_context,
+        )
         if not schema_result.get("success"):
             raise ValueError(f"AIによるスキーマ設計に失敗しました: {schema_result.get('message')}")
+        logging.info(
+            "AIスキーマ設計完了",
+            extra={**ocr_log_context, "action": "SCHEMA_DESIGN_COMPLETE"},
+        )
 
         def _merge_fields(fields_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             seen: Dict[str, Dict[str, Any]] = {}
@@ -2908,8 +3137,70 @@ def _queue_category_slip_analysis(file_ids: List[int], analysis_mode: str, user_
                 file_id=management_file_id or source_file_id,
                 user_name=user_name,
             )
+        logging.info("バックグラウンドAI分析(分類用サンプル)が正常終了しました", extra={"file_ids": file_ids, "action": "CATEGORY_ANALYZE_COMPLETE"})
+    except AIRateLimitError as e:
+        next_retry_count = rate_limit_retry_count + 1
+        targets = locals().get("linked_targets") or [
+            {"management_file_id": file_id, "category_file_id": file_id, "source_file_id": file_id}
+            for file_id in file_ids
+        ]
+
+        def _log_retry(delay_seconds: float) -> None:
+            for target in targets:
+                management_file_id = target.get("management_file_id")
+                source_file_id = target.get("source_file_id")
+                db_service.log_activity(
+                    activity_type="CATEGORY_ANALYZE_RETRY",
+                    description=(
+                        f"OCI GenAI のレート制限により分類用分析を再試行待ちにしました "
+                        f"({next_retry_count}/{_GENAI_REQUEUE_MAX_ATTEMPTS}, 約{int(math.ceil(delay_seconds))}秒後)"
+                    ),
+                    file_id=management_file_id or source_file_id,
+                    user_name=user_name,
+                )
+
+        if _schedule_rate_limited_analysis_retry(
+            job_name="バックグラウンドAI分析(分類用サンプル)",
+            retry_count=next_retry_count,
+            retry_after_seconds=e.retry_after_seconds,
+            submit_fn=_queue_category_slip_analysis,
+            submit_args=(file_ids, analysis_mode, user_name, next_retry_count),
+            log_fn=_log_retry,
+        ):
+            for target in targets:
+                management_file_id = target.get("management_file_id")
+                category_file_id = target.get("category_file_id")
+                if management_file_id is not None:
+                    db_service.update_file_status(int(management_file_id), "ANALYZING")
+                if category_file_id is not None:
+                    db_service.update_category_file_status(int(category_file_id), "ANALYZING")
+            return
+
+        logging.error(
+            "バックグラウンドAI分析(分類用サンプル)がレート制限の再試行上限に到達しました: file_ids=%s retry_count=%s error=%s",
+            file_ids,
+            next_retry_count,
+            e,
+        )
+        for target in targets:
+            management_file_id = target.get("management_file_id")
+            category_file_id = target.get("category_file_id")
+            source_file_id = target.get("source_file_id")
+            if management_file_id is not None:
+                db_service.update_file_status(int(management_file_id), "ERROR")
+            if category_file_id is not None:
+                db_service.update_category_file_status(int(category_file_id), "ERROR")
+            db_service.log_activity(
+                activity_type="CATEGORY_ANALYZE_ERROR",
+                description=(
+                    f"OCI GenAI のレート制限により分類用分析を完了できませんでした。"
+                    f"再試行上限({_GENAI_REQUEUE_MAX_ATTEMPTS})に達しました。"
+                ),
+                file_id=management_file_id or source_file_id,
+                user_name=user_name,
+            )
     except Exception as e:
-        logging.error("分類用サンプル伝票のAI分析エラー (file_ids=%s): %s", file_ids, e, exc_info=True)
+        logging.error(f"分類用サンプル伝票のAI分析エラー: {e}", exc_info=True, extra={"file_ids": file_ids, "action": "CATEGORY_ANALYZE_ERROR"})
         targets = locals().get("linked_targets") or [{"management_file_id": file_id, "category_file_id": file_id, "source_file_id": file_id} for file_id in file_ids]
         for target in targets:
             management_file_id = target.get("management_file_id")
@@ -2966,8 +3257,8 @@ def analyze_file(file_id: int):
         table_schema = db_service.get_category_table_schema(category_id)
         if not table_schema:
             logging.warning(
-                "カテゴリ構造の取得に失敗したため、テーブル名のみで分析を継続します (category_id=%s)",
-                category_id,
+                "カテゴリ構造の取得に失敗したため、テーブル名のみで分析を継続します",
+                extra={"category_id": category_id, "action": "CATEGORY_SCHEMA_MISSING"}
             )
             table_schema = {
                 "header_table_name": category.get("header_table_name", ""),
@@ -3005,7 +3296,7 @@ def analyze_file(file_id: int):
                 file_id=file_id,
                 user_name=user,
             )
-            _ANALYSIS_EXECUTOR.submit(_queue_raw_file_analysis, file_id, category_id, user)
+            _submit_analysis_job(_queue_raw_file_analysis, file_id, category_id, user)
             g.response.set_data({
                 "file_id": str(file_id),
                 "status": "ANALYZING",
@@ -3035,6 +3326,7 @@ def analyze_file(file_id: int):
             db_service.update_file_status(file_id, "ERROR")
             g.response.set_data({"success": False, "message": "Object Storage からファイルをダウンロードできませんでした"})
             return jsonify(g.response.get_result()), 500
+        logging.info("ファイルダウンロード完了", extra={"file_id": file_id, "action": "DOWNLOAD_COMPLETE"})
 
         # 5. AI分析用にページ画像を準備
         doc_processor = DocumentProcessor()
@@ -3045,22 +3337,39 @@ def analyze_file(file_id: int):
             return jsonify(g.response.get_result()), 500
 
         ai_service = AIService()
+        ocr_log_context = {
+            "file_id": file_id,
+            "category_id": category_id,
+            "request_id": _get_request_id(),
+        }
 
         # 6. VLM経由でのOCRテキスト抽出（ページごとに実行し、最後に結合）
         tmp_paths: List[str] = []
         try:
             tmp_paths = _write_image_tempfiles(images)
-            ocr_result = ai_service.extract_text_from_images(tmp_paths)
+            logging.info(
+                "画像変換完了、OCRテキスト抽出を開始します",
+                extra={**ocr_log_context, "action": "OCR_START"},
+            )
+            ocr_result = ai_service.extract_text_from_images(tmp_paths, log_context=ocr_log_context)
             if not ocr_result.get("success"):
                 db_service.update_file_status(file_id, "ERROR")
                 g.response.set_data({"success": False, "message": f"テキスト抽出に失敗しました: {ocr_result.get('message')}"})
                 return jsonify(g.response.get_result()), 500
 
             extracted_text = ocr_result.get("extracted_text", "")
+            logging.info(
+                "OCRテキスト抽出完了",
+                extra={**ocr_log_context, "text_length": len(extracted_text), "action": "OCR_COMPLETE"},
+            )
         finally:
             _cleanup_tempfiles(tmp_paths)
 
         # 7. AI抽出（カテゴリ構造を指定してLLMでデータ生成）
+        logging.info(
+            "LLMによるフィールドデータ抽出を開始します",
+            extra={**ocr_log_context, "action": "LLM_START"},
+        )
         extraction = ai_service.extract_data_from_text(
             ocr_text=extracted_text,
             category=category.get("category_name", ""),
@@ -3070,6 +3379,11 @@ def analyze_file(file_id: int):
                 "header_columns": table_schema.get("header_columns", []),
                 "line_columns": table_schema.get("line_columns", []),
             },
+            log_context=ocr_log_context,
+        )
+        logging.info(
+            "フィールドデータ抽出完了",
+            extra={**ocr_log_context, "action": "LLM_COMPLETE"},
         )
         if not extraction.get("success"):
             db_service.update_file_status(file_id, "ERROR")
@@ -3100,6 +3414,7 @@ def analyze_file(file_id: int):
             ),
             file_id=file_id, user_name=user,
         )
+        logging.info("AI分析(本登録用)が正常終了しました", extra={"file_id": file_id, "action": "ANALYZE_COMPLETE"})
 
         # 9. レスポンス構築
         result = {
@@ -3140,8 +3455,28 @@ def analyze_file(file_id: int):
         g.response.set_data(result)
         return jsonify(g.response.get_result())
 
+    except AIRateLimitError as e:
+        logging.warning(
+            "AI分析が OCI GenAI のレート制限により中断されました: file_id=%s retry_after=%.1fs",
+            file_id,
+            e.retry_after_seconds,
+        )
+        db_service.update_file_status(file_id, "ERROR")
+        db_service.log_activity(
+            activity_type="ANALYZE_ERROR",
+            description=(
+                f"OCI GenAI のレート制限により分析を完了できませんでした。"
+                f" {int(math.ceil(e.retry_after_seconds))}秒以上空けて再実行してください。"
+            ),
+            file_id=file_id,
+            user_name=user,
+        )
+        return _build_rate_limited_json_response(
+            "OCI GenAI が混み合っているため分析を一時中断しました。しばらく待ってから再実行してください。",
+            e.retry_after_seconds,
+        )
     except Exception as e:
-        logging.error("AI分析エラー (file_id=%s): %s", file_id, e, exc_info=True)
+        logging.error(f"AI分析エラー: {e}", exc_info=True, extra={"file_id": file_id, "action": "ANALYZE_ERROR"})
         db_service.update_file_status(file_id, "ERROR")
         db_service.log_activity(
             activity_type="ANALYZE_ERROR",
@@ -3519,7 +3854,7 @@ def analyze_slips_for_category():
         )
 
     if run_async:
-        _ANALYSIS_EXECUTOR.submit(
+        _submit_analysis_job(
             _queue_category_slip_analysis,
             normalized_file_ids,
             analysis_mode,
@@ -3582,8 +3917,18 @@ def analyze_slips_for_category():
             g.response.add_error_message("処理できる画像ファイルがありませんでした")
             return jsonify(g.response.get_result()), 500
 
+        ocr_log_context = {
+            "file_ids": normalized_file_ids,
+            "analysis_mode": analysis_mode,
+            "request_id": _get_request_id(),
+        }
         # 2. VLMで画像からテキストを抽出（OCRの代替）
-        ocr_result = ai_service.extract_text_from_images(tmp_filepaths)
+        logging.info(
+            "ファイルダウンロード及び画像変換完了、OCRテキスト抽出を開始します (対象ファイル数: %d)",
+            len(tmp_filepaths),
+            extra={**ocr_log_context, "action": "OCR_START"},
+        )
+        ocr_result = ai_service.extract_text_from_images(tmp_filepaths, log_context=ocr_log_context)
         if not ocr_result.get("success"):
             for target in linked_targets:
                 management_file_id = target.get("management_file_id")
@@ -3596,9 +3941,27 @@ def analyze_slips_for_category():
             return jsonify(g.response.get_result()), 500
 
         extracted_text = ocr_result.get("extracted_text", "")
+        logging.info(
+            "OCRテキスト抽出完了 (文字数=%d)",
+            len(extracted_text),
+            extra={**ocr_log_context, "text_length": len(extracted_text), "action": "OCR_COMPLETE"},
+        )
 
         # 3. LLMで抽出テキストからスキーマ（JSON）を生成
-        schema_result = ai_service.generate_sql_schema_from_text(extracted_text, analysis_mode)
+        logging.info(
+            "LLMによるフィールドデータ抽出(スキーマ推論)を開始します",
+            extra={**ocr_log_context, "action": "SCHEMA_DESIGN_START"},
+        )
+        schema_result = ai_service.generate_sql_schema_from_text(
+            extracted_text,
+            analysis_mode,
+            log_context=ocr_log_context,
+        )
+        logging.info(
+            "LLM推論完了: %s",
+            json.dumps(schema_result),
+            extra={**ocr_log_context, "action": "SCHEMA_DESIGN_COMPLETE"},
+        )
         if not schema_result.get("success"):
             for target in linked_targets:
                 management_file_id = target.get("management_file_id")
@@ -3613,7 +3976,23 @@ def analyze_slips_for_category():
         # 4. JSONから header_columns, line_columns を取得する
         all_header_fields = schema_result.get("header_fields", [])
         all_line_fields = schema_result.get("line_fields", [])
-        
+    except AIRateLimitError as e:
+        logging.warning(
+            "分類用サンプル伝票の同期分析が OCI GenAI のレート制限により中断されました: file_ids=%s retry_after=%.1fs",
+            normalized_file_ids,
+            e.retry_after_seconds,
+        )
+        for target in linked_targets:
+            management_file_id = target.get("management_file_id")
+            category_file_id = target.get("category_file_id")
+            if management_file_id is not None:
+                db_service.update_file_status(int(management_file_id), "ERROR")
+            if category_file_id is not None:
+                db_service.update_category_file_status(int(category_file_id), "ERROR")
+        return _build_rate_limited_json_response(
+            "OCI GenAI が混み合っているため分類用サンプル分析を一時中断しました。しばらく待ってから再実行してください。",
+            e.retry_after_seconds,
+        )
     finally:
         # クリーンアップ: 一時ファイルを削除
         for path in tmp_filepaths:
@@ -3759,6 +4138,8 @@ def analyze_slips_for_category():
             db_service.update_file_status(int(management_file_id), "ANALYZED")
         if category_file_id is not None:
             db_service.update_category_file_status(int(category_file_id), "ANALYZED")
+            
+    logging.info("AI分析(分類用サンプル)が正常終了しました")
     g.response.set_data(result)
     return jsonify(g.response.get_result())
 
@@ -4105,7 +4486,18 @@ def _run_direct_llm_search(
         }
 
     ai_service = AIService()
-    ai_result = ai_service.text_to_sql(query, table_schemas)
+    try:
+        ai_result = ai_service.text_to_sql(query, table_schemas)
+    except AIRateLimitError as e:
+        return {
+            "success": False,
+            "status_code": 503,
+            "error_message": (
+                "OCI GenAI が混み合っているため検索 SQL を生成できませんでした。"
+                " しばらく待ってから再実行してください。"
+            ),
+            "retry_after_seconds": int(math.ceil(e.retry_after_seconds)),
+        }
     if not ai_result.get("success"):
         return {
             "success": False,

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import random
+import threading
 import time
 import requests
 from typing import Any, Dict, List, Optional
@@ -19,12 +20,131 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # レート制限対応のリトライ設定（Generative AI API用）
-GENAI_API_MAX_RETRIES = int(os.environ.get("GENAI_API_MAX_RETRIES", "5"))
-GENAI_API_BASE_DELAY = float(os.environ.get("GENAI_API_BASE_DELAY", "2.0"))
-GENAI_API_MAX_DELAY = float(os.environ.get("GENAI_API_MAX_DELAY", "180.0"))
-GENAI_API_JITTER = float(os.environ.get("GENAI_API_JITTER", "0.15"))
+GENAI_API_MAX_RETRIES = max(1, int(os.environ.get("GENAI_API_MAX_RETRIES", "3")))
+GENAI_API_BASE_DELAY = max(0.1, float(os.environ.get("GENAI_API_BASE_DELAY", "1.0")))
+GENAI_API_MAX_DELAY = max(GENAI_API_BASE_DELAY, float(os.environ.get("GENAI_API_MAX_DELAY", "8.0")))
+GENAI_API_BACKOFF_MULTIPLIER = max(1.5, float(os.environ.get("GENAI_API_BACKOFF_MULTIPLIER", "2.0")))
+GENAI_API_JITTER = min(0.5, max(0.0, float(os.environ.get("GENAI_API_JITTER", "0.5"))))
+GENAI_GLOBAL_MAX_CONCURRENCY = max(1, int(os.environ.get("GENAI_GLOBAL_MAX_CONCURRENCY", "1")))
+GENAI_MIN_REQUEST_INTERVAL_SECONDS = max(
+    0.0,
+    float(os.environ.get("GENAI_MIN_REQUEST_INTERVAL_SECONDS", "1.0")),
+)
+GENAI_RATE_LIMIT_COOLDOWN_SECONDS = max(
+    GENAI_MIN_REQUEST_INTERVAL_SECONDS,
+    float(os.environ.get("GENAI_RATE_LIMIT_COOLDOWN_SECONDS", "30.0")),
+)
+GENAI_PROGRESS_LOG_INTERVAL_SECONDS = max(
+    0.0,
+    float(os.environ.get("GENAI_PROGRESS_LOG_INTERVAL_SECONDS", "15.0")),
+)
 GENAI_JSON_PARSE_RETRIES = max(1, int(os.environ.get("GENAI_JSON_PARSE_RETRIES", "3")))
 GENAI_RECOVERY_MAX_RETRIES = max(1, int(os.environ.get("GENAI_RECOVERY_MAX_RETRIES", "2")))
+
+
+def _parse_ocr_max_edge_steps(raw_value: str) -> tuple[int, ...]:
+    default_steps = (2400, 1800, 1400, 1100)
+    candidates: List[int] = []
+    seen = set()
+    for raw_part in (raw_value or "").split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        try:
+            max_edge = int(part)
+        except ValueError:
+            continue
+        if max_edge <= 0:
+            continue
+        if max_edge in seen:
+            continue
+        seen.add(max_edge)
+        candidates.append(max_edge)
+
+    return tuple(candidates or default_steps)
+
+
+GENAI_OCR_IMAGE_MAX_EDGE_STEPS = _parse_ocr_max_edge_steps(
+    os.environ.get("GENAI_OCR_IMAGE_MAX_EDGE_STEPS", "2400,1800,1400,1100")
+)
+
+
+class AIRateLimitError(Exception):
+    """OCI GenAI の 429 を上位へ透過するための例外"""
+
+    def __init__(self, operation_name: str, retry_after_seconds: float, original_error: Exception):
+        self.operation_name = operation_name
+        self.retry_after_seconds = max(1.0, float(retry_after_seconds))
+        self.original_error = original_error
+        super().__init__(
+            f"{operation_name}: OCI GenAI request throttled; retry after {self.retry_after_seconds:.1f}s"
+        )
+
+
+class _GenAIRequestGate:
+    """全 AIService インスタンスで共有する簡易レート制御"""
+
+    def __init__(self):
+        self._semaphore = threading.BoundedSemaphore(GENAI_GLOBAL_MAX_CONCURRENCY)
+        self._lock = threading.Lock()
+        self._next_allowed_monotonic = 0.0
+
+    def _reserve_slot(self, operation_name: str) -> None:
+        semaphore_wait_started_at: Optional[float] = None
+        if GENAI_PROGRESS_LOG_INTERVAL_SECONDS > 0:
+            while not self._semaphore.acquire(timeout=GENAI_PROGRESS_LOG_INTERVAL_SECONDS):
+                if semaphore_wait_started_at is None:
+                    semaphore_wait_started_at = time.monotonic()
+                logger.info(
+                    "%s: GenAI 実行枠の空きを待機中です (elapsed=%.1fs)",
+                    operation_name,
+                    time.monotonic() - semaphore_wait_started_at,
+                )
+        else:
+            self._semaphore.acquire()
+
+        if semaphore_wait_started_at is not None:
+            logger.info(
+                "%s: GenAI 実行枠を取得しました (waited=%.1fs)",
+                operation_name,
+                time.monotonic() - semaphore_wait_started_at,
+            )
+        try:
+            while True:
+                with self._lock:
+                    wait_seconds = max(0.0, self._next_allowed_monotonic - time.monotonic())
+                    if wait_seconds <= 0:
+                        self._next_allowed_monotonic = (
+                            time.monotonic() + GENAI_MIN_REQUEST_INTERVAL_SECONDS
+                        )
+                        return
+                logger.info(
+                    "%s: GenAI グローバルレート制御により %.2fs 待機します",
+                    operation_name,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+        except Exception:
+            self._semaphore.release()
+            raise
+
+    def call(self, operation_name: str, func, *args, **kwargs):
+        self._reserve_slot(operation_name)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            self._semaphore.release()
+
+    def note_rate_limit(self, retry_after_seconds: float) -> None:
+        cooldown = max(GENAI_RATE_LIMIT_COOLDOWN_SECONDS, float(retry_after_seconds))
+        with self._lock:
+            self._next_allowed_monotonic = max(
+                self._next_allowed_monotonic,
+                time.monotonic() + cooldown,
+            )
+
+
+_GENAI_REQUEST_GATE = _GenAIRequestGate()
 
 
 class AIService:
@@ -43,6 +163,7 @@ class AIService:
         self._llm_model_id = os.environ.get("LLM_MODEL_ID", "xai.grok-code-fast-1")
         self._vlm_model_id = os.environ.get("VLM_MODEL_ID", "google.gemini-2.5-flash")
         self._max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "65536"))
+        self._vlm_max_tokens = int(os.environ.get("VLM_MAX_TOKENS", "8192"))
         self._temperature = float(os.environ.get("LLM_TEMPERATURE", "0.0"))
         self._service_endpoint = os.environ.get(
             "OCI_SERVICE_ENDPOINT",
@@ -79,39 +200,242 @@ class AIService:
 
         return self._client
 
+    def _build_log_extra(self, log_context: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+        extra: Dict[str, Any] = {}
+        if log_context:
+            extra.update({key: value for key, value in log_context.items() if value is not None})
+        extra.update({key: value for key, value in kwargs.items() if value is not None})
+        return extra
+
+    def _build_operation_log_extra(
+        self,
+        operation_name: str,
+        attempt: Optional[int],
+        max_attempts: Optional[int],
+        log_context: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"operation_name": operation_name}
+        if attempt is not None:
+            payload["genai_attempt"] = attempt
+        if max_attempts is not None:
+            payload["genai_max_attempts"] = max_attempts
+        payload.update(kwargs)
+        return self._build_log_extra(log_context, **payload)
+
+    def _start_request_progress_logger(
+        self,
+        operation_name: str,
+        attempt: int,
+        max_attempts: int,
+        started_at: float,
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> tuple[Optional[threading.Event], Optional[threading.Thread]]:
+        if GENAI_PROGRESS_LOG_INTERVAL_SECONDS <= 0:
+            return None, None
+
+        stop_event = threading.Event()
+
+        def _emit_progress() -> None:
+            while not stop_event.wait(GENAI_PROGRESS_LOG_INTERVAL_SECONDS):
+                elapsed = time.monotonic() - started_at
+                logger.info(
+                    "%s: OCI GenAI 応答を待機中です (attempt %d/%d, elapsed=%.1fs)",
+                    operation_name,
+                    attempt,
+                    max_attempts,
+                    elapsed,
+                    extra=self._build_operation_log_extra(
+                        operation_name,
+                        attempt,
+                        max_attempts,
+                        log_context,
+                        elapsed_seconds=round(elapsed, 3),
+                    ),
+                )
+
+        progress_thread = threading.Thread(
+            target=_emit_progress,
+            name=f"genai_progress_{threading.get_ident()}",
+            daemon=True,
+        )
+        progress_thread.start()
+        return stop_event, progress_thread
+
+    def _stop_request_progress_logger(
+        self,
+        stop_event: Optional[threading.Event],
+        progress_thread: Optional[threading.Thread],
+    ) -> None:
+        if stop_event is not None:
+            stop_event.set()
+        if progress_thread is not None:
+            progress_thread.join(timeout=0.2)
+
     def _is_rate_limit_error(self, error: Exception) -> bool:
+        status = getattr(error, "status", None)
+        if status == 429:
+            return True
         error_str = str(error).lower()
         return (
             '429' in error_str
             or 'too many requests' in error_str
             or 'rate limit exceeded' in error_str
+            or 'request is throttled' in error_str
         )
 
-    def _calculate_backoff_delay(self, attempt: int, is_rate_limit: bool = False) -> float:
-        base_multiplier = 4.0 if is_rate_limit else 2.0
-        delay = GENAI_API_BASE_DELAY * (base_multiplier ** attempt)
-        delay = min(delay, GENAI_API_MAX_DELAY)
-        jitter = random.uniform(-GENAI_API_JITTER, GENAI_API_JITTER) * delay
-        return max(0.1, delay + jitter)
+    def _extract_retry_after_seconds(self, error: Exception) -> Optional[float]:
+        headers = getattr(error, "headers", None) or {}
+        if isinstance(headers, dict):
+            retry_after = headers.get("Retry-After") or headers.get("retry-after")
+            if retry_after is not None:
+                try:
+                    return max(1.0, float(retry_after))
+                except (TypeError, ValueError):
+                    pass
+        return None
 
-    def _retry_api_call(self, operation_name: str, func, *args, **kwargs):
+    def _is_retryable_error(self, error: Exception) -> bool:
+        if self._is_rate_limit_error(error):
+            return False
+        status = getattr(error, "status", None)
+        if isinstance(status, int) and status in {408, 409, 425, 500, 502, 503, 504}:
+            return True
+        if isinstance(error, (requests.Timeout, requests.ConnectionError)):
+            return True
+        error_str = str(error).lower()
+        return any(
+            token in error_str
+            for token in (
+                "timeout",
+                "timed out",
+                "connection reset",
+                "connection aborted",
+                "temporarily unavailable",
+                "transient",
+                "service unavailable",
+            )
+        )
+
+    def _raise_if_rate_limited(self, error: Exception) -> None:
+        if isinstance(error, AIRateLimitError):
+            raise error
+
+    def _calculate_backoff_delay(self, attempt: int) -> float:
+        exponential_delay = GENAI_API_BASE_DELAY * (GENAI_API_BACKOFF_MULTIPLIER ** attempt)
+        capped_delay = min(exponential_delay, GENAI_API_MAX_DELAY)
+        lower_bound = max(0.1, capped_delay * (1.0 - GENAI_API_JITTER))
+        return random.uniform(lower_bound, capped_delay)
+
+    def _retry_api_call(
+        self,
+        operation_name: str,
+        func,
+        *args,
+        log_context: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ):
         """リトライ付きAPI呼び出し"""
         last_error = None
         for attempt in range(GENAI_API_MAX_RETRIES):
+            attempt_no = attempt + 1
+            started_at = time.monotonic()
+            logger.info(
+                "%s: OCI GenAI リクエスト送信を開始します (attempt %d/%d)",
+                operation_name,
+                attempt_no,
+                GENAI_API_MAX_RETRIES,
+                extra=self._build_operation_log_extra(
+                    operation_name,
+                    attempt_no,
+                    GENAI_API_MAX_RETRIES,
+                    log_context,
+                ),
+            )
+            stop_event: Optional[threading.Event] = None
+            progress_thread: Optional[threading.Thread] = None
             try:
-                return func(*args, **kwargs)
+                stop_event, progress_thread = self._start_request_progress_logger(
+                    operation_name,
+                    attempt_no,
+                    GENAI_API_MAX_RETRIES,
+                    started_at,
+                    log_context=log_context,
+                )
+                result = _GENAI_REQUEST_GATE.call(operation_name, func, *args, **kwargs)
+                elapsed = time.monotonic() - started_at
+                logger.info(
+                    "%s: OCI GenAI 応答を受信しました (attempt %d/%d, elapsed=%.1fs)",
+                    operation_name,
+                    attempt_no,
+                    GENAI_API_MAX_RETRIES,
+                    elapsed,
+                    extra=self._build_operation_log_extra(
+                        operation_name,
+                        attempt_no,
+                        GENAI_API_MAX_RETRIES,
+                        log_context,
+                        elapsed_seconds=round(elapsed, 3),
+                    ),
+                )
+                return result
             except Exception as e:
                 last_error = e
-                is_rate_limit = self._is_rate_limit_error(e)
-                if attempt < GENAI_API_MAX_RETRIES - 1:
-                    delay = self._calculate_backoff_delay(attempt, is_rate_limit)
+                elapsed = time.monotonic() - started_at
+                if self._is_rate_limit_error(e):
+                    retry_after_seconds = (
+                        self._extract_retry_after_seconds(e) or GENAI_RATE_LIMIT_COOLDOWN_SECONDS
+                    )
+                    _GENAI_REQUEST_GATE.note_rate_limit(retry_after_seconds)
                     logger.warning(
-                        "%s: 試行 %d/%d 失敗 (%s)。%.1f秒後にリトライ...",
-                        operation_name, attempt + 1, GENAI_API_MAX_RETRIES, str(e)[:100], delay
+                        "%s: OCI GenAI の 429 を検知しました。ジョブ全体を %.1f 秒以上遅延して再試行してください: %s",
+                        operation_name,
+                        retry_after_seconds,
+                        str(e)[:200],
+                        extra=self._build_operation_log_extra(
+                            operation_name,
+                            attempt_no,
+                            GENAI_API_MAX_RETRIES,
+                            log_context,
+                            retry_after_seconds=retry_after_seconds,
+                            elapsed_seconds=round(elapsed, 3),
+                        ),
+                    )
+                    raise AIRateLimitError(operation_name, retry_after_seconds, e) from e
+                if attempt < GENAI_API_MAX_RETRIES - 1 and self._is_retryable_error(e):
+                    delay = self._calculate_backoff_delay(attempt)
+                    logger.warning(
+                        "%s: 試行 %d/%d 失敗 (%s)。%.1f秒後に指数バックオフでリトライします",
+                        operation_name,
+                        attempt_no,
+                        GENAI_API_MAX_RETRIES,
+                        str(e)[:100],
+                        delay,
+                        extra=self._build_operation_log_extra(
+                            operation_name,
+                            attempt_no,
+                            GENAI_API_MAX_RETRIES,
+                            log_context,
+                            retry_after_seconds=delay,
+                            elapsed_seconds=round(elapsed, 3),
+                        ),
                     )
                     time.sleep(delay)
-                else:
-                    logger.error("%s: 最大リトライ回数に到達: %s", operation_name, e)
+                    continue
+                logger.error(
+                    "%s: 最大リトライ回数に到達、または非再試行エラーです: %s",
+                    operation_name,
+                    e,
+                    extra=self._build_operation_log_extra(
+                        operation_name,
+                        attempt_no,
+                        GENAI_API_MAX_RETRIES,
+                        log_context,
+                        elapsed_seconds=round(elapsed, 3),
+                    ),
+                )
+            finally:
+                self._stop_request_progress_logger(stop_event, progress_thread)
         raise last_error
 
     def _extract_json(self, text: str) -> Any:
@@ -233,7 +557,13 @@ class AIService:
         repaired = repair_json(repaired)
         return json.loads(repaired)
 
-    def _parse_json_with_regeneration(self, operation_name: str, generate_text_func, max_attempts: int) -> Any:
+    def _parse_json_with_regeneration(
+        self,
+        operation_name: str,
+        generate_text_func,
+        max_attempts: int,
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """JSON 解析失敗時に AI 再生成して再試行する
 
         空レスポンス・不正JSON・生成エラーのいずれも再試行対象とする。
@@ -244,18 +574,31 @@ class AIService:
             try:
                 result_text = generate_text_func()
             except Exception as gen_error:
+                self._raise_if_rate_limited(gen_error)
                 # 生成自体のエラー（API障害など）も再試行対象
                 last_error = gen_error
                 if attempt < max_attempts:
                     logger.warning(
                         "%s: AI生成エラー。再生成を実行します (%d/%d): %s",
-                        operation_name, attempt, max_attempts, str(gen_error)[:200]
+                        operation_name, attempt, max_attempts, str(gen_error)[:200],
+                        extra=self._build_log_extra(
+                            log_context,
+                            operation_name=operation_name,
+                            json_regen_attempt=attempt,
+                            json_regen_max_attempts=max_attempts,
+                        ),
                     )
                     continue
                 else:
                     logger.error(
                         "%s: AI生成エラー。再試行上限に到達: %s",
-                        operation_name, str(gen_error)[:200]
+                        operation_name, str(gen_error)[:200],
+                        extra=self._build_log_extra(
+                            log_context,
+                            operation_name=operation_name,
+                            json_regen_attempt=attempt,
+                            json_regen_max_attempts=max_attempts,
+                        ),
                     )
                     raise gen_error
 
@@ -267,13 +610,25 @@ class AIService:
                 if attempt < max_attempts:
                     logger.warning(
                         "%s: AI応答が空です。再生成を実行します (%d/%d)",
-                        operation_name, attempt, max_attempts
+                        operation_name, attempt, max_attempts,
+                        extra=self._build_log_extra(
+                            log_context,
+                            operation_name=operation_name,
+                            json_regen_attempt=attempt,
+                            json_regen_max_attempts=max_attempts,
+                        ),
                     )
                     continue
                 else:
                     logger.error(
                         "%s: AI応答が空のまま再試行上限に到達",
-                        operation_name
+                        operation_name,
+                        extra=self._build_log_extra(
+                            log_context,
+                            operation_name=operation_name,
+                            json_regen_attempt=attempt,
+                            json_regen_max_attempts=max_attempts,
+                        ),
                     )
                     raise last_error
 
@@ -284,12 +639,24 @@ class AIService:
                 if attempt < max_attempts:
                     logger.warning(
                         "%s: AI応答のJSON解析失敗。再生成を実行します (%d/%d): %s (response=%s)",
-                        operation_name, attempt, max_attempts, e, result_text[:600]
+                        operation_name, attempt, max_attempts, e, result_text[:600],
+                        extra=self._build_log_extra(
+                            log_context,
+                            operation_name=operation_name,
+                            json_regen_attempt=attempt,
+                            json_regen_max_attempts=max_attempts,
+                        ),
                     )
                 else:
                     logger.error(
                         "%s: AI応答のJSON解析失敗。再試行上限に到達: %s (response=%s)",
-                        operation_name, e, result_text[:600]
+                        operation_name, e, result_text[:600],
+                        extra=self._build_log_extra(
+                            log_context,
+                            operation_name=operation_name,
+                            json_regen_attempt=attempt,
+                            json_regen_max_attempts=max_attempts,
+                        ),
                     )
         raise last_error if last_error else json.JSONDecodeError("empty response", last_text, 0)
 
@@ -428,6 +795,274 @@ class AIService:
             }
         }
 
+    def _cleanup_tempfiles(self, paths: List[str]) -> None:
+        for path in paths:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except Exception as cleanup_error:
+                logger.warning("OCR縮小画像の削除に失敗しました: %s (%s)", path, cleanup_error)
+
+    def _collect_image_path_stats(self, image_filepaths: List[str]) -> List[Dict[str, Any]]:
+        stats: List[Dict[str, Any]] = []
+
+        try:
+            from PIL import Image
+        except ImportError:
+            Image = None  # type: ignore[assignment]
+
+        for filepath in image_filepaths:
+            try:
+                file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+            except OSError:
+                file_size = 0
+            stat: Dict[str, Any] = {
+                "path": filepath,
+                "bytes": file_size,
+                "width": None,
+                "height": None,
+            }
+            if Image is not None and os.path.exists(filepath):
+                try:
+                    with Image.open(filepath) as image:
+                        stat["width"], stat["height"] = image.size
+                except Exception as image_error:
+                    logger.debug("画像サイズ取得に失敗しました: %s (%s)", filepath, image_error)
+            stats.append(stat)
+        return stats
+
+    def _format_image_stats_preview(self, image_stats: List[Dict[str, Any]], limit: int = 3) -> str:
+        if not image_stats:
+            return "n/a"
+
+        previews: List[str] = []
+        for index, stat in enumerate(image_stats[:limit], start=1):
+            width = stat.get("width")
+            height = stat.get("height")
+            dims = f"{width}x{height}" if width and height else "unknown"
+            previews.append(f"p{index}:{dims}/{stat.get('bytes', 0)}B")
+        omitted = len(image_stats) - limit
+        if omitted > 0:
+            previews.append(f"...(+{omitted} pages)")
+        return ", ".join(previews)
+
+    def _create_optimized_image_tempfiles(
+        self,
+        image_filepaths: List[str],
+        max_long_edge: int,
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        import mimetypes
+        import tempfile
+
+        try:
+            from PIL import Image, ImageOps
+        except ImportError as e:
+            raise RuntimeError("Pillow が未導入のため OCR 画像の縮小フォールバックを利用できません") from e
+
+        temp_paths: List[str] = []
+        optimization_stats: List[Dict[str, Any]] = []
+        try:
+            for filepath in image_filepaths:
+                content_type = mimetypes.guess_type(filepath)[0] or "image/jpeg"
+                output_type = "image/jpeg" if content_type in ("image/jpeg", "image/jpg") else "image/png"
+                suffix = ".jpg" if output_type == "image/jpeg" else ".png"
+
+                with Image.open(filepath) as original_image:
+                    normalized_image = ImageOps.exif_transpose(original_image)
+                    source_image = normalized_image.copy()
+                original_width, original_height = source_image.size
+                try:
+                    original_bytes = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+                except OSError:
+                    original_bytes = 0
+
+                resized_image = source_image.copy()
+                resized_image.thumbnail((max_long_edge, max_long_edge), Image.LANCZOS)
+                resized_width, resized_height = resized_image.size
+
+                fd, temp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+                with os.fdopen(fd, "wb") as temp_file:
+                    if output_type == "image/jpeg":
+                        resized_image.convert("RGB").save(
+                            temp_file,
+                            format="JPEG",
+                            quality=88,
+                            optimize=True,
+                            progressive=True,
+                        )
+                    else:
+                        save_image = resized_image
+                        if save_image.mode not in ("1", "L", "LA", "P", "RGB", "RGBA"):
+                            save_image = save_image.convert("RGBA" if "A" in save_image.mode else "RGB")
+                        save_image.save(temp_file, format="PNG", optimize=True, compress_level=9)
+                temp_paths.append(temp_path)
+                try:
+                    optimized_bytes = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                except OSError:
+                    optimized_bytes = 0
+                optimization_stats.append({
+                    "source_path": filepath,
+                    "output_path": temp_path,
+                    "original_width": original_width,
+                    "original_height": original_height,
+                    "optimized_width": resized_width,
+                    "optimized_height": resized_height,
+                    "original_bytes": original_bytes,
+                    "optimized_bytes": optimized_bytes,
+                })
+
+            total_original_bytes = sum(stat["original_bytes"] for stat in optimization_stats)
+            total_optimized_bytes = sum(stat["optimized_bytes"] for stat in optimization_stats)
+            preview_parts: List[str] = []
+            for index, stat in enumerate(optimization_stats[:3], start=1):
+                preview_parts.append(
+                    (
+                        f"p{index}:{stat['original_width']}x{stat['original_height']}/{stat['original_bytes']}B"
+                        f" -> {stat['optimized_width']}x{stat['optimized_height']}/{stat['optimized_bytes']}B"
+                    )
+                )
+            omitted = len(optimization_stats) - 3
+            if omitted > 0:
+                preview_parts.append(f"...(+{omitted} pages)")
+            logger.info(
+                "OCR画像を最適化しました: long_edge<=%d pages=%d total_bytes=%d -> %d preview=%s",
+                max_long_edge,
+                len(optimization_stats),
+                total_original_bytes,
+                total_optimized_bytes,
+                ", ".join(preview_parts) if preview_parts else "n/a",
+                extra=self._build_log_extra(
+                    log_context,
+                    ocr_variant=f"long-edge<={max_long_edge}",
+                    ocr_pages=len(optimization_stats),
+                    original_total_bytes=total_original_bytes,
+                    optimized_total_bytes=total_optimized_bytes,
+                ),
+            )
+
+            return temp_paths
+        except Exception:
+            self._cleanup_tempfiles(temp_paths)
+            raise
+
+    def _extract_text_from_image_filepaths_once(
+        self,
+        client,
+        image_filepaths: List[str],
+        variant_label: str,
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        import base64
+        import mimetypes
+        import oci
+
+        prompt = """Extract all text from the image exactly as it appears. 
+Preserve the original formatting, layout, line breaks, and structure. 
+Output only the extracted text with no additional commentary, explanations, or metadata."""
+
+        page_texts: List[Dict[str, Any]] = []
+        merged_texts: List[str] = []
+
+        for index, filepath in enumerate(image_filepaths):
+            page_no = index + 1
+            with open(filepath, "rb") as f:
+                image_data = f.read()
+            content_type = mimetypes.guess_type(filepath)[0] or "image/jpeg"
+            encoded = base64.b64encode(image_data).decode("ascii")
+            page_started_at = time.monotonic()
+
+            logger.info(
+                "VLM OCR ページ送信を開始します: variant=%s page=%d/%d bytes=%d content_type=%s",
+                variant_label,
+                page_no,
+                len(image_filepaths),
+                len(image_data),
+                content_type,
+                extra=self._build_log_extra(
+                    log_context,
+                    ocr_variant=variant_label,
+                    ocr_page=page_no,
+                    ocr_pages=len(image_filepaths),
+                    page_bytes=len(image_data),
+                    page_content_type=content_type,
+                ),
+            )
+
+            chat_request = oci.generative_ai_inference.models.GenericChatRequest(
+                api_format="GENERIC",
+                messages=[
+                    oci.generative_ai_inference.models.UserMessage(
+                        content=[
+                            {
+                                "type": "IMAGE",
+                                "imageUrl": {
+                                    "url": f"data:{content_type};base64,{encoded}"
+                                }
+                            },
+                            {"type": "TEXT", "text": prompt},
+                        ]
+                    )
+                ],
+                max_tokens=self._vlm_max_tokens,
+                temperature=self._temperature,
+                is_stream=False,
+            )
+
+            chat_detail = oci.generative_ai_inference.models.ChatDetails(
+                compartment_id=self._compartment_id,
+                serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
+                    model_id=self._vlm_model_id
+                ),
+                chat_request=chat_request,
+            )
+
+            response = self._retry_api_call(
+                f"extract_text_from_images[{page_no}]/{variant_label}",
+                client.chat,
+                chat_detail,
+                log_context=self._build_log_extra(
+                    log_context,
+                    ocr_variant=variant_label,
+                    ocr_page=page_no,
+                    ocr_pages=len(image_filepaths),
+                ),
+            )
+            extracted_text = self._get_text_from_chat_response(response.data.chat_response).strip()
+            if not extracted_text:
+                raise ValueError(f"VLMによるテキスト抽出結果が空でした (page={page_no}, variant={variant_label})")
+
+            elapsed = time.monotonic() - page_started_at
+            logger.info(
+                "VLM OCR ページ抽出が完了しました: variant=%s page=%d/%d text_length=%d elapsed=%.1fs",
+                variant_label,
+                page_no,
+                len(image_filepaths),
+                len(extracted_text),
+                elapsed,
+                extra=self._build_log_extra(
+                    log_context,
+                    ocr_variant=variant_label,
+                    ocr_page=page_no,
+                    ocr_pages=len(image_filepaths),
+                    text_length=len(extracted_text),
+                    elapsed_seconds=round(elapsed, 3),
+                ),
+            )
+
+            page_texts.append({
+                "page_index": index,
+                "source_path": filepath,
+                "text": extracted_text,
+            })
+            merged_texts.append(f"[PAGE {index + 1}]\n{extracted_text}")
+
+        return {
+            "success": True,
+            "extracted_text": "\n\n".join(merged_texts).strip(),
+            "page_texts": page_texts,
+        }
+
     def classify_invoice(self, image_data: bytes, content_type: str = "image/jpeg") -> Dict[str, Any]:
         """伝票画像を分類する
 
@@ -487,7 +1122,7 @@ class AIService:
                         content=[image_content, text_content]
                     )
                 ],
-                max_tokens=self._max_tokens,
+                max_tokens=self._vlm_max_tokens,
                 temperature=self._temperature,
                 is_stream=False,
                 tools=[
@@ -509,7 +1144,7 @@ class AIService:
                         content=[image_content, text_content]
                     )
                 ],
-                max_tokens=self._max_tokens,
+                max_tokens=self._vlm_max_tokens,
                 temperature=self._temperature,
                 is_stream=False,
             )
@@ -557,6 +1192,7 @@ class AIService:
                         state["last_payload"] = payload
                         return payload
                     except Exception as e:
+                        self._raise_if_rate_limited(e)
                         # モデル/リージョンが tool calling 非対応の場合は通常生成へフォールバック
                         state["structured_supported"] = False
                         logger.warning("構造化出力モードを無効化して通常モードへ切替: %s", str(e)[:200])
@@ -582,7 +1218,7 @@ class AIService:
                             content=[{"type": "TEXT", "text": repair_prompt}]
                         )
                     ],
-                    max_tokens=self._max_tokens,
+                    max_tokens=self._vlm_max_tokens,
                     temperature=self._temperature,
                     is_stream=False,
                 )
@@ -593,7 +1229,7 @@ class AIService:
                             content=[{"type": "TEXT", "text": repair_prompt}]
                         )
                     ],
-                    max_tokens=self._max_tokens,
+                    max_tokens=self._vlm_max_tokens,
                     temperature=self._temperature,
                     is_stream=False,
                     tools=[
@@ -642,6 +1278,7 @@ class AIService:
                         state["last_payload"] = payload
                         return payload
                     except Exception as e:
+                        self._raise_if_rate_limited(e)
                         state["repair_structured_supported"] = False
                         logger.warning("修復フェーズの構造化モードを無効化して通常モードへ切替: %s", str(e)[:200])
 
@@ -672,11 +1309,13 @@ class AIService:
                         GENAI_RECOVERY_MAX_RETRIES
                     )
                 except Exception as repair_error:
+                    self._raise_if_rate_limited(repair_error)
                     logger.warning("第2フェーズも失敗。保底分類へフォールバック: %s", repair_error)
                     return self._build_fallback_classification()
 
             return self._normalize_classification_result(parsed)
         except Exception as e:
+            self._raise_if_rate_limited(e)
             logger.error("伝票分類エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"分類失敗: {str(e)}"}
 
@@ -886,7 +1525,7 @@ class AIService:
                         content=[image_content, text_content]
                     )
                 ],
-                max_tokens=self._max_tokens,
+                max_tokens=self._vlm_max_tokens,
                 temperature=self._temperature,
                 is_stream=False,
             )
@@ -934,6 +1573,7 @@ class AIService:
             return parsed
 
         except Exception as e:
+            self._raise_if_rate_limited(e)
             logger.error("フィールド抽出エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"フィールド抽出失敗: {str(e)}"}
 
@@ -942,6 +1582,7 @@ class AIService:
         ocr_text: str,
         category: str = "",
         table_schema: Optional[Dict[str, Any]] = None,
+        log_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """OCR抽出テキストからフィールド情報を抽出する
 
@@ -1055,6 +1696,26 @@ class AIService:
 
         try:
             import oci
+            extraction_started_at = time.monotonic()
+
+            logger.info(
+                "LLMフィールド抽出リクエストを準備しました: category=%s ocr_chars=%d header_columns=%d line_columns=%d header_table=%s line_table=%s",
+                category or "-",
+                len(ocr_text),
+                len(table_schema.get("header_columns", [])),
+                len(table_schema.get("line_columns", [])),
+                header_tbl or "-",
+                line_tbl or "-",
+                extra=self._build_log_extra(
+                    log_context,
+                    category=category or "",
+                    ocr_chars=len(ocr_text),
+                    header_column_count=len(table_schema.get("header_columns", [])),
+                    line_column_count=len(table_schema.get("line_columns", [])),
+                    header_table_name=header_tbl,
+                    line_table_name=line_tbl,
+                ),
+            )
             
             text_content = {"type": "TEXT", "text": prompt}
 
@@ -1079,13 +1740,19 @@ class AIService:
             )
 
             def generate_text() -> str:
-                response = self._retry_api_call("extract_data_from_text", client.chat, chat_detail)
+                response = self._retry_api_call(
+                    "extract_data_from_text",
+                    client.chat,
+                    chat_detail,
+                    log_context=self._build_log_extra(log_context),
+                )
                 return self._get_text_from_chat_response(response.data.chat_response)
 
             parsed = self._parse_json_with_regeneration(
                 "extract_data_from_text",
                 generate_text,
-                GENAI_JSON_PARSE_RETRIES
+                GENAI_JSON_PARSE_RETRIES,
+                log_context=self._build_log_extra(log_context),
             )
 
             if not isinstance(parsed, dict):
@@ -1110,102 +1777,204 @@ class AIService:
             parsed["raw_lines"] = raw_lines
             parsed["line_count"] = line_count
             parsed["success"] = True
+
+            elapsed = time.monotonic() - extraction_started_at
+            logger.info(
+                "LLMフィールド抽出が完了しました: header_fields=%d line_fields=%d raw_lines=%d line_count=%d elapsed=%.1fs",
+                len(header_fields),
+                len(line_fields),
+                len(raw_lines),
+                line_count,
+                elapsed,
+                extra=self._build_log_extra(
+                    log_context,
+                    header_field_count=len(header_fields),
+                    line_field_count=len(line_fields),
+                    raw_line_count=len(raw_lines),
+                    line_count=line_count,
+                    elapsed_seconds=round(elapsed, 3),
+                ),
+            )
             return parsed
 
         except Exception as e:
-            logger.error("テキストからのデータ抽出エラー: %s", e, exc_info=True)
+            self._raise_if_rate_limited(e)
+            logger.error(
+                "テキストからのデータ抽出エラー: %s",
+                e,
+                exc_info=True,
+                extra=self._build_log_extra(log_context),
+            )
             return {"success": False, "message": f"テキストからのデータ抽出失敗: {str(e)}"}
 
 
-    def extract_text_from_images(self, image_filepaths: List[str]) -> Dict[str, Any]:
+    def extract_text_from_images(
+        self,
+        image_filepaths: List[str],
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """伝票画像群からVLMを用いてテキストを抽出する
 
         VLM は画像1枚ずつ実行し、結果だけを最後に結合して返す。
+        原寸で失敗した場合のみ、長辺上限ベースの最適化画像で段階再試行する。
         """
         client = self._get_client()
         if not client:
             return {"success": False, "message": "AI クライアントが初期化されていません"}
 
-        prompt = """Extract all text from the image exactly as it appears. 
-Preserve the original formatting, layout, line breaks, and structure. 
-Output only the extracted text with no additional commentary, explanations, or metadata."""
-
         try:
-            import oci
-            import base64
-            import mimetypes
-
             valid_filepaths = [filepath for filepath in image_filepaths if os.path.exists(filepath)]
             if not valid_filepaths:
                 return {"success": False, "message": "有効な画像ファイルがありません"}
 
-            page_texts: List[Dict[str, Any]] = []
-            merged_texts: List[str] = []
+            original_image_stats = self._collect_image_path_stats(valid_filepaths)
+            logger.info(
+                "VLM OCR 入力画像を受け付けました: pages=%d total_bytes=%d preview=%s",
+                len(original_image_stats),
+                sum(stat.get("bytes", 0) for stat in original_image_stats),
+                self._format_image_stats_preview(original_image_stats),
+                extra=self._build_log_extra(
+                    log_context,
+                    ocr_variant="original",
+                    ocr_pages=len(original_image_stats),
+                    ocr_total_bytes=sum(stat.get("bytes", 0) for stat in original_image_stats),
+                ),
+            )
 
-            for index, filepath in enumerate(valid_filepaths):
-                with open(filepath, "rb") as f:
-                    image_data = f.read()
-                content_type = mimetypes.guess_type(filepath)[0] or "image/jpeg"
-                encoded = base64.b64encode(image_data).decode("ascii")
+            variant_sequence: List[tuple[str, Optional[int]]] = [("original", None)]
+            variant_sequence.extend(
+                [(f"long-edge<={max_edge}", max_edge) for max_edge in (GENAI_OCR_IMAGE_MAX_EDGE_STEPS or ())]
+            )
 
-                chat_request = oci.generative_ai_inference.models.GenericChatRequest(
-                    api_format="GENERIC",
-                    messages=[
-                        oci.generative_ai_inference.models.UserMessage(
-                            content=[
-                                {
-                                    "type": "IMAGE",
-                                    "imageUrl": {
-                                        "url": f"data:{content_type};base64,{encoded}"
-                                    }
-                                },
-                                {"type": "TEXT", "text": prompt},
-                            ]
+            last_error: Optional[Exception] = None
+            total_attempts = len(variant_sequence)
+
+            for attempt_index, (variant_label, max_long_edge) in enumerate(variant_sequence, start=1):
+                variant_paths = valid_filepaths
+                cleanup_paths: List[str] = []
+                variant_stats = original_image_stats
+
+                try:
+                    if max_long_edge is not None:
+                        variant_paths = self._create_optimized_image_tempfiles(
+                            valid_filepaths,
+                            max_long_edge,
+                            log_context=log_context,
                         )
-                    ],
-                    max_tokens=self._max_tokens,
-                    temperature=self._temperature,
-                    is_stream=False,
-                )
+                        cleanup_paths = list(variant_paths)
+                        variant_stats = self._collect_image_path_stats(variant_paths)
 
-                chat_detail = oci.generative_ai_inference.models.ChatDetails(
-                    compartment_id=self._compartment_id,
-                    serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-                        model_id=self._vlm_model_id
-                    ),
-                    chat_request=chat_request,
-                )
+                    logger.info(
+                        "VLM OCR を開始します: variant=%s pages=%d total_bytes=%d attempt=%d/%d preview=%s",
+                        variant_label,
+                        len(variant_stats),
+                        sum(stat.get("bytes", 0) for stat in variant_stats),
+                        attempt_index,
+                        total_attempts,
+                        self._format_image_stats_preview(variant_stats),
+                        extra=self._build_log_extra(
+                            log_context,
+                            ocr_variant=variant_label,
+                            ocr_pages=len(variant_stats),
+                            ocr_total_bytes=sum(stat.get("bytes", 0) for stat in variant_stats),
+                            ocr_attempt=attempt_index,
+                            ocr_total_attempts=total_attempts,
+                        ),
+                    )
+                    result = self._extract_text_from_image_filepaths_once(
+                        client,
+                        variant_paths,
+                        variant_label,
+                        log_context=log_context,
+                    )
+                    if max_long_edge is not None:
+                        logger.info(
+                            "VLM OCR フォールバック成功: variant=%s attempt=%d/%d text_length=%d",
+                            variant_label,
+                            attempt_index,
+                            total_attempts,
+                            len(result.get("extracted_text", "")),
+                            extra=self._build_log_extra(
+                                log_context,
+                                ocr_variant=variant_label,
+                                ocr_attempt=attempt_index,
+                                ocr_total_attempts=total_attempts,
+                                text_length=len(result.get("extracted_text", "")),
+                            ),
+                        )
+                    else:
+                        logger.info(
+                            "VLM OCR 原寸成功: variant=%s attempt=%d/%d text_length=%d",
+                            variant_label,
+                            attempt_index,
+                            total_attempts,
+                            len(result.get("extracted_text", "")),
+                            extra=self._build_log_extra(
+                                log_context,
+                                ocr_variant=variant_label,
+                                ocr_attempt=attempt_index,
+                                ocr_total_attempts=total_attempts,
+                                text_length=len(result.get("extracted_text", "")),
+                            ),
+                        )
+                    return result
+                except AIRateLimitError:
+                    raise
+                except Exception as e:
+                    last_error = e
+                    if attempt_index < total_attempts:
+                        if max_long_edge is None:
+                            logger.warning(
+                                "VLM OCR 原寸試行に失敗したため、画像最適化フォールバックへ切り替えます: pages=%d total_bytes=%d error=%s",
+                                len(variant_stats),
+                                sum(stat.get("bytes", 0) for stat in variant_stats),
+                                str(e)[:200],
+                                extra=self._build_log_extra(
+                                    log_context,
+                                    ocr_variant=variant_label,
+                                    ocr_pages=len(variant_stats),
+                                    ocr_total_bytes=sum(stat.get("bytes", 0) for stat in variant_stats),
+                                    ocr_attempt=attempt_index,
+                                    ocr_total_attempts=total_attempts,
+                                ),
+                            )
+                        else:
+                            logger.warning(
+                                "VLM OCR 試行失敗。より小さい長辺上限で再試行します: variant=%s total_bytes=%d error=%s",
+                                variant_label,
+                                sum(stat.get("bytes", 0) for stat in variant_stats),
+                                str(e)[:200],
+                                extra=self._build_log_extra(
+                                    log_context,
+                                    ocr_variant=variant_label,
+                                    ocr_total_bytes=sum(stat.get("bytes", 0) for stat in variant_stats),
+                                    ocr_attempt=attempt_index,
+                                    ocr_total_attempts=total_attempts,
+                                ),
+                            )
+                        continue
+                    raise
+                finally:
+                    self._cleanup_tempfiles(cleanup_paths)
 
-                response = self._retry_api_call(
-                    f"extract_text_from_images[{index + 1}]",
-                    client.chat,
-                    chat_detail,
-                )
-                extracted_text = self._get_text_from_chat_response(response.data.chat_response).strip()
-                if not extracted_text:
-                    return {
-                        "success": False,
-                        "message": f"VLMによるテキスト抽出結果が空でした (page={index + 1})",
-                    }
-
-                page_texts.append({
-                    "page_index": index,
-                    "source_path": filepath,
-                    "text": extracted_text,
-                })
-                merged_texts.append(f"[PAGE {index + 1}]\n{extracted_text}")
-
-            return {
-                "success": True,
-                "extracted_text": "\n\n".join(merged_texts).strip(),
-                "page_texts": page_texts,
-            }
+            raise last_error or RuntimeError("OCR画像の処理に失敗しました")
 
         except Exception as e:
-            logger.error("VLM テキスト抽出エラー: %s", e, exc_info=True)
+            self._raise_if_rate_limited(e)
+            logger.error(
+                "VLM テキスト抽出エラー: %s",
+                e,
+                exc_info=True,
+                extra=self._build_log_extra(log_context),
+            )
             return {"success": False, "message": f"テキスト抽出失敗: {str(e)}"}
 
-    def generate_sql_schema_from_text(self, ocr_text: str, analysis_mode: str) -> Dict[str, Any]:
+    def generate_sql_schema_from_text(
+        self,
+        ocr_text: str,
+        analysis_mode: str,
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """OCR抽出されたテキストから、最適なJSONスキーマ（テーブル構造）を提案する"""
         client = self._get_client()
         if not client:
@@ -1311,13 +2080,19 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
             )
 
             def generate_text() -> str:
-                response = self._retry_api_call("generate_sql_schema_from_text", client.chat, chat_detail)
+                response = self._retry_api_call(
+                    "generate_sql_schema_from_text",
+                    client.chat,
+                    chat_detail,
+                    log_context=self._build_log_extra(log_context),
+                )
                 return self._get_text_from_chat_response(response.data.chat_response)
 
             parsed = self._parse_json_with_regeneration(
                 "generate_sql_schema_from_text",
                 generate_text,
-                GENAI_JSON_PARSE_RETRIES
+                GENAI_JSON_PARSE_RETRIES,
+                log_context=self._build_log_extra(log_context),
             )
 
             if not isinstance(parsed, dict):
@@ -1403,7 +2178,13 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
             return result
 
         except Exception as e:
-            logger.error("スキーマ生成エラー: %s", e, exc_info=True)
+            self._raise_if_rate_limited(e)
+            logger.error(
+                "スキーマ生成エラー: %s",
+                e,
+                exc_info=True,
+                extra=self._build_log_extra(log_context),
+            )
             return {"success": False, "message": f"スキーマ生成失敗: {str(e)}"}
 
     def suggest_ddl(self, category: str, header_fields: List[Dict], line_fields: List[Dict]) -> Dict[str, Any]:
@@ -1494,6 +2275,7 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
             return parsed
 
         except Exception as e:
+            self._raise_if_rate_limited(e)
             logger.error("DDL提案エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"DDL提案失敗: {str(e)}"}
 
@@ -1596,5 +2378,6 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
             return parsed
 
         except Exception as e:
+            self._raise_if_rate_limited(e)
             logger.error("Text-to-SQL変換エラー: %s", e, exc_info=True)
             return {"success": False, "message": f"SQL生成に失敗しました: {str(e)}"}

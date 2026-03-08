@@ -785,7 +785,7 @@ function TableBrowserTab({
                   <table class="ics-table ics-search-tableBrowserTableList">
                     <thead>
                       <tr>
-                        <th style={{ width: '40px' }}>
+                        <th>
                           <input
                             type="checkbox"
                             checked={tableListSelection.isAllSelected(tableListPagination.paginatedItems)}
@@ -865,7 +865,7 @@ function TableBrowserTab({
                             onClick={() => handleTableSelect(table)}
                             onKeyDown={(e) => handleTableRowKeyDown(e, table)}
                           >
-                            <td class="ics-table__cell--center" onClick={(e: Event) => e.stopPropagation()}>
+                            <td onClick={(e: Event) => e.stopPropagation()}>
                               <input
                                 type="checkbox"
                                 checked={tableListSelection.isSelected(tableKey)}
@@ -1061,7 +1061,7 @@ function ResultsTable({
         <thead>
           <tr>
             {selection && (
-              <th style={{ width: '40px' }}>
+              <th>
                 <input
                   type="checkbox"
                   checked={selection.isAllSelected(rows)}
@@ -1115,7 +1115,7 @@ function ResultsTable({
             return (
               <tr key={idx} class={selection && rowId && selection.isSelected(rowId) ? 'ics-table__row--selected' : ''}>
                 {selection && (
-                  <td class="ics-table__cell--center">
+                  <td>
                     <input
                       type="checkbox"
                       checked={rowId ? selection.isSelected(rowId) : false}

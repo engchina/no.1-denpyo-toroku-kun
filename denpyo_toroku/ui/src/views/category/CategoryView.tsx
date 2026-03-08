@@ -1967,7 +1967,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                     <table class="ics-table">
                       <thead>
                         <tr>
-                          <th style={{ width: '40px' }}>
+                          <th>
                             <input
                               type="checkbox"
                               checked={allSelectedOnPage}
@@ -2025,7 +2025,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                               }}
                               style={{ cursor: 'pointer' }}
                             >
-                              <td class="ics-table__cell--center">
+                              <td>
                                 <input
                                   type="checkbox"
                                   checked={selected}
@@ -2192,7 +2192,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                     <table class="ics-table">
                       <thead>
                         <tr>
-                          <th style={{ width: '40px' }}>
+                          <th>
                             <input
                               type="checkbox"
                               checked={categorySelection.isAllSelected(categoryPagination.paginatedItems)}
@@ -2269,7 +2269,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                             onClick={() => handleCategoryRowSelect(cat.id)}
                             onKeyDown={(e) => handleCategoryRowKeyDown(e, cat.id)}
                           >
-                            <td class="ics-table__cell--center">
+                            <td>
                               <input
                                 type="checkbox"
                                 checked={categorySelection.isSelected(String(cat.id))}
@@ -2476,7 +2476,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                           <table class="ics-table">
                             <thead>
                               <tr>
-                                <th style={{ width: '40px' }}>
+                                <th>
                                   <input
                                     type="checkbox"
                                     checked={previewRowSelection.isAllSelected(sortedPreviewRows)}
@@ -2516,7 +2516,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                 const rowId = getPreviewRowId(row);
                                 return (
                                   <tr key={rowIndex}>
-                                    <td class="ics-table__cell--center">
+                                    <td>
                                       <input
                                         type="checkbox"
                                         checked={rowId ? previewRowSelection.isSelected(rowId) : false}

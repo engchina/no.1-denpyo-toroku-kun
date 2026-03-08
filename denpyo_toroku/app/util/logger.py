@@ -1,6 +1,45 @@
 import os
 import logging
 import logging.config
+import json
+
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        record.message = record.getMessage()
+        record.asctime = self.formatTime(record, self.datefmt)
+            
+        log_entry = {
+            "timestamp": getattr(record, "asctime", ""),
+            "level": record.levelname,
+            "message": record.message,
+            "logger": record.name,
+            "file": record.filename,
+            "line": record.lineno,
+            "pid": record.process,
+            "tid": record.thread,
+        }
+        
+        standard_attrs = {
+            'args', 'asctime', 'created', 'exc_info', 'exc_text', 'filename',
+            'funcName', 'levelname', 'levelno', 'lineno', 'module',
+            'msecs', 'message', 'msg', 'name', 'pathname', 'process',
+            'processName', 'relativeCreated', 'stack_info', 'thread', 'threadName', 'taskName'
+        }
+        for key, value in record.__dict__.items():
+            if key not in standard_attrs:
+                log_entry[key] = value
+
+        if record.exc_info:
+            if not record.exc_text:
+                record.exc_text = self.formatException(record.exc_info)
+        if record.exc_text:
+            log_entry["exc_info"] = record.exc_text
+
+        if record.stack_info:
+            log_entry["stack_info"] = self.formatStack(record.stack_info)
+            
+        return json.dumps(log_entry, ensure_ascii=False)
 
 
 class LoggerUtil:
@@ -15,7 +54,7 @@ class LoggerUtil:
             'disable_existing_loggers': False,
             'formatters': {
                 'default': {
-                    'format': '[%(asctime)s.%(msecs)03d] [Pid: %(process)d] [Tid: %(thread)d] [%(levelname)7s] File %(filename)s, line %(lineno)d - %(message)s',
+                    '()': __name__ + '.JSONFormatter',
                 }
             },
             'handlers': {
