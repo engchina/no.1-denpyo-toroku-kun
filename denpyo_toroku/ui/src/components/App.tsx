@@ -163,6 +163,7 @@ function AppRoutes() {
 }
 
 export function App() {
+  const APP_BASE_PATH = '/studio';
   const environment = useMemo<RootEnvironment>(() => ({
     translations: {
       '@oracle/oraclejet-preact': jaBundle
@@ -173,7 +174,7 @@ export function App() {
   return (
     <RootEnvironmentProvider environment={environment}>
       <Provider store={store}>
-        <BrowserRouter>
+        <BrowserRouter basename={APP_BASE_PATH}>
           <AppRoutes />
         </BrowserRouter>
       </Provider>

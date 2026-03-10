@@ -9,23 +9,45 @@ def _verify_token_not_expired(token_expiry_ts):
     return current_time < float(token_expiry_ts)
 
 
-def auth_middleware():
-    legacy_static_prefixes = (
-        "/js",
-        "/css",
-        "/styles",
-        "/vendor",
-    )
+def _redirect_target_with_query(base_target: str) -> str:
+    if request.query_string:
+        return f"{base_target}?{request.query_string.decode('utf-8', errors='ignore')}"
+    return base_target
 
-    # Backward compatibility:
-    # older frontend bundles may still request root-level assets (/js/...).
-    # Redirect them to the /studio-prefixed static routes.
-    for prefix in legacy_static_prefixes:
-        if request.path == prefix or request.path.startswith(prefix + "/"):
-            target = f"/studio{request.path}"
-            if request.query_string:
-                target = f"{target}?{request.query_string.decode('utf-8', errors='ignore')}"
-            return redirect(target, code=307)
+
+def _redirect_legacy_static_path():
+    static_dirs = ("js", "css", "styles", "vendor")
+    path = request.path
+
+    # Keep API endpoints untouched.
+    if path.startswith("/api/") or path.startswith("/studio/api/") or path.startswith("/studio/v1/"):
+        return None
+
+    # 1) Root legacy static paths: /styles/... -> /studio/styles/...
+    for static_dir in static_dirs:
+        legacy_prefix = f"/{static_dir}"
+        if path == legacy_prefix or path.startswith(legacy_prefix + "/"):
+            return redirect(_redirect_target_with_query(f"/studio{path}"), code=307)
+
+    canonical_prefixes = tuple(f"/studio/{static_dir}" for static_dir in static_dirs)
+    if path.startswith(canonical_prefixes):
+        return None
+
+    # 2) Nested legacy paths from SPA routes:
+    #    /settings/styles/... or /studio/settings/styles/... -> /studio/styles/...
+    segments = [segment for segment in path.split("/") if segment]
+    for index, segment in enumerate(segments):
+        if segment in static_dirs and index > 0:
+            suffix = "/" + "/".join(segments[index:])
+            return redirect(_redirect_target_with_query(f"/studio{suffix}"), code=307)
+
+    return None
+
+
+def auth_middleware():
+    static_redirect = _redirect_legacy_static_path()
+    if static_redirect:
+        return static_redirect
 
     static_endpoints = (
         "/studio/js",
