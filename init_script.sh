@@ -534,7 +534,11 @@ if [ -d "$PROJECT_DIR" ]; then
     # Create venv and install dependencies
     echo "依存関係をインストール中..."
     uv venv --python 3.13 .venv
-    uv pip install -r requirements.txt --python .venv/bin/python
+    if [ -f requirements.lock ]; then
+        uv pip install -r requirements.lock --python .venv/bin/python
+    else
+        uv pip install -r requirements.txt --python .venv/bin/python
+    fi
     
     echo "バックエンドのセットアップが完了しました。"
     

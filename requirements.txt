@@ -28,6 +28,8 @@ python-json-logger>=4.0.0,<5
 
 # Security
 python-jose[cryptography]>=3.5.0,<4
+# Oracle Database driver
+oracledb>=3.4.2,<4
 # Optional observability dependency. Install only when exposing /api/v1/metrics.
 prometheus-client>=0.24.1,<0.25
 

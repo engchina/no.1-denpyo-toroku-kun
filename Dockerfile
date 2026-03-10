@@ -34,9 +34,14 @@ RUN mkdir -p /home/appuser/install/denpyo_toroku/log \
 COPY --chown=appuser:appuser ./denpyo_toroku/ /home/appuser/install/denpyo_toroku/
 COPY --chown=appuser:appuser ./gunicorn_config/ /home/appuser/install/gunicorn_config/
 COPY --chown=appuser:appuser ./requirements.txt /home/appuser/install/
+COPY --chown=appuser:appuser ./requirements.lock /home/appuser/install/
 
 # Install Python dependencies
-RUN pip3 install --no-cache-dir -r /home/appuser/install/requirements.txt
+RUN if [ -f /home/appuser/install/requirements.lock ]; then \
+        pip3 install --no-cache-dir -r /home/appuser/install/requirements.lock; \
+    else \
+        pip3 install --no-cache-dir -r /home/appuser/install/requirements.txt; \
+    fi
 
 # OCI config directory
 RUN mkdir -p /home/appuser/.oci \
