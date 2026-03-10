@@ -13,7 +13,7 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, 'web'),
     filename: 'js/[name].[contenthash].js',
-    publicPath: '/',
+    publicPath: '/studio/',
     clean: true
   },
   resolve: {
