@@ -163,7 +163,9 @@ function AppRoutes() {
 }
 
 export function App() {
-  const APP_BASE_PATH = '/studio';
+  const APP_BASE_PATH = (typeof window !== 'undefined' && /^\/studio(\/|$)/.test(window.location.pathname))
+    ? '/studio'
+    : undefined;
   const environment = useMemo<RootEnvironment>(() => ({
     translations: {
       '@oracle/oraclejet-preact': jaBundle
