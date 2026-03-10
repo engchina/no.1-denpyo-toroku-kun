@@ -122,10 +122,15 @@ module.exports = {
     },
     port: 3000,
     hot: true,
-    historyApiFallback: true,
+    historyApiFallback: {
+      rewrites: [
+        { from: /^\/studio\//, to: '/index.html' },
+        { from: /./, to: '/index.html' }
+      ]
+    },
     proxy: [
       {
-        context: ['/studio'],
+        context: ['/studio/v1', '/studio/api', '/studio/logout', '/studio/register'],
         target: 'http://localhost:8080',
         changeOrigin: true
       }
