@@ -1,5 +1,5 @@
 import os
-from flask import Blueprint, send_from_directory
+from flask import Blueprint, abort, send_from_directory
 
 denpyo_toroku_base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -25,7 +25,11 @@ def login():
 @static_blueprint.route("/js/<path:path>")
 def send_js(path):
     """バンドル済み JavaScript を配信する。"""
-    return send_from_directory(os.path.join(web_dir, "js"), path)
+    web_js_dir = os.path.join(web_dir, "js")
+    if os.path.isfile(os.path.join(web_js_dir, path)):
+        return send_from_directory(web_js_dir, path)
+    # denpyo_toroku/js へフォールバック（レガシー資産）
+    return send_from_directory(os.path.join(denpyo_toroku_base, "js"), path)
 
 
 @static_blueprint.route("/styles/<path:path>")
@@ -54,7 +58,15 @@ def send_css(path):
     return send_from_directory(os.path.join(denpyo_toroku_base, "css"), path)
 
 
-@static_blueprint.route("<path:path>")
+@static_blueprint.route("/<path:path>")
 def send_files(path):
     """ui/web/ 配下のその他静的ファイルを配信する。"""
-    return send_from_directory(web_dir, path)
+    file_path = os.path.join(web_dir, path)
+    if os.path.isfile(file_path):
+        return send_from_directory(web_dir, path)
+
+    # API 風パスは SPA フォールバック対象外（404 を返す）
+    if path.startswith("api/"):
+        return abort(404)
+
+    return send_from_directory(web_dir, "index.html")

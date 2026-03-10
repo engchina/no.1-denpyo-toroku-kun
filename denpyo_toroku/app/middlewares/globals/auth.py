@@ -10,11 +10,28 @@ def _verify_token_not_expired(token_expiry_ts):
 
 
 def auth_middleware():
+    legacy_static_prefixes = (
+        "/js",
+        "/css",
+        "/styles",
+        "/vendor",
+    )
+
+    # Backward compatibility:
+    # older frontend bundles may still request root-level assets (/js/...).
+    # Redirect them to the /studio-prefixed static routes.
+    for prefix in legacy_static_prefixes:
+        if request.path == prefix or request.path.startswith(prefix + "/"):
+            target = f"/studio{request.path}"
+            if request.query_string:
+                target = f"{target}?{request.query_string.decode('utf-8', errors='ignore')}"
+            return redirect(target, code=307)
+
     static_endpoints = (
         "/studio/js",
         "/studio/css",
-        "/studio/styles/",
-        "/studio/vendor/",
+        "/studio/styles",
+        "/studio/vendor",
         "/studio/v1/version",
         "/studio/api/v1/health"
     )

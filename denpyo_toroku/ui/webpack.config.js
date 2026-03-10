@@ -122,10 +122,11 @@ module.exports = {
     },
     port: 3000,
     hot: true,
+    open: ['/studio/'],
     historyApiFallback: {
       rewrites: [
-        { from: /^\/studio\//, to: '/index.html' },
-        { from: /./, to: '/index.html' }
+        { from: /^\/studio\//, to: '/studio/index.html' },
+        { from: /./, to: '/studio/index.html' }
       ]
     },
     proxy: [
