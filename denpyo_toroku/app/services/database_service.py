@@ -3324,14 +3324,27 @@ END;"""
 
         return references
 
-    def _validate_tables_in_whitelist(self, sql: str, allowed: set) -> None:
+    def _validate_tables_in_whitelist(
+        self,
+        sql: str,
+        allowed: set,
+        allowed_schema_names: Optional[set] = None,
+    ) -> None:
         """SQL 内のテーブルが許可リストにあるか検証"""
         references = self._extract_table_references_from_sql(sql)
-        qualified = [
-            ".".join(ref.get("qualified_name") or [])
-            for ref in references
-            if ref.get("is_qualified")
-        ]
+        normalized_allowed_schema_names = {
+            str(schema_name or "").strip().upper()
+            for schema_name in (allowed_schema_names or set())
+            if str(schema_name or "").strip()
+        }
+        qualified = []
+        for ref in references:
+            if not ref.get("is_qualified"):
+                continue
+            qualified_name = [str(segment or "").strip().upper() for segment in (ref.get("qualified_name") or [])]
+            if len(qualified_name) == 2 and qualified_name[0] in normalized_allowed_schema_names:
+                continue
+            qualified.append(".".join(qualified_name))
         if qualified:
             raise ValueError(f"スキーマ修飾されたテーブル参照は許可されていません: {', '.join(qualified)}")
 
@@ -3349,9 +3362,35 @@ END;"""
             allowed = allowed_tables or self._get_allowed_table_set()
             if not allowed:
                 return {"success": False, "message": "検索可能なテーブルがありません", "columns": [], "rows": [], "total": 0}
-            self._validate_tables_in_whitelist(normalized_sql, allowed)
+            has_schema_qualified_reference = any(
+                ref.get("is_qualified")
+                for ref in self._extract_table_references_from_sql(normalized_sql)
+            )
+            try:
+                self._validate_tables_in_whitelist(normalized_sql, allowed)
+            except ValueError as e:
+                if not has_schema_qualified_reference:
+                    raise
+                with self.get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        current_schema_name = self._get_current_schema_name(cursor)
+                        self._validate_tables_in_whitelist(
+                            normalized_sql,
+                            allowed,
+                            allowed_schema_names={current_schema_name},
+                        )
+                        limited_sql = f"SELECT * FROM ({normalized_sql}) WHERE ROWNUM <= :max_rows"
+                        cursor.execute(limited_sql, {"max_rows": max_rows})
+                        columns = [desc[0] for desc in cursor.description]
+                        rows_raw = cursor.fetchall()
+                        rows = [dict(zip(columns, row)) for row in rows_raw]
+                        return {
+                            "success": True,
+                            "columns": columns,
+                            "rows": rows,
+                            "total": len(rows),
+                        }
 
-            # 行数制限を追加
             limited_sql = f"SELECT * FROM ({normalized_sql}) WHERE ROWNUM <= :max_rows"
 
             with self.get_connection() as conn:

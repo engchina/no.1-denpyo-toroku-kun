@@ -878,162 +878,168 @@ function TableDesignerPanel({
   };
 
   return (
-    <section class="ics-ops-grid ics-ops-grid--one">
-      <div class="ics-card ics-ops-panel">
-        {/* パネルヘッダー */}
-        <div class="ics-card-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Database size={18} />
-            <span class="oj-typography-heading-xs">{t('category.designer.title')}</span>
+    <>
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-card ics-ops-panel">
+          {/* パネルヘッダー */}
+          <div class="ics-card-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Database size={18} />
+              <span class="oj-typography-heading-xs">{t('category.designer.title')}</span>
+            </div>
+            <button
+              type="button"
+              class="ics-ops-btn ics-ops-btn--ghost"
+              onClick={onClose}
+              disabled={isCreating}
+              title={t('common.cancel')}
+            >
+              <X size={16} />
+            </button>
           </div>
-          <button
-            type="button"
-            class="ics-ops-btn ics-ops-btn--ghost"
-            onClick={onClose}
-            disabled={isCreating}
-            title={t('common.cancel')}
-          >
-            <X size={16} />
-          </button>
-        </div>
 
-        <div class="ics-card-body ics-card-body--designer">
-          {/* 2カラムレイアウト: 左=画像レビュー、右=フォーム */}
-          <div
-            class="ics-category-designer-layout"
-            style={{ gridTemplateColumns: fileIds.length > 0 ? 'minmax(460px, 1.05fr) minmax(620px, 1.15fr)' : '1fr' }}
-          >
-            {/* 左カラム: 画像レビュー */}
-            {fileIds.length > 0 && (
-              <div class="ics-category-image-panel">
-                <DocumentPreviewWorkspace
-                  fileIds={fileIds}
-                  title={t('category.designer.reviewWorkspace')}
-                  hint={t('category.designer.reviewHint')}
-                />
-              </div>
-            )}
-
-            {/* 右カラム: フォーム */}
-            <div class="ics-category-designer-right">
-              <div class="ics-category-designer-right__scroll">
-                {/* 伝票分類基本情報 */}
-                <div class="ics-card ics-card--flat">
-                  <div class="ics-card-header">
-                    <span class="oj-typography-heading-xs">{t('category.designer.categoryInfo')}</span>
-                  </div>
-                  <div class="ics-card-body">
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                      <div class="ics-form-group">
-                        <label class="ics-form-label">{t('category.col.name')} *</label>
-                        <input
-                          type="text"
-                          class="ics-form-input"
-                          value={categoryName}
-                          onInput={(e: Event) => setCategoryName((e.target as HTMLInputElement).value)}
-                          placeholder={t('category.designer.categoryNamePlaceholder')}
-                        />
-                      </div>
-                      <div class="ics-form-group">
-                        <label class="ics-form-label">{t('category.col.nameEn')} *</label>
-                        <input
-                          type="text"
-                          class="ics-form-input"
-                          value={categoryNameEn}
-                          onInput={(e: Event) => setCategoryNameEn((e.target as HTMLInputElement).value)}
-                          placeholder="invoice"
-                        />
-                      </div>
-                    </div>
-                    <div class="ics-form-group">
-                      <label class="ics-form-label">{t('category.col.description')}</label>
-                      <textarea
-                        class="ics-form-textarea"
-                        value={description}
-                        rows={2}
-                        onInput={(e: Event) => setDescription((e.target as HTMLTextAreaElement).value)}
-                        placeholder={t('category.designer.descriptionPlaceholder')}
-                      />
-                    </div>
-                  </div>
+          <div class="ics-card-body ics-card-body--designer">
+            {/* 2カラムレイアウト: 左=画像レビュー、右=フォーム */}
+            <div
+              class="ics-category-designer-layout"
+              style={{ gridTemplateColumns: fileIds.length > 0 ? 'minmax(460px, 1.05fr) minmax(620px, 1.15fr)' : '1fr' }}
+            >
+              {/* 左カラム: 画像レビュー */}
+              {fileIds.length > 0 && (
+                <div class="ics-category-image-panel">
+                  <DocumentPreviewWorkspace
+                    fileIds={fileIds}
+                    title={t('category.designer.reviewWorkspace')}
+                    hint={t('category.designer.reviewHint')}
+                  />
                 </div>
+              )}
 
-                {/* テーブルデザイナー タブ */}
-                {hasLine && (
-                  <div class="ics-category-designer-right__tabs">
-                    <div class="ics-tabs" style={{ marginBottom: '8px' }}>
-                      <button
-                        type="button"
-                        class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
-                        onClick={() => setActiveTab('header')}
-                      >
-                        <FileText size={14} />
-                        {t('category.designer.tabHeader')}
-                      </button>
-                      <button
-                        type="button"
-                        class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
-                        onClick={() => setActiveTab('line')}
-                      >
-                        <Table2 size={14} />
-                        {t('category.designer.tabLine')}
-                      </button>
+              {/* 右カラム: フォーム */}
+              <div class="ics-category-designer-right">
+                <div class="ics-category-designer-right__scroll">
+                  {/* 伝票分類基本情報 */}
+                  <div class="ics-card ics-card--flat">
+                    <div class="ics-card-header">
+                      <span class="oj-typography-heading-xs">{t('category.designer.categoryInfo')}</span>
+                    </div>
+                    <div class="ics-card-body">
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                        <div class="ics-form-group">
+                          <label class="ics-form-label">{t('category.col.name')} *</label>
+                          <input
+                            type="text"
+                            class="ics-form-input"
+                            value={categoryName}
+                            onInput={(e: Event) => setCategoryName((e.target as HTMLInputElement).value)}
+                            placeholder={t('category.designer.categoryNamePlaceholder')}
+                          />
+                        </div>
+                        <div class="ics-form-group">
+                          <label class="ics-form-label">{t('category.col.nameEn')} *</label>
+                          <input
+                            type="text"
+                            class="ics-form-input"
+                            value={categoryNameEn}
+                            onInput={(e: Event) => setCategoryNameEn((e.target as HTMLInputElement).value)}
+                            placeholder="invoice"
+                          />
+                        </div>
+                      </div>
+                      <div class="ics-form-group">
+                        <label class="ics-form-label">{t('category.col.description')}</label>
+                        <textarea
+                          class="ics-form-textarea"
+                          value={description}
+                          rows={2}
+                          onInput={(e: Event) => setDescription((e.target as HTMLTextAreaElement).value)}
+                          placeholder={t('category.designer.descriptionPlaceholder')}
+                        />
+                      </div>
                     </div>
                   </div>
-                )}
 
-                {(!hasLine || activeTab === 'header') && (
-                  <TableDesigner
-                    label={t('category.designer.headerTable')}
-                    tableName={headerTableName}
-                    columns={headerColumns}
-                    onTableNameChange={setHeaderTableName}
-                    onColumnsChange={setHeaderColumns}
-                  />
-                )}
+                  {/* テーブルデザイナー タブ */}
+                  {hasLine && (
+                    <div class="ics-category-designer-right__tabs">
+                      <div class="ics-tabs" style={{ marginBottom: '8px' }}>
+                        <button
+                          type="button"
+                          class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
+                          onClick={() => setActiveTab('header')}
+                        >
+                          <FileText size={14} />
+                          {t('category.designer.tabHeader')}
+                        </button>
+                        <button
+                          type="button"
+                          class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
+                          onClick={() => setActiveTab('line')}
+                        >
+                          <Table2 size={14} />
+                          {t('category.designer.tabLine')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
-                {hasLine && activeTab === 'line' && (
-                  <TableDesigner
-                    label={t('category.designer.lineTable')}
-                    tableName={lineTableName}
-                    columns={lineColumns}
-                    onTableNameChange={setLineTableName}
-                    onColumnsChange={setLineColumns}
-                  />
-                )}
-              </div>
+                  {(!hasLine || activeTab === 'header') && (
+                    <TableDesigner
+                      label={t('category.designer.headerTable')}
+                      tableName={headerTableName}
+                      columns={headerColumns}
+                      onTableNameChange={setHeaderTableName}
+                      onColumnsChange={setHeaderColumns}
+                    />
+                  )}
 
-              <div class="ics-category-designer-footer">
-                {validationError && (
-                  <div class="ics-alert ics-alert--error">
-                    {validationError}
-                  </div>
-                )}
-                <div class="ics-category-designer-footer__actions">
-                  <button
-                    type="button"
-                    class="ics-ops-btn ics-ops-btn--ghost"
-                    onClick={onClose}
-                    disabled={isCreating}
-                  >
-                    {t('common.cancel')}
-                  </button>
-                  <button
-                    type="button"
-                    class="ics-ops-btn ics-ops-btn--primary"
-                    onClick={handleConfirm}
-                    disabled={isCreating}
-                  >
-                    {isCreating ? <Loader2 size={14} class="ics-spin" /> : <Database size={14} />}
-                    <span>{isCreating ? t('category.designer.creating') : t('category.designer.createTable')}</span>
-                  </button>
+                  {hasLine && activeTab === 'line' && (
+                    <TableDesigner
+                      label={t('category.designer.lineTable')}
+                      tableName={lineTableName}
+                      columns={lineColumns}
+                      onTableNameChange={setLineTableName}
+                      onColumnsChange={setLineColumns}
+                    />
+                  )}
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
+
+      {validationError && (
+        <section class="ics-ops-grid ics-ops-grid--one">
+          <div class="ics-registration-error">
+            <AlertTriangle size={16} />
+            <span>{validationError}</span>
+          </div>
+        </section>
+      )}
+
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-registration-actions">
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--ghost"
+            onClick={onClose}
+            disabled={isCreating}
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            type="button"
+            class="ics-ops-btn ics-ops-btn--primary"
+            onClick={handleConfirm}
+            disabled={isCreating}
+          >
+            {isCreating ? <Loader2 size={14} class="ics-spin" /> : <Database size={14} />}
+            <span>{isCreating ? t('category.designer.creating') : t('category.designer.createTable')}</span>
+          </button>
+        </div>
+      </section>
+    </>
   );
 }
 

@@ -2736,6 +2736,7 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
 制約:
 - SELECT 文のみ生成（INSERT, UPDATE, DELETE, DROP などは絶対に禁止）
 - 上記に示したテーブルとカラムのみ使用
+- テーブル名にスキーマ名は付けない（例: RECEIPT_H を使い、ADMIN.RECEIPT_H は使わない）
 - Oracle Database 構文に従う（ROWNUM, NVL, TO_CHAR, TO_DATE など使用可）
 - sql フィールドの値は SQL 文字列（改行は \\n でエスケープ）
 - 出力は必ず有効な JSON のみ。前後に説明文・コードブロック（```）・コメント（//）を含めないでください"""

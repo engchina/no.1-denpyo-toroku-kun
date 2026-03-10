@@ -7133,21 +7133,6 @@ html[dir="rtl"] .oracle-icon {
     padding-top: 2px;
 }
 
-.ics-category-designer-footer {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    border-top: 1px solid #e2e8f0;
-    padding-top: 12px;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-}
-
-.ics-category-designer-footer__actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-}
-
 .ics-category-image-panel {
     height: 100%;
     min-height: 0;
@@ -7488,14 +7473,6 @@ html[dir="rtl"] .oracle-icon {
         grid-auto-columns: minmax(88px, 96px);
     }
 
-    .ics-category-designer-footer__actions {
-        width: 100%;
-        flex-direction: column-reverse;
-    }
-
-    .ics-category-designer-footer__actions .ics-ops-btn {
-        width: 100%;
-    }
 }
 
 /* --- Unified Status Badge (SCR-UI-Revamp) --- */
