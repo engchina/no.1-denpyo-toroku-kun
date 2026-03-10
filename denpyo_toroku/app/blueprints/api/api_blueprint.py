@@ -49,8 +49,6 @@ else:
     REQUEST_COUNT = None
     REQUEST_LATENCY_SECONDS = None
 
-_default_auth_username = os.environ.get("DENPYO_TOROKU_LOGIN_USERNAME", "admin")
-_default_auth_password = os.environ.get("DENPYO_TOROKU_LOGIN_PASSWORD", "admin")
 _OCI_MASKED_KEY = "[CONFIGURED]"
 _DB_MASKED_SECRET = "[CONFIGURED]"
 _DB_CONN_ENV_KEY = "ORACLE_26AI_CONNECTION_STRING"
@@ -118,6 +116,22 @@ def _normalize_text(value: Any, default: str = "") -> str:
     if value is None:
         return default
     return str(value).strip()
+
+
+def _parse_login_credentials_from_db_connection(connection_string: str) -> Dict[str, str]:
+    value = _normalize_text(connection_string)
+    if not value or "/" not in value or "@" not in value:
+        return {"username": "", "password": ""}
+    username, remainder = value.split("/", 1)
+    password, _, _ = remainder.partition("@")
+    return {
+        "username": _normalize_text(username),
+        "password": _normalize_text(password),
+    }
+
+
+def _load_login_credentials() -> Dict[str, str]:
+    return _parse_login_credentials_from_db_connection(os.environ.get(_DB_CONN_ENV_KEY, ""))
 
 
 def _normalize_ocr_rotation_angles(value: Any) -> str:
@@ -1580,7 +1594,16 @@ def login_validation():
         if not username or not password:
             return jsonify({"success": False, "message": "ユーザー名とパスワードは必須です"}), 400
 
-        if username == _default_auth_username and password == _default_auth_password:
+        auth_credentials = _load_login_credentials()
+        auth_username = auth_credentials["username"]
+        auth_password = auth_credentials["password"]
+        if not auth_username or not auth_password:
+            return jsonify({
+                "success": False,
+                "message": f"認証設定が不正です。{_DB_CONN_ENV_KEY} を確認してください。"
+            }), 500
+
+        if username == auth_username and password == auth_password:
             session["user"] = username
             session["user_id"] = "admin-user-id"
             session["role"] = "ADMIN"
@@ -1624,8 +1647,9 @@ def auth_me_compat():
     if not _is_session_authenticated():
         g.response.add_error_message("認証が必要です")
         return jsonify(g.response.get_result()), 401
+    auth_credentials = _load_login_credentials()
     g.response.set_data({
-        "email": session.get("user", _default_auth_username),
+        "email": session.get("user", auth_credentials["username"]),
         "authenticated": True
     })
     return jsonify(g.response.get_result())
@@ -1637,7 +1661,13 @@ def auth_login_compat():
     data = request.get_json(silent=True) or {}
     username = (data.get("email") or data.get("username") or "").strip()
     password = data.get("password") or ""
-    if username == _default_auth_username and password == _default_auth_password:
+    auth_credentials = _load_login_credentials()
+    auth_username = auth_credentials["username"]
+    auth_password = auth_credentials["password"]
+    if not auth_username or not auth_password:
+        g.response.add_error_message(f"認証設定が不正です。{_DB_CONN_ENV_KEY} を確認してください。")
+        return jsonify(g.response.get_result()), 500
+    if username == auth_username and password == auth_password:
         session["user"] = username
         session["user_id"] = "admin-user-id"
         session["role"] = "ADMIN"

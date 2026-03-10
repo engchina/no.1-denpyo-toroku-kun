@@ -14,7 +14,7 @@ type LoginResponse = {
 
 export function LoginView() {
   const dispatch = useAppDispatch();
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
