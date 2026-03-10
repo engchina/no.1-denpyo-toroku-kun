@@ -1,5 +1,6 @@
 locals {
-  instance_access_ip = data.oci_core_subnet.selected_compute_subnet.prohibit_public_ip_on_vnic ? oci_core_instance.generated_oci_core_instance.private_ip : oci_core_instance.generated_oci_core_instance.public_ip
+  instance_public_ip = try(trimspace(oci_core_instance.generated_oci_core_instance.public_ip), "")
+  instance_access_ip = local.instance_public_ip != "" ? local.instance_public_ip : oci_core_instance.generated_oci_core_instance.private_ip
 }
 
 output "autonomous_data_warehouse_admin_password" {
@@ -32,12 +33,7 @@ output "ssh_to_instance" {
 
 output "application_url" {
   description = "URL to access the Denpyo Toroku application"
-  value       = "http://${local.instance_access_ip}/ai"
-}
-
-output "api_url" {
-  description = "URL to access the API"
-  value       = "http://${local.instance_access_ip}/ai/api"
+  value       = "http://${local.instance_access_ip}"
 }
 
 output "document_bucket_name" {

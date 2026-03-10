@@ -567,68 +567,9 @@ server {
     # クライアント最大ボディサイズ（アップロード用）
     client_max_body_size 100M;
 
-    # 本アプリのAPI (/ai/api と /ai/api/)
-    location /ai/api/ {
-        proxy_pass http://127.0.0.1:8080/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-    }
-
-    # /ai/api を /ai/api/ にリダイレクト
-    location = /ai/api {
-        return 301 /ai/api/;
-    }
-
-    # 画像プロキシエンドポイント (/oci/image)
-    location /oci/image/ {
-        proxy_pass http://127.0.0.1:8080/oci/image/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-        proxy_buffering off;
-        # キャッシュ設定（画像用）
-        proxy_cache_valid 200 1h;
-    }
-
-    # OCI Object Storageプロキシ (/object) - ファイル・画像配信
-    location /object/ {
-        proxy_pass http://127.0.0.1:8080/object/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-        proxy_buffering off;
-        proxy_cache_valid 200 1h;
-    }
-
-    # 後方互換性: /img/ -> /object/
-    location /img/ {
-        return 307 /object/$request_uri;
-    }
-
-    # 本アプリのヘルスチェック
-    location /ai/health {
-        proxy_pass http://127.0.0.1:8080/studio/api/v1/health;
-        proxy_set_header Host $host;
-        access_log off;
-    }
-
-    # 本アプリのフロントエンド (/ai/ と /ai/xxx)
-    location /ai/ {
-        proxy_pass http://127.0.0.1:8080/;
+    # 本アプリ全体をルートパスで提供する
+    location / {
+        proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -637,21 +578,6 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
-    }
-
-    # /ai を /ai/ にリダイレクト
-    location = /ai {
-        return 301 /ai/;
-    }
-
-    # ルートパスは/ai/にリダイレクト
-    location = / {
-        return 302 /ai/;
-    }
-
-    # その他のルートパスも/ai/にリダイレクト
-    location / {
-        return 302 /ai/;
     }
 }
 NGINX_EOF
@@ -679,9 +605,7 @@ NGINX_EOF
     EXTERNAL_IP=$(detect_access_ip || true)
     echo "========================================"
     echo "初期化が完了しました。"
-    echo "  本アプリ: http://${EXTERNAL_IP}/ai"
-    echo "  API:      http://${EXTERNAL_IP}/ai/api"
-    echo "  (ルート'/'は/aiにリダイレクトされます)"
+    echo "  本アプリ: http://${EXTERNAL_IP}"
     echo "========================================"
 fi
 
