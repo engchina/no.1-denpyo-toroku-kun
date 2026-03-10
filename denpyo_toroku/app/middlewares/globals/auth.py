@@ -45,6 +45,10 @@ def _redirect_legacy_static_path():
 
 
 def auth_middleware():
+    # Direct host access ("/") should always land on the UI entry path.
+    if request.path == "/":
+        return redirect(_redirect_target_with_query("/studio/"), code=302)
+
     static_redirect = _redirect_legacy_static_path()
     if static_redirect:
         return static_redirect
