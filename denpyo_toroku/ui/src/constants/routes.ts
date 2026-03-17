@@ -13,6 +13,7 @@ export const APP_ROUTES = {
   settingsOciGenAi: '/settings/oci-genai',
   settingsObjectStorage: '/settings/oci-object-storage',
   settingsDatabase: '/settings/database',
+  settingsPrompts: '/settings/prompts',
 } as const;
 
 export const FEATURE_ROUTES = {

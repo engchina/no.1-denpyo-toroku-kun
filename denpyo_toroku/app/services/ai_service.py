@@ -167,6 +167,280 @@ def refresh_runtime_ocr_settings() -> Dict[str, Any]:
 refresh_runtime_ocr_settings()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared prompt fragments
+#   _PROMPT_OCR_OUTPUT_RULES        : VLM OCR output format specification
+#   _PROMPT_STRUCTURED_DATA_READING : How to interpret structured OCR markers
+#                                     (works for both image-direct and text modes)
+#   _PROMPT_SELECTION_SCHEMA_DESIGN : DB schema design rules for selection fields
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PROMPT_OCR_OUTPUT_RULES: str = """\
+You are an intelligent document parser. Extract all content from this document \
+image and output it in a structured, machine-readable format following the rules below.
+
+## Rule 1: Tables and Grid-Based Forms
+- Render every table or grid using GitHub-Flavored Markdown table syntax.
+- Each LOGICAL row must occupy exactly ONE Markdown table row, even if that row \
+visually wraps across multiple lines in the image.
+- If a cell's content spans multiple visual lines within the same cell boundary, \
+join them with a single space.
+- Always include a header row; if no headers are printed, infer short descriptive \
+ones (Column1, Column2, ...).
+- CRITICAL — column integrity: First identify ALL column headers and fix the total \
+column count for the entire table. Every data row MUST have exactly that many \
+columns. Never merge values from adjacent columns into one cell.
+- To detect column boundaries when grid lines are faint or absent, align each \
+value with the header directly above it. If a data cell appears to contain text \
+that belongs to the next column (e.g., a part number immediately following an item \
+name), split them at the boundary implied by the header alignment.
+
+## Rule 2: Key-Value / Label-Value Fields
+- Output as "Label: Value" on a single line.
+- If a field value wraps visually across multiple lines, join them into one line.
+
+## Rule 3: Selection and Choice Fields
+Mark every visually indicated selection regardless of the indicator style:
+- Circled (○ ◯ ●), checked (✓ ✗ ☑ ☒), underlined, boxed, filled, or otherwise \
+highlighted options.
+- Append [SELECTED] immediately after the chosen option.
+- Append [REJECTED] immediately after any option that is explicitly crossed out \
+or struck through.
+- For checkbox lists, prefix each item with [CHECKED] or [ ] on its own line.
+- Example inline:   "Yes[SELECTED] / No"
+- Example checkbox: "[CHECKED] Option A / [ ] Option B / [CHECKED] Option C"
+
+## Rule 4: Free Text Regions
+- Preserve paragraph breaks with a blank line.
+- Do NOT add artificial line breaks that do not exist in the original.
+
+## Rule 5: Special Visual Elements
+- Stamps or seals:     <STAMP: text>
+- Handwritten notes:   <HANDWRITTEN: text>
+- Signatures:          <SIGNATURE>
+- Barcodes / QR codes: <BARCODE: value_if_readable>
+- Illegible text:      <ILLEGIBLE>
+- Redacted / masked:   <REDACTED>
+
+## Rule 6: Document Sections
+When the document has clearly separated sections, prefix each with a Markdown \
+heading (## Section Name).
+
+Output ONLY the extracted content. No explanations, no commentary, no markdown \
+code fences."""
+
+_PROMPT_STRUCTURED_DATA_READING: str = """\
+- Table rows: Each logical row — visually bounded in the image or formatted as a \
+Markdown table row with | separators in the text — must map to exactly one record. \
+Do not split a single logical row into multiple records even if it wraps across \
+visual lines.
+- Selection fields: The selected option is identified either by visual marking in \
+the image (circled ○, filled ●, checked ✓, underlined, boxed) or by the [SELECTED] \
+marker in the text. Record only the selected option's text as the field value, \
+without any marker (e.g., "Yes[SELECTED] / No" → "Yes").
+- Checkbox fields: Checked items (visually ticked in the image, or prefixed \
+[CHECKED] in the text) → "1". Unchecked items ([ ] prefix or no mark) → "0".
+- Special OCR tags: <STAMP: text> and <HANDWRITTEN: text> → use only the inner \
+text value. <SIGNATURE> → "1". <ILLEGIBLE> and <REDACTED> → empty string ""."""
+
+_PROMPT_SELECTION_SCHEMA_DESIGN: str = """\
+- Selection / choice fields (options visually marked in the image with ○/✓/underline, \
+or tagged [SELECTED] in OCR text): design the column as VARCHAR2 sized to \
+accommodate the longest option value.
+- Checkbox fields (visually ticked boxes in the image, or [CHECKED] / [ ] markers \
+in OCR text): design each distinct checkbox as NUMBER(1) (1 = checked, \
+0 = unchecked). If checkboxes represent mutually exclusive choices, a single \
+VARCHAR2 column may be used instead.
+- Stamp / seal (<STAMP:...> in OCR, or visible ink stamps in the image): VARCHAR2(200).
+- Handwritten annotation (<HANDWRITTEN:...> in OCR): VARCHAR2(500).
+- Signature (<SIGNATURE> in OCR, or dedicated signature fields): VARCHAR2(1) or \
+NUMBER(1)."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Function-specific prompt default fragments (extracted for customization)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PROMPT_CLASSIFY_INVOICE_DEFAULT: str = """\
+あなたは日本語業務文書（帳票）の分析を専門とするエキスパートです。
+提示された画像が日本企業の業務伝票であることを前提に、文書種別を正確に判定してください。
+
+【判定カテゴリ】（以下のいずれか1つを選択）
+請求書 / 納品書 / 領収書 / 注文書 / 見積書 / 発注書 /
+仕入伝票 / 売上伝票 / 出荷伝票 / 入荷伝票 / 支払伝票 /
+入金伝票 / 振替伝票 / 経費精算書 / 検収書 / その他
+
+【判定手順】
+1. 文書タイトル・ヘッダー記載を最優先で参照する
+2. タイトルが判読不能な場合は、記載内容・フォーム構成から推定する
+3. 上記16種に合致しない場合のみ「その他」を選択する
+
+【confidence（確信度）の基準】
+- 0.95〜1.00: タイトルが明示されており疑いなし
+- 0.80〜0.94: タイトルはないが内容・構成から確実に判断できる
+- 0.60〜0.79: 複数種別の可能性があるが最有力を選択
+- 0.40〜0.59: 画像が不鮮明または一部のみ視認可能で推定
+- 0.00〜0.39: ほぼ判断不能（この場合は category を「その他」にする）
+
+【has_line_items の判定】
+- true: 品番・品名・数量・単価・金額等の列を持つ「明細行テーブル」が文書内に存在する
+- false: 明細行テーブルがなく、ヘッダー情報のみで構成された文書
+
+【出力規則】
+以下のJSON 1行のみを返してください。説明文・マークダウン（```）・コメント（//）は禁止です。
+{"category": "請求書", "confidence": 0.95, "description": "製品の購入代金を請求する文書", "has_line_items": true}
+
+- description: この文書の用途・内容を40字以内で簡潔に記述する"""
+
+_PROMPT_EXTRACT_DATA_VALUE_RULES_DEFAULT: str = """\
+1. 各カラムの日本語ラベル（-- 以降）に対応する項目を画像内で探し、値を転記する
+2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
+3. 日付: ISO 8601形式 YYYY-MM-DD（例: "令和6年1月15日" → "2024-01-15"）
+4. テキスト: 画像の文字をそのまま転記。手書き等で判読不能な場合は ""
+5. 画像に該当項目が存在しない場合: "" （null は使わない）
+6. スキーマに存在する全カラムを header_fields に出力する（値がなくても省略禁止）
+7. テーブルセルの折り返し（セルが狭いため内容が複数の視覚的行に渡る場合）: 同一セル内の折り返し行を全てスペースで結合し、完全な文字列として1つの値に転記する（例: 1行目「室名札（ピクトサイン）」2行目「アクリルUV印刷」→ "室名札（ピクトサイン） アクリルUV印刷"）"""
+
+_PROMPT_EXTRACT_TEXT_VALUE_RULES_DEFAULT: str = """\
+1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する
+2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
+3. 日付: ISO 8601形式 YYYY-MM-DD（例: "令和6年1月15日" → "2024-01-15"）
+4. テキスト: OCRテキストの文字をそのまま転記。
+5. テキストに該当項目が存在しない場合: "" （null は使わない）
+6. スキーマに存在する全カラムを header_fields に出力する（値がなくても省略禁止）
+7. テーブルセルの折り返し（セルが狭いため内容が複数の視覚的行に渡る場合）: 同一セル内の折り返し行を全てスペースで結合し、完全な文字列として1つの値に転記する（例: 1行目「室名札（ピクトサイン）」2行目「アクリルUV印刷」→ "室名札（ピクトサイン） アクリルUV印刷"）"""
+
+_PROMPT_EXTRACT_SCHEMA_COMPLETENESS_DEFAULT: str = """\
+- 画像内の印字済み項目・手書き記入欄・空欄ラベルを全て漏れなく抽出する
+- 伝票番号・日付・取引先など管理項目は必ず含める
+- 合計・小計・消費税額・税率などの集計項目も全て含める
+- 承認印・受領印・担当者名・部署名などの運用管理項目も含める
+- 備考・摘要・特記事項欄も含める
+- テーブルセルの折り返し: セルが狭く内容が複数の視覚的行に渡る場合、同一セル内の全行をスペースで結合して完全な文字列として読み取る"""
+
+_PROMPT_EXTRACT_SCHEMA_ORACLE_DESIGN_DEFAULT: str = """\
+▶ field_name_en（カラム名）: 英語UPPERCASE + アンダースコア区切り
+  例: INVOICE_NO, CUSTOMER_NAME, TOTAL_AMOUNT, ISSUE_DATE
+  Oracle 12c互換のため30文字以内を強く推奨する
+
+▶ データ型の選択:
+  - VARCHAR2: 文字列・コード・番号類・名称・住所・メモ・承認印
+    （「003」等の先頭ゼロを保持する必要があるコード・番号は VARCHAR2 を選択）
+  - NUMBER: 計算・集計対象の純粋な数値のみ（金額・数量・単価・税率・個数）
+  - DATE: 日付（時刻を含む場合も DATE で可）
+
+▶ VARCHAR2の max_length（文字数）目安:
+  コード・番号: 50 / 氏名・担当者名: 100 / 会社名・部署名: 200 / 住所: 300 /
+  品名・件名・商品名: 200 / 電話番号・FAX: 20 / メールアドレス: 200 /
+  備考・摘要・特記事項: 500 / その他テキスト: 100
+
+▶ is_required の判定:
+  - true: 常に印字・記入される必須項目（伝票番号・日付・取引先・合計金額等）
+  - false: 状況により空欄になりうる任意項目"""
+
+_PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
+### 1. Document Type Detection
+- First, identify the document type (e.g., 領収書, 請求書, 納品書, 見積書, 注文書, 発注書, etc.).
+- Design the table name and structure accordingly.
+
+### 2. Naming Conventions
+- **Table name**: Romanized Katakana in UPPERCASE alphabet (e.g., RYOUSHUUSHO for 領収書, SEIKYUUSHO for 請求書, NOUHINNSHO for 納品書).
+- **Physical column names**: Romanized Katakana in UPPERCASE alphabet with underscores (e.g., HAKKOOBI for 発行日, GOUKEI_KINGAKU for 合計金額, ATESAKI_MEI for 宛先名).
+- **Logical column names**: Japanese (Kanji) via comment (e.g., 発行日, 合計金額).
+- Use consistent Hepburn romanization rules (e.g., しょ→SHO, きゅう→KYUU, おう→OU).
+
+### 3. Schema Design Rules
+- Choose appropriate Oracle data types: VARCHAR2, NUMBER, DATE, TIMESTAMP.
+- Do NOT use CLOB. Even long text fields must use VARCHAR2 with an appropriate length up to 4000.
+- Make columns NULLABLE unless they are clearly always present.
+- Do not set VARCHAR2 length to the exact observed character count. Add generous safety buffer because actual production data can be longer.
+- Prefer safer bucket sizes such as 50, 100, 200, 300, 500, 1000, 2000, or 4000.
+- For short-looking codes / IDs / numbers, still keep enough room instead of matching the sample exactly.
+- {header_only_hint}
+
+### 4. Capture ALL information present in the document, such as:
+- Document metadata (document number, date, type)
+- Party information (sender/receiver name, address, phone, registration number)
+- Amount summary (subtotal, tax, total)
+- Tax breakdown by rate if present
+- Line item details if present (item name, quantity, unit price, amount, tax rate)
+- Any stamps, notes, remarks, or payment terms"""
+
+_PROMPT_SUGGEST_DDL_RULES_DEFAULT: str = """\
+- table_prefix: 伝票種別に合わせた英語大文字（例: INV, PO, RCV, SLS）
+- header_table_name: ヘッダーテーブル名（table_prefix + "_H"）
+- line_table_name: 明細テーブル名（table_prefix + "_L"）
+- header_ddl・line_ddl: 改行を \\n でエスケープした CREATE TABLE 文の文字列
+- ヘッダーテーブルには HEADER_ID（NUMBER 主キー）、CREATED_AT（DATE）、FILE_NAME（VARCHAR2(500)）を自動追加
+- 明細テーブルには LINE_ID（NUMBER 主キー）、HEADER_ID（外部キー）、LINE_NO（NUMBER）を自動追加
+- 出力は必ず有効な JSON のみ。前後に説明文・コードブロック（```）・コメント（//）を含めないでください"""
+
+_PROMPT_TEXT_TO_SQL_CONSTRAINTS_DEFAULT: str = """\
+- SELECT 文のみ生成（INSERT, UPDATE, DELETE, DROP などは絶対に禁止）
+- 上記に示したテーブルとカラムのみ使用
+- テーブル名にスキーマ名は付けない（例: RECEIPT_H を使い、ADMIN.RECEIPT_H は使わない）
+- Oracle Database 構文に従う（ROWNUM, NVL, TO_CHAR, TO_DATE など使用可）
+- sql フィールドの値は SQL 文字列（改行は \\n でエスケープ）
+- 出力は必ず有効な JSON のみ。前後に説明文・コードブロック（```）・コメント（//）を含めないでください"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt customization support
+#   プロンプト設定は prompt_settings.json に保存され、
+#   _get_prompt(key) で取得する。未設定はデフォルトに fallback。
+# ─────────────────────────────────────────────────────────────────────────────
+
+# All configurable prompt keys with their defaults
+PROMPT_KEYS: Dict[str, str] = {
+    "ocr_output_rules": _PROMPT_OCR_OUTPUT_RULES,
+    "structured_data_reading": _PROMPT_STRUCTURED_DATA_READING,
+    "selection_schema_design": _PROMPT_SELECTION_SCHEMA_DESIGN,
+    "classify_invoice": _PROMPT_CLASSIFY_INVOICE_DEFAULT,
+    "extract_data_value_rules": _PROMPT_EXTRACT_DATA_VALUE_RULES_DEFAULT,
+    "extract_text_value_rules": _PROMPT_EXTRACT_TEXT_VALUE_RULES_DEFAULT,
+    "extract_schema_completeness": _PROMPT_EXTRACT_SCHEMA_COMPLETENESS_DEFAULT,
+    "extract_schema_oracle_design": _PROMPT_EXTRACT_SCHEMA_ORACLE_DESIGN_DEFAULT,
+    "generate_sql_requirements": _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT,
+    "suggest_ddl_rules": _PROMPT_SUGGEST_DDL_RULES_DEFAULT,
+    "text_to_sql_constraints": _PROMPT_TEXT_TO_SQL_CONSTRAINTS_DEFAULT,
+}
+
+_prompt_overrides: Dict[str, str] = {}
+
+
+def _prompt_settings_path() -> "Path":
+    from pathlib import Path
+    return Path(__file__).resolve().parents[3] / "prompt_settings.json"
+
+
+def reload_prompt_settings() -> None:
+    """JSONファイルからカスタムプロンプトを再読み込みする。APIエンドポイントから呼び出し可能。"""
+    global _prompt_overrides
+    from pathlib import Path
+    path = _prompt_settings_path()
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            _prompt_overrides = {
+                k: v for k, v in data.items()
+                if k in PROMPT_KEYS and isinstance(v, str) and v.strip()
+            }
+        except Exception as exc:
+            logger.warning("プロンプト設定の読み込みに失敗しました: %s", exc)
+            _prompt_overrides = {}
+    else:
+        _prompt_overrides = {}
+
+
+def _get_prompt(key: str) -> str:
+    """カスタムプロンプトがある場合はそれを返し、なければデフォルトを返す。"""
+    return _prompt_overrides.get(key) or PROMPT_KEYS.get(key, "")
+
+
+# モジュールロード時に読み込む
+reload_prompt_settings()
+
+
 class AIRateLimitError(Exception):
     """OCI GenAI の 429 を上位へ透過するための例外"""
 
@@ -1227,9 +1501,7 @@ class AIService:
         import mimetypes
         import oci
 
-        prompt = """Extract all text from the image exactly as it appears. 
-Preserve the original formatting, layout, line breaks, and structure. 
-Output only the extracted text with no additional commentary, explanations, or metadata."""
+        prompt = _get_prompt("ocr_output_rules")
 
         page_texts: List[Dict[str, Any]] = []
         merged_texts: List[str] = []
@@ -1488,35 +1760,7 @@ Output only the extracted text with no additional commentary, explanations, or m
         if not client:
             return {"success": False, "message": "AI クライアントが初期化されていません"}
 
-        prompt = """あなたは日本語業務文書（帳票）の分析を専門とするエキスパートです。
-提示された画像が日本企業の業務伝票であることを前提に、文書種別を正確に判定してください。
-
-【判定カテゴリ】（以下のいずれか1つを選択）
-請求書 / 納品書 / 領収書 / 注文書 / 見積書 / 発注書 /
-仕入伝票 / 売上伝票 / 出荷伝票 / 入荷伝票 / 支払伝票 /
-入金伝票 / 振替伝票 / 経費精算書 / 検収書 / その他
-
-【判定手順】
-1. 文書タイトル・ヘッダー記載を最優先で参照する
-2. タイトルが判読不能な場合は、記載内容・フォーム構成から推定する
-3. 上記16種に合致しない場合のみ「その他」を選択する
-
-【confidence（確信度）の基準】
-- 0.95〜1.00: タイトルが明示されており疑いなし
-- 0.80〜0.94: タイトルはないが内容・構成から確実に判断できる
-- 0.60〜0.79: 複数種別の可能性があるが最有力を選択
-- 0.40〜0.59: 画像が不鮮明または一部のみ視認可能で推定
-- 0.00〜0.39: ほぼ判断不能（この場合は category を「その他」にする）
-
-【has_line_items の判定】
-- true: 品番・品名・数量・単価・金額等の列を持つ「明細行テーブル」が文書内に存在する
-- false: 明細行テーブルがなく、ヘッダー情報のみで構成された文書
-
-【出力規則】
-以下のJSON 1行のみを返してください。説明文・マークダウン（```）・コメント（//）は禁止です。
-{"category": "請求書", "confidence": 0.95, "description": "製品の購入代金を請求する文書", "has_line_items": true}
-
-- description: この文書の用途・内容を40字以内で簡潔に記述する"""
+        prompt = _get_prompt("classify_invoice")
 
         try:
             import oci
@@ -1804,12 +2048,8 @@ Output only the extracted text with no additional commentary, explanations, or m
 {line_cols_fmt if has_line_tbl else '  （定義なし）'}
 
 【値読み取りルール】
-1. 各カラムの日本語ラベル（-- 以降）に対応する項目を画像内で探し、値を転記する
-2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
-3. 日付: ISO 8601形式 YYYY-MM-DD（例: "令和6年1月15日" → "2024-01-15"）
-4. テキスト: 画像の文字をそのまま転記。手書き等で判読不能な場合は ""
-5. 画像に該当項目が存在しない場合: "" （null は使わない）
-6. スキーマに存在する全カラムを header_fields に出力する（値がなくても省略禁止）
+{_get_prompt("extract_data_value_rules")}
+{_get_prompt("structured_data_reading")}
 
 【カラム名の厳守】
 - header_fields[].field_name_en: 必ず HEADERテーブルの COLUMN_NAME をそのまま使用（UPPERCASE、変名・追加・省略禁止）
@@ -1819,18 +2059,18 @@ Output only the extracted text with no additional commentary, explanations, or m
 【出力形式】（JSON のみ。マークダウン・コードブロック・コメント禁止）
 {{
   "header_fields": [
-    {{"field_name": "請求書番号", "field_name_en": "INVOICE_NO", "value": "INV-2024-001", "data_type": "VARCHAR2", "max_length": 50, "is_required": true}},
-    {{"field_name": "請求日", "field_name_en": "INVOICE_DATE", "value": "2024-01-15", "data_type": "DATE", "max_length": null, "is_required": true}},
-    {{"field_name": "請求金額合計", "field_name_en": "TOTAL_AMOUNT", "value": "110000", "data_type": "NUMBER", "max_length": null, "is_required": true}}
+    {{"field_name": "あああ", "field_name_en": "AAA", "value": "あああ", "data_type": "VARCHAR2", "max_length": 50, "is_required": true}},
+    {{"field_name": "いいい", "field_name_en": "BBB", "value": "2000-01-01", "data_type": "DATE", "max_length": null, "is_required": true}},
+    {{"field_name": "ううう", "field_name_en": "CCC", "value": "0", "data_type": "NUMBER", "max_length": null, "is_required": true}}
   ],
   "line_fields": [
-    {{"field_name": "品名", "field_name_en": "ITEM_NAME", "value": "製品A", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
-    {{"field_name": "数量", "field_name_en": "QUANTITY", "value": "10", "data_type": "NUMBER", "max_length": null, "is_required": true}}
+    {{"field_name": "あああ", "field_name_en": "AAA", "value": "あああ", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
+    {{"field_name": "いいい", "field_name_en": "BBB", "value": "0", "data_type": "NUMBER", "max_length": null, "is_required": true}}
   ],
   "line_count": 2,
   "raw_lines": [
-    {{"ITEM_NAME": "製品A", "QUANTITY": "10", "UNIT_PRICE": "5000", "AMOUNT": "50000"}},
-    {{"ITEM_NAME": "製品B", "QUANTITY": "5", "UNIT_PRICE": "8000", "AMOUNT": "40000"}}
+    {{"AAA": "あああ", "BBB": "0", "CCC": "0", "DDD": "0"}},
+    {{"AAA": "いいい", "BBB": "0", "CCC": "0", "DDD": "0"}}
   ]
 }}
 
@@ -1862,51 +2102,31 @@ Output only the extracted text with no additional commentary, explanations, or m
 明細テーブルが不要な場合（領収書・単行伝票等）は line_fields と raw_lines を空配列にします。
 
 【フィールド抽出の完全性】
-- 画像内の印字済み項目・手書き記入欄・空欄ラベルを全て漏れなく抽出する
-- 伝票番号・日付・取引先など管理項目は必ず含める
-- 合計・小計・消費税額・税率などの集計項目も全て含める
-- 承認印・受領印・担当者名・部署名などの運用管理項目も含める
-- 備考・摘要・特記事項欄も含める
+{_get_prompt("extract_schema_completeness")}
+{_get_prompt("selection_schema_design")}
 
 【Oracleカラム設計基準】
-▶ field_name_en（カラム名）: 英語UPPERCASE + アンダースコア区切り
-  例: INVOICE_NO, CUSTOMER_NAME, TOTAL_AMOUNT, ISSUE_DATE
-  Oracle 12c互換のため30文字以内を強く推奨する
-
-▶ データ型の選択:
-  - VARCHAR2: 文字列・コード・番号類・名称・住所・メモ・承認印
-    （「003」等の先頭ゼロを保持する必要があるコード・番号は VARCHAR2 を選択）
-  - NUMBER: 計算・集計対象の純粋な数値のみ（金額・数量・単価・税率・個数）
-  - DATE: 日付（時刻を含む場合も DATE で可）
-
-▶ VARCHAR2の max_length（文字数）目安:
-  コード・番号: 50 / 氏名・担当者名: 100 / 会社名・部署名: 200 / 住所: 300 /
-  品名・件名・商品名: 200 / 電話番号・FAX: 20 / メールアドレス: 200 /
-  備考・摘要・特記事項: 500 / その他テキスト: 100
-
-▶ is_required の判定:
-  - true: 常に印字・記入される必須項目（伝票番号・日付・取引先・合計金額等）
-  - false: 状況により空欄になりうる任意項目
+{_get_prompt("extract_schema_oracle_design")}
 
 【出力形式】（JSON のみ。マークダウン・コードブロック・コメント禁止）
 {{
   "header_fields": [
-    {{"field_name": "請求書番号", "field_name_en": "INVOICE_NO", "value": "INV-2024-001", "data_type": "VARCHAR2", "max_length": 50, "is_required": true}},
-    {{"field_name": "請求日", "field_name_en": "INVOICE_DATE", "value": "2024-01-15", "data_type": "DATE", "max_length": null, "is_required": true}},
-    {{"field_name": "取引先名", "field_name_en": "CUSTOMER_NAME", "value": "株式会社サンプル", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
-    {{"field_name": "請求金額合計", "field_name_en": "TOTAL_AMOUNT", "value": "110000", "data_type": "NUMBER", "max_length": null, "is_required": true}},
-    {{"field_name": "消費税額", "field_name_en": "TAX_AMOUNT", "value": "10000", "data_type": "NUMBER", "max_length": null, "is_required": false}}
+    {{"field_name": "あああ", "field_name_en": "AAA", "value": "あああ", "data_type": "VARCHAR2", "max_length": 50, "is_required": true}},
+    {{"field_name": "いいい", "field_name_en": "BBB", "value": "2000-01-01", "data_type": "DATE", "max_length": null, "is_required": true}},
+    {{"field_name": "ううう", "field_name_en": "CCC", "value": "あああ", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
+    {{"field_name": "えええ", "field_name_en": "DDD", "value": "0", "data_type": "NUMBER", "max_length": null, "is_required": true}},
+    {{"field_name": "おおお", "field_name_en": "EEE", "value": "0", "data_type": "NUMBER", "max_length": null, "is_required": false}}
   ],
   "line_fields": [
-    {{"field_name": "品名", "field_name_en": "ITEM_NAME", "value": "製品A", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
-    {{"field_name": "数量", "field_name_en": "QUANTITY", "value": "10", "data_type": "NUMBER", "max_length": null, "is_required": true}},
-    {{"field_name": "単価", "field_name_en": "UNIT_PRICE", "value": "5000", "data_type": "NUMBER", "max_length": null, "is_required": true}},
-    {{"field_name": "金額", "field_name_en": "AMOUNT", "value": "50000", "data_type": "NUMBER", "max_length": null, "is_required": true}}
+    {{"field_name": "あああ", "field_name_en": "AAA", "value": "あああ", "data_type": "VARCHAR2", "max_length": 200, "is_required": true}},
+    {{"field_name": "いいい", "field_name_en": "BBB", "value": "0", "data_type": "NUMBER", "max_length": null, "is_required": true}},
+    {{"field_name": "ううう", "field_name_en": "CCC", "value": "0", "data_type": "NUMBER", "max_length": null, "is_required": true}},
+    {{"field_name": "えええ", "field_name_en": "DDD", "value": "0", "data_type": "NUMBER", "max_length": null, "is_required": true}}
   ],
   "line_count": 2,
   "raw_lines": [
-    {{"ITEM_NAME": "製品A", "QUANTITY": "10", "UNIT_PRICE": "5000", "AMOUNT": "50000"}},
-    {{"ITEM_NAME": "製品B", "QUANTITY": "5", "UNIT_PRICE": "8000", "AMOUNT": "40000"}}
+    {{"AAA": "あああ", "BBB": "0", "CCC": "0", "DDD": "0"}},
+    {{"AAA": "いいい", "BBB": "0", "CCC": "0", "DDD": "0"}}
   ]
 }}
 
@@ -2061,12 +2281,8 @@ Output only the extracted text with no additional commentary, explanations, or m
 {line_cols_fmt if has_line_tbl else '  （定義なし）'}
 
 【値読み取りルール】
-1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する
-2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
-3. 日付: ISO 8601形式 YYYY-MM-DD（例: "令和6年1月15日" → "2024-01-15"）
-4. テキスト: OCRテキストの文字をそのまま転記。
-5. テキストに該当項目が存在しない場合: "" （null は使わない）
-6. スキーマに存在する全カラムを header_fields に出力する（値がなくても省略禁止）
+{_get_prompt("extract_text_value_rules")}
+{_get_prompt("structured_data_reading")}
 
 【カラム名の厳守】
 - header_fields[].field_name_en: 必ず HEADERテーブルの COLUMN_NAME をそのまま使用（UPPERCASE、変名・追加・省略禁止）
@@ -2404,32 +2620,8 @@ Output only the extracted text with no additional commentary, explanations, or m
 
 ## Requirements:
 
-### 1. Document Type Detection
-- First, identify the document type (e.g., 領収書, 請求書, 納品書, 見積書, 注文書, 発注書, etc.).
-- Design the table name and structure accordingly.
-
-### 2. Naming Conventions
-- **Table name**: Romanized Katakana in UPPERCASE alphabet (e.g., RYOUSHUUSHO for 領収書, SEIKYUUSHO for 請求書, NOUHINNSHO for 納品書).
-- **Physical column names**: Romanized Katakana in UPPERCASE alphabet with underscores (e.g., HAKKOOBI for 発行日, GOUKEI_KINGAKU for 合計金額, ATESAKI_MEI for 宛先名).
-- **Logical column names**: Japanese (Kanji) via comment (e.g., 発行日, 合計金額).
-- Use consistent Hepburn romanization rules (e.g., しょ→SHO, きゅう→KYUU, おう→OU).
-
-### 3. Schema Design Rules
-- Choose appropriate Oracle data types: VARCHAR2, NUMBER, DATE, TIMESTAMP.
-- Do NOT use CLOB. Even long text fields must use VARCHAR2 with an appropriate length up to 4000.
-- Make columns NULLABLE unless they are clearly always present.
-- Do not set VARCHAR2 length to the exact observed character count. Add generous safety buffer because actual production data can be longer.
-- Prefer safer bucket sizes such as 50, 100, 200, 300, 500, 1000, 2000, or 4000.
-- For short-looking codes / IDs / numbers, still keep enough room instead of matching the sample exactly.
-- {header_only_hint}
-
-### 4. Capture ALL information present in the document, such as:
-- Document metadata (document number, date, type)
-- Party information (sender/receiver name, address, phone, registration number)
-- Amount summary (subtotal, tax, total)
-- Tax breakdown by rate if present
-- Line item details if present (item name, quantity, unit price, amount, tax rate)
-- Any stamps, notes, remarks, or payment terms
+{_get_prompt("generate_sql_requirements").replace("{header_only_hint}", header_only_hint)}
+{_get_prompt("selection_schema_design")}
 
 ### 5. Output Format
 Output ONLY a valid JSON object matching this structure (No explanation or markdown code fences needed):
@@ -2629,13 +2821,7 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
 }}
 
 注意:
-- table_prefix: 伝票種別に合わせた英語大文字（例: INV, PO, RCV, SLS）
-- header_table_name: ヘッダーテーブル名（table_prefix + "_H"）
-- line_table_name: 明細テーブル名（table_prefix + "_L"）
-- header_ddl・line_ddl: 改行を \\n でエスケープした CREATE TABLE 文の文字列
-- ヘッダーテーブルには HEADER_ID（NUMBER 主キー）、CREATED_AT（DATE）、FILE_NAME（VARCHAR2(500)）を自動追加
-- 明細テーブルには LINE_ID（NUMBER 主キー）、HEADER_ID（外部キー）、LINE_NO（NUMBER）を自動追加
-- 出力は必ず有効な JSON のみ。前後に説明文・コードブロック（```）・コメント（//）を含めないでください"""
+{_get_prompt("suggest_ddl_rules")}"""
 
         try:
             import oci
@@ -2734,12 +2920,7 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
 }}
 
 制約:
-- SELECT 文のみ生成（INSERT, UPDATE, DELETE, DROP などは絶対に禁止）
-- 上記に示したテーブルとカラムのみ使用
-- テーブル名にスキーマ名は付けない（例: RECEIPT_H を使い、ADMIN.RECEIPT_H は使わない）
-- Oracle Database 構文に従う（ROWNUM, NVL, TO_CHAR, TO_DATE など使用可）
-- sql フィールドの値は SQL 文字列（改行は \\n でエスケープ）
-- 出力は必ず有効な JSON のみ。前後に説明文・コードブロック（```）・コメント（//）を含めないでください"""
+{_get_prompt("text_to_sql_constraints")}"""
 
         try:
             import oci

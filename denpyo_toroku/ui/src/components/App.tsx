@@ -19,6 +19,7 @@ const ApplicationSettings = lazy(() => import('../views/applicationSettings/Appl
 const OciGenAiModelSettings = lazy(() => import('../views/ociGenAiModelSettings/OciGenAiModelSettings').then(m => ({ default: m.OciGenAiModelSettings })));
 const OciObjectStorageSettings = lazy(() => import('../views/ociObjectStorageSettings/OciObjectStorageSettings').then(m => ({ default: m.OciObjectStorageSettings })));
 const DatabaseSettings = lazy(() => import('../views/databaseSettings/DatabaseSettings').then(m => ({ default: m.DatabaseSettings })));
+const PromptSettings = lazy(() => import('../views/promptSettings/PromptSettings').then(m => ({ default: m.PromptSettings })));
 const UploadView = lazy(() => import('../views/upload/UploadView').then(m => ({ default: m.UploadView })));
 const ListView = lazy(() => import('../views/fileList/ListView').then(m => ({ default: m.ListView })));
 const RegistrationView = lazy(() => import('../views/registration/RegistrationView').then(m => ({ default: m.RegistrationView })));
@@ -148,6 +149,7 @@ function AppRoutes() {
           <Route path={APP_ROUTES.settingsOciGenAi} element={<OciGenAiModelSettings />} />
           <Route path={APP_ROUTES.settingsObjectStorage} element={<OciObjectStorageSettings />} />
           <Route path={APP_ROUTES.settingsDatabase} element={<DatabaseSettings />} />
+          <Route path={APP_ROUTES.settingsPrompts} element={<PromptSettings />} />
         </Route>
         <Route
           path="/"

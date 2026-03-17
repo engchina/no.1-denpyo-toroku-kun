@@ -31,6 +31,7 @@ from denpyo_toroku.app.util.response import Response
 from denpyo_toroku.config import AppConfig
 from denpyo_toroku.app.services.database_service import DatabaseService
 from denpyo_toroku.app.services.ai_service import AIRateLimitError
+from denpyo_toroku.auth_config import SESSION_TIMEOUT_SECONDS
 
 api_blueprint = Blueprint("api_blueprint", __name__)
 
@@ -84,6 +85,11 @@ _GENAI_REQUEUE_JITTER_RATIO = min(
     0.5,
     max(0.0, float(os.environ.get("GENAI_REQUEUE_JITTER_RATIO", "0.25"))),
 )
+
+
+def _session_expiry_timestamp() -> int:
+    expiry_time = dt.datetime.now() + dt.timedelta(seconds=SESSION_TIMEOUT_SECONDS)
+    return int(expiry_time.timestamp())
 
 
 def _to_bool(value, default: bool = True) -> bool:
@@ -1604,14 +1610,14 @@ def login_validation():
             }), 500
 
         if username == auth_username and password == auth_password:
+            session.permanent = True
             session["user"] = username
             session["user_id"] = "admin-user-id"
             session["role"] = "ADMIN"
             session["token"] = hashlib.sha256(
                 f"{username}{dt.datetime.now()}".encode()
             ).hexdigest()
-            expiry_time = dt.datetime.now() + dt.timedelta(minutes=30)
-            session["token_expiry_ts"] = int(expiry_time.timestamp())
+            session["token_expiry_ts"] = _session_expiry_timestamp()
 
             if request.is_json:
                 return jsonify({
@@ -1668,14 +1674,14 @@ def auth_login_compat():
         g.response.add_error_message(f"認証設定が不正です。{_DB_CONN_ENV_KEY} を確認してください。")
         return jsonify(g.response.get_result()), 500
     if username == auth_username and password == auth_password:
+        session.permanent = True
         session["user"] = username
         session["user_id"] = "admin-user-id"
         session["role"] = "ADMIN"
         session["token"] = hashlib.sha256(
             f"{username}{dt.datetime.now()}".encode()
         ).hexdigest()
-        expiry_time = dt.datetime.now() + dt.timedelta(minutes=30)
-        session["token_expiry_ts"] = int(expiry_time.timestamp())
+        session["token_expiry_ts"] = _session_expiry_timestamp()
         g.response.set_data({"email": username, "authenticated": True})
         return jsonify(g.response.get_result())
     g.response.add_error_message("ユーザー名またはパスワードが正しくありません")
@@ -2117,6 +2123,115 @@ def upload_database_wallet():
         return jsonify(g.response.get_result()), 422
     except Exception as e:
         logging.error("Wallet アップロードエラー: %s", e, exc_info=True)
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/prompts", methods=["GET"])
+def get_prompt_settings():
+    """Get all prompt settings (current values and defaults)."""
+    try:
+        from denpyo_toroku.app.services.ai_service import PROMPT_KEYS, _prompt_overrides, _prompt_settings_path
+
+        result = {}
+        for key, default_value in PROMPT_KEYS.items():
+            result[key] = {
+                "default": default_value,
+                "current": _prompt_overrides.get(key) or None,
+                "is_customized": key in _prompt_overrides and bool(_prompt_overrides[key].strip()),
+            }
+        g.response.set_data({"prompts": result})
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("プロンプト設定の取得エラー: %s", e, exc_info=True)
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/prompts", methods=["POST"])
+def save_prompt_settings():
+    """Save custom prompt settings to JSON file."""
+    try:
+        from denpyo_toroku.app.services.ai_service import PROMPT_KEYS, reload_prompt_settings, _prompt_settings_path
+
+        body = request.get_json(silent=True) or {}
+        prompts_payload = body.get("prompts") if isinstance(body.get("prompts"), dict) else body
+
+        if not isinstance(prompts_payload, dict):
+            g.response.add_error_message("リクエストボディが不正です。")
+            return jsonify(g.response.get_result()), 422
+
+        # Load existing settings
+        settings_path = _prompt_settings_path()
+        existing: Dict[str, Any] = {}
+        if settings_path.exists():
+            try:
+                with open(settings_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
+
+        # Merge: only update known keys; null/empty means "use default" (remove override)
+        for key, value in prompts_payload.items():
+            if key not in PROMPT_KEYS:
+                continue
+            if value is None or (isinstance(value, str) and not value.strip()):
+                existing.pop(key, None)  # remove override → use default
+            elif isinstance(value, str):
+                existing[key] = value
+
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(settings_path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+
+        reload_prompt_settings()
+
+        g.response.set_data({"saved": True, "message": "プロンプト設定を保存しました。"})
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("プロンプト設定の保存エラー: %s", e, exc_info=True)
+        g.response.add_error_message(str(e))
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/prompts/reset", methods=["POST"])
+def reset_prompt_settings():
+    """Reset all or specific prompt(s) to defaults."""
+    try:
+        from denpyo_toroku.app.services.ai_service import PROMPT_KEYS, reload_prompt_settings, _prompt_settings_path
+
+        body = request.get_json(silent=True) or {}
+        keys_to_reset = body.get("keys")  # None = reset all; list = reset specific keys
+
+        settings_path = _prompt_settings_path()
+        existing: Dict[str, Any] = {}
+        if settings_path.exists():
+            try:
+                with open(settings_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
+
+        if keys_to_reset is None:
+            # Reset all: remove file or clear all known keys
+            existing = {k: v for k, v in existing.items() if k not in PROMPT_KEYS}
+        elif isinstance(keys_to_reset, list):
+            for key in keys_to_reset:
+                existing.pop(key, None)
+
+        if existing:
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2)
+        elif settings_path.exists():
+            settings_path.unlink(missing_ok=True)
+
+        reload_prompt_settings()
+
+        g.response.set_data({"reset": True, "message": "プロンプト設定をデフォルトに戻しました。"})
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("プロンプト設定のリセットエラー: %s", e, exc_info=True)
         g.response.add_error_message(str(e))
         return jsonify(g.response.get_result()), 500
 

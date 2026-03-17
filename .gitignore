@@ -112,3 +112,14 @@ denpyo_toroku/ui/exchange_components/
 
 # Local Prometheus config (use prometheus.example.yml as template)
 prometheus.yml
+
+# Workspace/agent local context files
+/AGENTS.md
+/CLAUDE.md
+/HEARTBEAT.md
+/IDENTITY.md
+/SOUL.md
+/TOOLS.md
+/USER.md
+/MEMORY.md
+/memory/

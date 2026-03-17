@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
 import { Upload, CheckCircle, XCircle, Database, RefreshCw } from 'lucide-react';
-import { apiGet, apiPost, apiPostWithTimeout } from '../../utils/apiUtils';
+import { apiGet, apiPost, apiPostWithTimeout, apiUpload } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import { t } from '../../i18n';
-
-const BASE_URL = '/studio';
 
 interface DatabaseSettingsForm {
   username: string;
@@ -233,18 +231,7 @@ export function DatabaseSettings() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const response = await fetch(`${BASE_URL}/api/v1/database/settings/wallet`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: formData
-      });
-      const body = await response.json();
-      if (!response.ok) {
-        const message = body?.errorMessages?.[0] || t('notify.dbSettings.walletUploadFailed');
-        throw new Error(message);
-      }
-
-      const result = body?.data || {};
+      const result = await apiUpload<any>('/api/v1/database/settings/wallet', formData);
       setDbWalletLocation(result.wallet_location || '');
       setDbSettings(prev => ({
         ...prev,

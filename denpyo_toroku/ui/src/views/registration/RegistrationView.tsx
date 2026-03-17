@@ -513,7 +513,7 @@ export function RegistrationView() {
                         <thead>
                           <tr>
                             <th>{t('registration.col.rowNo')}</th>
-                            <th>{t('registration.col.actions')}</th>
+                            <th class="ics-registration-rowActionCell">{t('registration.col.actions')}</th>
                             {lineColumns.map(col => (
                               <th key={col}>{col}</th>
                             ))}

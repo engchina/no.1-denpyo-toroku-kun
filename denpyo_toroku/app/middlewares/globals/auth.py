@@ -1,5 +1,6 @@
 import datetime
 from flask import request, session, g, redirect, jsonify
+from denpyo_toroku.auth_config import SESSION_TIMEOUT_SECONDS
 
 
 def _verify_token_not_expired(token_expiry_ts):
@@ -42,6 +43,12 @@ def _redirect_legacy_static_path():
             return redirect(_redirect_target_with_query(f"/studio{suffix}"), code=307)
 
     return None
+
+
+def _refresh_session_expiry():
+    current_time = datetime.datetime.now() + datetime.timedelta(seconds=SESSION_TIMEOUT_SECONDS)
+    session.permanent = True
+    session["token_expiry_ts"] = int(current_time.timestamp())
 
 
 def auth_middleware():
@@ -90,8 +97,7 @@ def auth_middleware():
         g.user_email = user
         g.user_name = user
         g.user_id = session.get("user_id", None)
-        current_time = datetime.datetime.now() + datetime.timedelta(minutes=30)
-        session["token_expiry_ts"] = int(current_time.timestamp())
+        _refresh_session_expiry()
         return
 
     session.pop("token", None)

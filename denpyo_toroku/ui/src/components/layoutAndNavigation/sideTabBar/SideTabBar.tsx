@@ -21,6 +21,7 @@ import {
   Files,
   Tags,
   Search,
+  MessageSquareText,
   type LucideIcon
 } from 'lucide-react';
 
@@ -56,7 +57,8 @@ const navGroups: NavGroup[] = [
       { id: 'applicationSettings', nameKey: 'nav.applicationSettings', Icon: SlidersHorizontal, path: APP_ROUTES.settingsApplication },
       { id: 'ociGenAiModelSettings', nameKey: 'nav.ociGenAiModelSettings', Icon: Cpu, path: APP_ROUTES.settingsOciGenAi },
       { id: 'ociObjectStorageSettings', nameKey: 'nav.ociObjectStorageSettings', Icon: HardDrive, path: APP_ROUTES.settingsObjectStorage },
-      { id: 'databaseSettings', nameKey: 'nav.databaseSettings', Icon: Database, path: APP_ROUTES.settingsDatabase }
+      { id: 'databaseSettings', nameKey: 'nav.databaseSettings', Icon: Database, path: APP_ROUTES.settingsDatabase },
+      { id: 'promptSettings', nameKey: 'nav.promptSettings', Icon: MessageSquareText, path: APP_ROUTES.settingsPrompts }
     ]
   }
 ];

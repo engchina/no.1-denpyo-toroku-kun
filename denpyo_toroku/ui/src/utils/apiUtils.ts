@@ -3,6 +3,17 @@
  */
 
 const BASE_URL = '/studio';
+const LOGIN_URL = `${BASE_URL}/login`;
+
+const redirectToLogin = (): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (window.location.pathname === LOGIN_URL || window.location.pathname === '/login') {
+    return;
+  }
+  window.location.assign(LOGIN_URL);
+};
 
 const extractErrorMessage = (body: any, status: number): string => {
   if (Array.isArray(body?.errorMessages) && body.errorMessages.length > 0) {
@@ -18,6 +29,34 @@ const extractErrorMessage = (body: any, status: number): string => {
   return `HTTP ${status}`;
 };
 
+const parseJsonBody = async (response: Response): Promise<any> => {
+  try {
+    return await response.json();
+  } catch {
+    throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
+  }
+};
+
+const ensureSuccess = (status: number, body: any): void => {
+  if (status === 401) {
+    redirectToLogin();
+  }
+  if (status < 200 || status >= 300) {
+    throw new Error(extractErrorMessage(body, status));
+  }
+};
+
+const unwrapBody = <T>(body: any): T => {
+  return body.data !== undefined ? body.data : body;
+};
+
+const requestJson = async <T>(endpoint: string, init: RequestInit): Promise<T> => {
+  const response = await fetch(`${BASE_URL}${endpoint}`, init);
+  const body = await parseJsonBody(response);
+  ensureSuccess(response.status, body);
+  return unwrapBody<T>(body);
+};
+
 /**
  * DB接続テスト用のタイムアウト設定（秒）
  * バックエンドの _DB_TEST_TIMEOUT_SECONDS と合わせる
@@ -25,26 +64,15 @@ const extractErrorMessage = (body: any, status: number): string => {
 const DB_TEST_TIMEOUT_MS = 20000; // 20秒（バックエンドの15秒 + 余裕）
 
 export const apiGet = async <T>(endpoint: string): Promise<T> => {
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
+  return requestJson<T>(endpoint, {
     method: 'GET',
     credentials: 'same-origin',
     headers: { 'Accept': 'application/json' }
   });
-  let body: any;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
-  }
-  if (!response.ok) {
-    const errMsg = extractErrorMessage(body, response.status);
-    throw new Error(errMsg);
-  }
-  return body.data !== undefined ? body.data : body;
 };
 
 export const apiPost = async <T>(endpoint: string, data?: any): Promise<T> => {
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
+  return requestJson<T>(endpoint, {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -53,17 +81,6 @@ export const apiPost = async <T>(endpoint: string, data?: any): Promise<T> => {
     },
     body: data ? JSON.stringify(data) : undefined
   });
-  let body: any;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
-  }
-  if (!response.ok) {
-    const errMsg = extractErrorMessage(body, response.status);
-    throw new Error(errMsg);
-  }
-  return body.data !== undefined ? body.data : body;
 };
 
 /**
@@ -96,17 +113,9 @@ export const apiPostWithTimeout = async <T>(
       signal: controller.signal
     });
     
-    let body: any;
-    try {
-      body = await response.json();
-    } catch {
-      throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
-    }
-    if (!response.ok) {
-      const errMsg = extractErrorMessage(body, response.status);
-      throw new Error(errMsg);
-    }
-    return body.data !== undefined ? body.data : body;
+    const body = await parseJsonBody(response);
+    ensureSuccess(response.status, body);
+    return unwrapBody<T>(body);
   } catch (error: any) {
     if (error.name === 'AbortError') {
       throw new Error(`リクエストがタイムアウトしました（${Math.round(timeoutMs / 1000)}秒）。データベースが起動しているか確認してください。`);
@@ -118,23 +127,12 @@ export const apiPostWithTimeout = async <T>(
 };
 
 export const apiUpload = async <T>(endpoint: string, formData: FormData): Promise<T> => {
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
+  return requestJson<T>(endpoint, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Accept': 'application/json' },
     body: formData
   });
-  let body: any;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
-  }
-  if (!response.ok) {
-    const errMsg = extractErrorMessage(body, response.status);
-    throw new Error(errMsg);
-  }
-  return body.data !== undefined ? body.data : body;
 };
 
 export type UploadProgressHandler = (progressPercent: number) => void;
@@ -170,12 +168,14 @@ export const apiUploadWithProgress = async <T>(
       }
 
       if (xhr.status < 200 || xhr.status >= 300) {
-        const errMsg = extractErrorMessage(body, xhr.status);
-        reject(new Error(errMsg));
+        if (xhr.status === 401) {
+          redirectToLogin();
+        }
+        reject(new Error(extractErrorMessage(body, xhr.status)));
         return;
       }
 
-      resolve(body?.data !== undefined ? body.data : body);
+      resolve(unwrapBody<T>(body));
     };
 
     xhr.send(formData);
@@ -183,26 +183,15 @@ export const apiUploadWithProgress = async <T>(
 };
 
 export const apiDelete = async <T>(endpoint: string): Promise<T> => {
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
+  return requestJson<T>(endpoint, {
     method: 'DELETE',
     credentials: 'same-origin',
     headers: { 'Accept': 'application/json' }
   });
-  let body: any;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
-  }
-  if (!response.ok) {
-    const errMsg = extractErrorMessage(body, response.status);
-    throw new Error(errMsg);
-  }
-  return body.data !== undefined ? body.data : body;
 };
 
 export const apiPut = async <T>(endpoint: string, data?: any): Promise<T> => {
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
+  return requestJson<T>(endpoint, {
     method: 'PUT',
     credentials: 'same-origin',
     headers: {
@@ -211,21 +200,10 @@ export const apiPut = async <T>(endpoint: string, data?: any): Promise<T> => {
     },
     body: data ? JSON.stringify(data) : undefined
   });
-  let body: any;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
-  }
-  if (!response.ok) {
-    const errMsg = extractErrorMessage(body, response.status);
-    throw new Error(errMsg);
-  }
-  return body.data !== undefined ? body.data : body;
 };
 
 export const apiPatch = async <T>(endpoint: string, data?: any): Promise<T> => {
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
+  return requestJson<T>(endpoint, {
     method: 'PATCH',
     credentials: 'same-origin',
     headers: {
@@ -234,17 +212,6 @@ export const apiPatch = async <T>(endpoint: string, data?: any): Promise<T> => {
     },
     body: data ? JSON.stringify(data) : undefined
   });
-  let body: any;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error(`サーバーが JSON ではない応答を返しました（HTTP ${response.status}）`);
-  }
-  if (!response.ok) {
-    const errMsg = extractErrorMessage(body, response.status);
-    throw new Error(errMsg);
-  }
-  return body.data !== undefined ? body.data : body;
 };
 
 export const formatTime = (seconds: number): string => {
