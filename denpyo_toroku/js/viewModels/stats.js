@@ -37,6 +37,34 @@ define(['knockout', 'ojs/ojarraydataprovider', 'ojs/ojknockout', 'ojs/ojlabel',
                 return new ArrayDataProvider(self.intentDistribution(), { keyAttributes: 'intent' });
             });
 
+            // Performance metrics table provider
+            this.performanceMetricsProvider = ko.computed(function() {
+                var rows = [
+                    { name: '総予測数', value: self.totalPredictions() },
+                    { name: '総エラー数', value: self.totalErrors() },
+                    { name: 'エラー率', value: self.errorRate() },
+                    { name: '平均予測時間', value: self.avgPredictionTime() },
+                    { name: 'P95予測時間', value: self.p95PredictionTime() },
+                    { name: 'P99予測時間', value: self.p99PredictionTime() },
+                    { name: '最小予測時間', value: self.minPredictionTime() },
+                    { name: '最大予測時間', value: self.maxPredictionTime() },
+                    { name: '平均埋込時間', value: self.avgEmbeddingTime() }
+                ];
+                return new ArrayDataProvider(rows, { keyAttributes: 'name' });
+            });
+
+            // Cache metrics table provider
+            this.cacheMetricsProvider = ko.computed(function() {
+                var rows = [
+                    { name: 'キャッシュヒット', value: self.cacheHits() },
+                    { name: 'キャッシュミス', value: self.cacheMisses() },
+                    { name: 'ヒット率', value: self.cacheHitRate() },
+                    { name: 'キャッシュサイズ', value: self.cacheSize() },
+                    { name: '最大サイズ', value: self.cacheMaxSize() }
+                ];
+                return new ArrayDataProvider(rows, { keyAttributes: 'name' });
+            });
+
             // Fetch stats
             this.loadStats = function() {
                 self.isLoading(true);

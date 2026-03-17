@@ -5537,9 +5537,17 @@ html[dir="rtl"] .oracle-icon {
 .ics-table-wrapper {
     width: 100%;
     overflow-x: auto;
-    overflow-y: hidden;
+    overflow-y: auto;
+    max-height: 58vh;
     border-radius: 8px;
     border: 1px solid #e3ecf6;
+}
+
+.ics-table-wrapper .ics-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f8fbff;
 }
 
 .ics-fileListView__row--selected {
@@ -6720,7 +6728,6 @@ html[dir="rtl"] .oracle-icon {
 .ics-browser-results .ics-table-wrapper {
     width: 100%;
     overflow-x: auto;
-    overflow-y: hidden;
 }
 
 .ics-browser-results .ics-table {
@@ -7107,11 +7114,9 @@ html[dir="rtl"] .oracle-icon {
     white-space: pre;
 }
 
-/* Fixed-height designer panel body */
+/* Designer panel body — auto height (matches ics-registration-reviewLayout) */
 .ics-card-body--designer {
-    height: calc(100vh - 320px);
     min-height: 620px;
-    overflow: hidden;
     display: flex;
     flex-direction: column;
 }
@@ -7120,23 +7125,14 @@ html[dir="rtl"] .oracle-icon {
     display: grid;
     gap: 24px;
     align-items: stretch;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
 }
 
 .ics-category-designer-right {
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
     display: flex;
     flex-direction: column;
 }
 
 .ics-category-designer-right__scroll {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -7144,9 +7140,6 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .ics-category-designer-right__tabs {
-    position: sticky;
-    top: 0;
-    z-index: 2;
     background: linear-gradient(180deg, #ffffff 0%, rgba(255, 255, 255, 0.96) 100%);
     padding-top: 2px;
 }
@@ -7439,15 +7432,12 @@ html[dir="rtl"] .oracle-icon {
 
 @media (max-width: 1100px) {
     .ics-card-body--designer {
-        height: auto;
         min-height: 0;
-        overflow: visible;
     }
 
     .ics-category-designer-layout {
         grid-template-columns: 1fr !important;
         align-items: start;
-        overflow: visible;
     }
 
     .ics-category-image-panel {
@@ -7466,18 +7456,8 @@ html[dir="rtl"] .oracle-icon {
         min-height: 420px;
     }
 
-    .ics-category-designer-right {
-        height: auto;
-        overflow: visible;
-    }
-
     .ics-category-designer-right__scroll {
-        overflow: visible;
         padding-right: 0;
-    }
-
-    .ics-category-designer-right__tabs {
-        position: static;
     }
 }
 

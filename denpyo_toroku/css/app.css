@@ -117,6 +117,23 @@
     width: 280px;
 }
 
+/* Notification messages */
+.msg-success {
+    color: #28a745;
+    font-weight: 600;
+    padding: 8px;
+    background: #d4edda;
+    border-radius: 4px;
+}
+
+.msg-error {
+    color: #dc3545;
+    font-weight: 600;
+    padding: 8px;
+    background: #f8d7da;
+    border-radius: 4px;
+}
+
 /* Responsive overrides */
 @media (max-width: 768px) {
     .main_container {
