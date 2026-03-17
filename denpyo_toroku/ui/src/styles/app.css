@@ -3960,6 +3960,11 @@ html[dir="rtl"] .oracle-icon {
     max-width: 72ch;
 }
 
+.ics-dashboard--enhanced .ics-ops-hero__subtitle {
+    max-width: none;
+    white-space: nowrap;
+}
+
 .ics-dashboard--enhanced .ics-ops-hero__controls,
 .ics-stats--enhanced .ics-ops-hero__controls,
 .ics-model-info--enhanced .ics-ops-hero__controls {

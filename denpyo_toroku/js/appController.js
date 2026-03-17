@@ -43,11 +43,7 @@ define(['knockout', 'ojs/ojcontext', 'ojs/ojmodule-element-utils', 'ojs/ojknocko
 
             // タブ／サイドメニューのナビゲーション
             var navItems = [
-                { id: 'dashboard', name: 'ダッシュボード', icon: 'oj-ux-ico-home', title: 'ダッシュボード', section: 'dashboard' },
-                { id: 'predict',   name: '予測',         icon: 'oj-ux-ico-chat', title: '予測',         section: 'predict' },
-                { id: 'train',     name: '学習',         icon: 'oj-ux-ico-education', title: '学習',     section: 'train' },
-                { id: 'stats',     name: '統計',         icon: 'oj-ux-ico-bar-chart', title: '統計',     section: 'stats' },
-                { id: 'modelInfo', name: 'モデル情報',   icon: 'oj-ux-ico-information-s', title: 'モデル情報', section: 'modelInfo' }
+                { id: 'dashboard', name: 'ダッシュボード', icon: 'oj-ux-ico-home', title: 'ダッシュボード', section: 'dashboard' }
             ];
 
             this.topTabDataProvider = new ArrayDataProvider(navItems, { keyAttributes: 'id' });
@@ -81,18 +77,6 @@ define(['knockout', 'ojs/ojcontext', 'ojs/ojmodule-element-utils', 'ojs/ojknocko
             // name を指定すると viewModels/{name} と views/{name}.html を自動解決
             this.dashboardModuleConfig = ko.observable(
                 moduleUtils.createConfig({ name: 'dashboard' })
-            );
-            this.predictModuleConfig = ko.observable(
-                moduleUtils.createConfig({ name: 'predict' })
-            );
-            this.statsModuleConfig = ko.observable(
-                moduleUtils.createConfig({ name: 'stats' })
-            );
-            this.modelInfoModuleConfig = ko.observable(
-                moduleUtils.createConfig({ name: 'modelInfo' })
-            );
-            this.trainModuleConfig = ko.observable(
-                moduleUtils.createConfig({ name: 'train' })
             );
 
             // ユーザーメニューのアクション

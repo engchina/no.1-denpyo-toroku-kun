@@ -6,7 +6,7 @@
 -->
 <html lang="en-us">
     <head>
-        <title>Intent Classifier Service</title>
+        <title>伝票登録くん</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1">
         <link rel="icon" href="css/images/favicon.ico" type="image/x-icon" />
@@ -61,8 +61,8 @@
                     <div class="oj-web-applayout-max-width oj-flex-bar oj-sm-align-items-center">
                         <div class="oj-flex-bar-start oj-sm-align-items-baseline">
                             <span role="img" class="oj-sm-only-hide oj-ux-ico-oracle" title="Logo" alt="Logo" style="color: #FF0300;"></span>
-                            <span class="oj-web-applayout-header-title title oj-flex-item oj-sm-only-flex-direction-column" id="appName" title="Intent Classifier Service" style="word-break: break-word; white-space: nowrap; overflow-wrap: break-word;">
-                                <oj-bind-text style="font-weight: bold; font-size: 17px; cursor: pointer;" value="Intent Classifier Service"></oj-bind-text>
+                            <span class="oj-web-applayout-header-title title oj-flex-item oj-sm-only-flex-direction-column" id="appName" title="伝票登録くん" style="word-break: break-word; white-space: nowrap; overflow-wrap: break-word;">
+                                <oj-bind-text style="font-weight: bold; font-size: 17px; cursor: pointer;" value="伝票登録くん"></oj-bind-text>
                             </span>
                         </div>
                         <div class="oj-flex-bar-end">
@@ -122,7 +122,7 @@
                 <div role="main" class="oj-web-applayout-max-width oj-web-applayout-content oj-bg-neutral-0 loading-spinner" 
                     data-bind="css: {'loading-spinner': loader()}">
                     <div style="flex: auto;">
-                        <div class="demo-switcher-container main_container" id="intentServiceBodyContainer">
+                        <div class="demo-switcher-container main_container" id="denpyoTorokuBodyContainer">
                             <!-- Tab Bar -->
                             <div class="oj-flex oj-sm-flex-wrap-nowrap oj-sm-justify-content-space-between">
                                 <oj-conveyor-belt class="oj-sm-12 oj-flex-item">
@@ -155,30 +155,7 @@
                                         <oj-module config='[[dashboardModuleConfig]]'></oj-module>
                                     </oj-defer>
                                 </div>
-                                <div slot="predict" id="predict" role="tabpanel" aria-labelledby="predict-tab">
-                                    <oj-defer slot="defer">
-                                        <div class="oj-sm-margin-2x oj-sm-padding-2x-horizontal"></div>
-                                        <oj-module config='[[predictModuleConfig]]'></oj-module>
-                                    </oj-defer>
-                                </div>
-                                <div slot="train" id="train" role="tabpanel" aria-labelledby="train-tab">
-                                    <oj-defer slot="defer">
-                                        <div class="oj-sm-margin-2x oj-sm-padding-2x-horizontal"></div>
-                                        <oj-module config='[[trainModuleConfig]]'></oj-module>
-                                    </oj-defer>
-                                </div>
-                                <div slot="stats" id="stats" role="tabpanel" aria-labelledby="stats-tab">
-                                    <oj-defer slot="defer">
-                                        <div class="oj-sm-margin-2x oj-sm-padding-2x-horizontal"></div>
-                                        <oj-module config='[[statsModuleConfig]]'></oj-module>
-                                    </oj-defer>
-                                </div>
-                                <div slot="modelInfo" id="modelInfo" role="tabpanel" aria-labelledby="modelInfo-tab">
-                                    <oj-defer slot="defer">
-                                        <div class="oj-sm-margin-2x oj-sm-padding-2x-horizontal"></div>
-                                        <oj-module config='[[modelInfoModuleConfig]]'></oj-module>
-                                    </oj-defer>
-                                </div>
+
                             </oj-switcher>
                             <!-- Scroll to Top Button -->
                             <oj-button id="scrollToTopBtn" aria-label="Scroll to top" title="Scroll to top"

@@ -1,14 +1,14 @@
 <div class="oj-sm-padding-2x-horizontal">
     <div class="oj-flex oj-sm-justify-content-space-between oj-sm-align-items-center oj-sm-margin-4x-bottom">
         <h4 class="oj-flex-item">ダッシュボード</h4>
-        <oj-button on-oj-action="[[refresh]]" chroming="callToAction">
+        <oj-button on-oj-action="[[refresh]]" chroming="outlined">
             <span slot="startIcon" class="oj-ux-ico-refresh"></span>
             更新
         </oj-button>
     </div>
 
     <!-- サービス状態カード -->
-    <div class="oj-flex oj-sm-flex-wrap-wrap oj-sm-margin-2x-bottom" style="gap: 16px;">
+    <div class="oj-flex oj-sm-flex-wrap-wrap oj-sm-margin-2x-bottom gap-4x">
         <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 280px; flex: 1;">
             <h5>サービス状態</h5>
             <div class="oj-sm-margin-2x-top">
@@ -21,30 +21,30 @@
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">モデル読込済:</span>
                     <span>
-                        <oj-bind-if test="[[modelLoaded]]"><span class="span-green">Yes</span></oj-bind-if>
-                        <oj-bind-if test="[[!modelLoaded()]]"><span class="span-red">No</span></oj-bind-if>
+                        <oj-bind-if test="[[modelLoaded]]"><span class="span-green">読込済</span></oj-bind-if>
+                        <oj-bind-if test="[[!modelLoaded()]]"><span class="span-red">未読込</span></oj-bind-if>
                     </span>
                 </div>
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">バージョン:</span>
                     <span><oj-bind-text value="[[version]]"></oj-bind-text></span>
                 </div>
-                <div class="oj-flex oj-sm-justify-content-space-between">
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">稼働時間:</span>
                     <span><oj-bind-text value="[[uptime]]"></oj-bind-text></span>
                 </div>
-                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-top">
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">キャッシュ有効:</span>
                     <span>
-                        <oj-bind-if test="[[cacheEnabled]]"><span class="span-green">Yes</span></oj-bind-if>
-                        <oj-bind-if test="[[!cacheEnabled()]]"><span class="span-red">No</span></oj-bind-if>
+                        <oj-bind-if test="[[cacheEnabled]]"><span class="span-green">有効</span></oj-bind-if>
+                        <oj-bind-if test="[[!cacheEnabled()]]"><span class="span-red">無効</span></oj-bind-if>
                     </span>
                 </div>
-                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-top">
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">監視有効:</span>
                     <span>
-                        <oj-bind-if test="[[monitoringEnabled]]"><span class="span-green">Yes</span></oj-bind-if>
-                        <oj-bind-if test="[[!monitoringEnabled()]]"><span class="span-red">No</span></oj-bind-if>
+                        <oj-bind-if test="[[monitoringEnabled]]"><span class="span-green">有効</span></oj-bind-if>
+                        <oj-bind-if test="[[!monitoringEnabled()]]"><span class="span-red">無効</span></oj-bind-if>
                     </span>
                 </div>
             </div>
@@ -56,7 +56,7 @@
             <div class="oj-sm-margin-2x-top">
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">総予測数:</span>
-                    <span style="font-weight: 600;"><oj-bind-text value="[[totalPredictions]]"></oj-bind-text></span>
+                    <span class="font-semibold"><oj-bind-text value="[[totalPredictions]]"></oj-bind-text></span>
                 </div>
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">総エラー数:</span>
@@ -66,11 +66,11 @@
                     <span class="oj-text-secondary-color">エラー率:</span>
                     <span><oj-bind-text value="[[errorRate]]"></oj-bind-text></span>
                 </div>
-                <div class="oj-flex oj-sm-justify-content-space-between">
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">平均予測時間:</span>
                     <span><oj-bind-text value="[[avgPredictionTime]]"></oj-bind-text></span>
                 </div>
-                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-top">
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">平均埋込時間:</span>
                     <span><oj-bind-text value="[[avgEmbeddingTime]]"></oj-bind-text></span>
                 </div>
@@ -83,9 +83,9 @@
             <div class="oj-sm-margin-2x-top">
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">ヒット率:</span>
-                    <span style="font-weight: 600;"><oj-bind-text value="[[cacheHitRate]]"></oj-bind-text></span>
+                    <span class="font-semibold"><oj-bind-text value="[[cacheHitRate]]"></oj-bind-text></span>
                 </div>
-                <div class="oj-flex oj-sm-justify-content-space-between">
+                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">サイズ:</span>
                     <span><oj-bind-text value="[[cacheSize]]"></oj-bind-text></span>
                 </div>

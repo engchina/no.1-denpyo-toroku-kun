@@ -140,3 +140,28 @@
         min-height: auto;
     }
 }
+
+/* ===== Utility Classes ===== */
+
+/* Gap */
+.gap-2x { gap: 8px; }
+.gap-3x { gap: 12px; }
+.gap-4x { gap: 16px; }
+
+/* Text alignment */
+.text-center { text-align: center; }
+
+/* Font weight */
+.font-semibold { font-weight: 600; }
+
+/* Font size scale */
+.font-size-xs { font-size: 12px; }
+.font-size-sm { font-size: 13px; }
+.font-size-md { font-size: 14px; }
+
+/* Semantic color */
+.text-danger { color: var(--oj-core-danger-text, #dc3545); }
+
+/* Metric value display (e.g. training result cards) */
+.metric-value { font-size: 24px; font-weight: 700; }
+.metric-value--accent { color: #0572ce; }

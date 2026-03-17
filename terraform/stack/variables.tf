@@ -41,7 +41,7 @@ variable "adb_subnet_id" {
 }
 
 variable "instance_display_name" {
-  default = "AIDOC_INSTANCE"
+  default = "DENPYO_INSTANCE"
 }
 
 variable "instance_shape" {
