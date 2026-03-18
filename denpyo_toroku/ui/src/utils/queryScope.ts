@@ -1,20 +1,21 @@
 import { APP_ROUTES } from '../constants/routes';
 
-export type QueryPaginationScope = 'fl' | 'cs' | 'cm' | 'sbtl' | 'sbdp';
+export type QueryPaginationScope = 'fl' | 'cs' | 'cm' | 'sbnr' | 'sbtl' | 'sbdp';
 
 type ScopeKey = 'p' | 'ps' | 'status';
+const PAGINATION_SCOPE_KEYS: ScopeKey[] = ['p', 'ps', 'status'];
 
-const ALL_SCOPES: QueryPaginationScope[] = ['fl', 'cs', 'cm', 'sbtl', 'sbdp'];
+const ALL_SCOPES: QueryPaginationScope[] = ['fl', 'cs', 'cm', 'sbnr', 'sbtl', 'sbdp'];
 
 const VIEW_SCOPES: Record<string, QueryPaginationScope[]> = {
   fileList: ['fl'],
   categorySamples: ['cs'],
   categoryManagement: ['cm'],
-  search: ['sbtl', 'sbdp'],
+  search: ['sbnr', 'sbtl', 'sbdp'],
   [APP_ROUTES.fileList]: ['fl'],
   [APP_ROUTES.categorySamples]: ['cs'],
   [APP_ROUTES.categoryManagement]: ['cm'],
-  [APP_ROUTES.search]: ['sbtl', 'sbdp'],
+  [APP_ROUTES.search]: ['sbnr', 'sbtl', 'sbdp'],
 };
 
 const LEGACY_FILE_LIST_KEYS = ['file_page', 'file_page_size', 'file_status'];
@@ -65,7 +66,32 @@ export function setScopedValue(
 export function replaceSearchParams(params: URLSearchParams) {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
-  url.search = params.toString();
+  const orderedParams = new URLSearchParams();
+  const scopedParamNames = new Set<string>();
+
+  ALL_SCOPES.forEach(scope => {
+    PAGINATION_SCOPE_KEYS.forEach(key => {
+      scopedParamNames.add(scopedKey(scope, key));
+    });
+  });
+
+  Array.from(params.entries()).forEach(([key, value]) => {
+    if (!scopedParamNames.has(key)) {
+      orderedParams.append(key, value);
+    }
+  });
+
+  ALL_SCOPES.forEach(scope => {
+    PAGINATION_SCOPE_KEYS.forEach(key => {
+      const scopedParam = scopedKey(scope, key);
+      const value = params.get(scopedParam);
+      if (value !== null) {
+        orderedParams.append(scopedParam, value);
+      }
+    });
+  });
+
+  url.search = orderedParams.toString();
   window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
@@ -99,7 +125,7 @@ function resolveScopes(routeKey: string): QueryPaginationScope[] {
     return ['cm'];
   }
   if (normalized.startsWith(APP_ROUTES.search)) {
-    return ['sbtl', 'sbdp'];
+    return ['sbnr', 'sbtl', 'sbdp'];
   }
 
   return [];
@@ -113,7 +139,7 @@ export function clearPaginationParamsOutsideView(routeKey: string) {
 
   ALL_SCOPES.forEach(scope => {
     if (activeScopes.has(scope)) return;
-    (['p', 'ps', 'status'] as ScopeKey[]).forEach(key => {
+    PAGINATION_SCOPE_KEYS.forEach(key => {
       const k = scopedKey(scope, key);
       if (params.has(k)) {
         params.delete(k);

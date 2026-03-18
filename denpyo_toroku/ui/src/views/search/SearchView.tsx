@@ -32,6 +32,7 @@ import { Search, Database, Copy, Check, Loader2, RefreshCw, Trash2, ArrowUpDown,
 
 type TabType = 'nlSearch' | 'tableBrowser';
 const SEARCH_PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
+const SEARCH_NL_RESULT_QUERY_SCOPE = 'sbnr';
 const SEARCH_TABLE_LIST_QUERY_SCOPE = 'sbtl';
 const SEARCH_DATA_PREVIEW_QUERY_SCOPE = 'sbdp';
 type SortDirection = 'asc' | 'desc';
@@ -193,6 +194,7 @@ interface NLSearchTabProps {
 
 function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, persistedQuery, persistedCategoryId, asyncJobId, asyncJobStatus, asyncJobStartedAt }: NLSearchTabProps) {
   const dispatch = useAppDispatch();
+  const initialSearchParams = getCurrentSearchParams();
   const query = persistedQuery;
   const categoryId = persistedCategoryId;
   const setQuery = (value: string) => dispatch(setNlSearchQuery(value));
@@ -200,11 +202,19 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
   const [copied, setCopied] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [nlResultPageSize, setNlResultPageSize] = useState(20);
+  const [nlResultPageSize, setNlResultPageSize] = useState(() => {
+    const next = readScopedNumber(initialSearchParams, SEARCH_NL_RESULT_QUERY_SCOPE, 'ps', 20);
+    return SEARCH_PAGINATION_PAGE_SIZE_OPTIONS.includes(next) ? next : 20;
+  });
+  const [nlResultInitialPage] = useState(() => {
+    const next = readScopedNumber(initialSearchParams, SEARCH_NL_RESULT_QUERY_SCOPE, 'p', 1);
+    return next >= 1 ? next : 1;
+  });
   const nlRows = result?.results?.rows ?? [];
-  const nlResultPagination = usePagination(nlRows, { pageSize: nlResultPageSize });
-  const nlRangeStart = (nlResultPagination.currentPage - 1) * nlResultPageSize + 1;
-  const nlRangeEnd = Math.min(nlResultPagination.currentPage * nlResultPageSize, nlRows.length);
+  const nlResultPagination = usePagination(nlRows, { pageSize: nlResultPageSize, initialPage: nlResultInitialPage });
+  const nlRangeStart = nlRows.length === 0 ? 0 : nlResultPagination.startIndex;
+  const nlRangeEnd = nlRows.length === 0 ? 0 : nlResultPagination.endIndex;
+  const isNlResultPageSizeInitRef = useRef(true);
 
   // 開始時刻から経過秒数を計算する関数
   const calcElapsed = () =>
@@ -234,6 +244,21 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
       prevResultRef.current = result;
     }
   }, [result]);
+
+  useEffect(() => {
+    if (isNlResultPageSizeInitRef.current) {
+      isNlResultPageSizeInitRef.current = false;
+      return;
+    }
+    nlResultPagination.reset();
+  }, [nlResultPageSize]);
+
+  useEffect(() => {
+    const params = getCurrentSearchParams();
+    setScopedValue(params, SEARCH_NL_RESULT_QUERY_SCOPE, 'p', nlResultPagination.currentPage);
+    setScopedValue(params, SEARCH_NL_RESULT_QUERY_SCOPE, 'ps', nlResultPageSize);
+    replaceSearchParams(params);
+  }, [nlResultPagination.currentPage, nlResultPageSize]);
 
   // カテゴリ変更時のみ結果をクリアする（初回マウント時はスキップ）
   // 初回マウント時にクリアすると、画面遷移後の復帰時に非同期ジョブ状態が消えてしまう
@@ -333,7 +358,7 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
                   class="ics-form-input"
                   value={categoryId ?? ''}
                   onChange={(e) => setCategoryId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined)}
-                  disabled={noTables}
+                  disabled={noTables || isLoading}
                 >
                   {searchableTables.map(table => (
                     <option key={table.category_id} value={table.category_id}>
@@ -479,14 +504,14 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
                     </label>
                     {result.results.rows && result.results.rows.length > 0 ? (
                       <div class="ics-browser-results">
-                        <ResultsTable columns={result.results.columns} rows={nlResultPagination.currentItems} />
+                        <ResultsTable columns={result.results.columns} rows={nlResultPagination.paginatedItems} />
                         <Pagination
                           currentPage={nlResultPagination.currentPage}
                           totalPages={nlResultPagination.totalPages}
                           totalItems={nlResultPagination.totalItems}
                           pageSize={nlResultPageSize}
                           pageSizeOptions={SEARCH_PAGINATION_PAGE_SIZE_OPTIONS}
-                          onPageSizeChange={(size) => { setNlResultPageSize(size); nlResultPagination.reset(); }}
+                          onPageSizeChange={setNlResultPageSize}
                           goToPageInput={nlResultPagination.goToPageInput}
                           onPageChange={nlResultPagination.goToPage}
                           onGoToPageInputChange={nlResultPagination.setGoToPageInput}
@@ -496,7 +521,7 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
                           rangeStart={nlRangeStart}
                           rangeEnd={nlRangeEnd}
                           showGoToPage={false}
-                          show={nlResultPagination.showPagination}
+                          show
                           position="bottom"
                           summaryPlacement="controls"
                         />
