@@ -517,6 +517,7 @@ class DatabaseService:
                             _CATEGORY_SELECT_AI_COLUMN_DEFINITIONS,
                         )
                         self._ensure_blob_column(cursor, "DENPYO_FILES", "ANALYSIS_RESULT")
+                        self._backfill_registration_category_ids(cursor)
                     conn.commit()
                 cls._shared_management_tables_initialized = True
                 self._management_tables_initialized = True
@@ -555,6 +556,30 @@ class DatabaseService:
                     exc_info=True,
                 )
                 raise
+
+    def _backfill_registration_category_ids(self, cursor) -> None:
+        """履歴登録レコードの CATEGORY_ID をカテゴリ定義から補完する。"""
+        cursor.execute(
+            """
+            UPDATE DENPYO_REGISTRATIONS r
+               SET CATEGORY_ID = (
+                   SELECT c.ID
+                     FROM DENPYO_CATEGORIES c
+                    WHERE UPPER(NVL(c.HEADER_TABLE_NAME, '')) = UPPER(NVL(r.HEADER_TABLE_NAME, ''))
+                      AND UPPER(NVL(c.LINE_TABLE_NAME, '')) = UPPER(NVL(r.LINE_TABLE_NAME, ''))
+               )
+             WHERE r.CATEGORY_ID IS NULL
+               AND EXISTS (
+                   SELECT 1
+                     FROM DENPYO_CATEGORIES c
+                    WHERE UPPER(NVL(c.HEADER_TABLE_NAME, '')) = UPPER(NVL(r.HEADER_TABLE_NAME, ''))
+                      AND UPPER(NVL(c.LINE_TABLE_NAME, '')) = UPPER(NVL(r.LINE_TABLE_NAME, ''))
+               )
+            """
+        )
+        updated = getattr(cursor, "rowcount", 0) or 0
+        if updated > 0:
+            logger.info("登録レコードの CATEGORY_ID を %d 件補完しました", updated)
 
     def _get_column_data_type(self, cursor, table_name: str, column_name: str) -> str:
         cursor.execute(
@@ -1160,7 +1185,8 @@ END;"""
             logger.error("ファイルレコード登録エラー: %s", e, exc_info=True)
             return None
 
-    def insert_registration(self, file_id: int, category_name: str,
+    def insert_registration(self, file_id: int, category_id: Optional[int],
+                            category_name: str,
                             header_table: str, line_table: str,
                             header_record_id: int, line_count: int,
                             ai_confidence: float, registered_by: str = "") -> Optional[int]:
@@ -1171,11 +1197,11 @@ END;"""
                     reg_id_var = cursor.var(int)
                     cursor.execute(
                         """INSERT INTO DENPYO_REGISTRATIONS
-                        (FILE_ID, CATEGORY_NAME, HEADER_TABLE_NAME, LINE_TABLE_NAME,
+                        (FILE_ID, CATEGORY_ID, CATEGORY_NAME, HEADER_TABLE_NAME, LINE_TABLE_NAME,
                          HEADER_RECORD_ID, LINE_COUNT, AI_CONFIDENCE, REGISTERED_BY)
-                        VALUES (:1, :2, :3, :4, :5, :6, :7, :8)
-                        RETURNING ID INTO :9""",
-                        [file_id, category_name, header_table, line_table,
+                        VALUES (:1, :2, :3, :4, :5, :6, :7, :8, :9)
+                        RETURNING ID INTO :10""",
+                        [file_id, category_id, category_name, header_table, line_table,
                          header_record_id, line_count, ai_confidence, registered_by, reg_id_var]
                     )
                     conn.commit()
@@ -1233,7 +1259,7 @@ END;"""
     # ── カテゴリ管理 ─────────────────────────────────
 
     def get_categories(self) -> List[Dict[str, Any]]:
-        """全カテゴリ一覧を登録件数付きで取得"""
+        """全カテゴリ一覧をヘッダーテーブル件数付きで取得"""
         if not self._ensure_management_tables():
             return []
         try:
@@ -1244,19 +1270,16 @@ END;"""
                                   c.HEADER_TABLE_NAME, c.LINE_TABLE_NAME,
                                   c.DESCRIPTION, c.SELECT_AI_PROFILE_NAME, c.SELECT_AI_TEAM_NAME,
                                   c.SELECT_AI_READY, c.SELECT_AI_SYNCED_AT, c.SELECT_AI_CONFIG_HASH,
-                                  c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT,
-                                  COUNT(r.ID) AS REGISTRATION_COUNT
+                                  c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT
                         FROM DENPYO_CATEGORIES c
-                        LEFT JOIN DENPYO_REGISTRATIONS r ON c.ID = r.CATEGORY_ID
-                        GROUP BY c.ID, c.CATEGORY_NAME, c.CATEGORY_NAME_EN,
-                                 c.HEADER_TABLE_NAME, c.LINE_TABLE_NAME,
-                                 c.DESCRIPTION, c.SELECT_AI_PROFILE_NAME, c.SELECT_AI_TEAM_NAME,
-                                 c.SELECT_AI_READY, c.SELECT_AI_SYNCED_AT, c.SELECT_AI_CONFIG_HASH,
-                                 c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT
                         ORDER BY c.CREATED_AT DESC"""
                     )
                     categories = []
+                    header_table_names: List[str] = []
                     for row in cursor.fetchall():
+                        header_table_name = (row[3] or "").upper()
+                        if self._is_safe_table_name(header_table_name):
+                            header_table_names.append(header_table_name)
                         categories.append({
                             "id": row[0],
                             "category_name": row[1],
@@ -1273,8 +1296,22 @@ END;"""
                             "is_active": bool(row[12]),
                             "created_at": str(row[13]) if row[13] else "",
                             "updated_at": str(row[14]) if row[14] else "",
-                            "registration_count": row[15],
+                            "registration_count": 0,
                         })
+
+                    row_counts: Dict[str, int] = {}
+                    for table_name in sorted(set(header_table_names)):
+                        try:
+                            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                            count_row = cursor.fetchone()
+                            row_counts[table_name] = int(count_row[0]) if count_row and count_row[0] is not None else 0
+                        except Exception as count_error:
+                            logger.warning("カテゴリ件数取得スキップ (%s): %s", table_name, count_error)
+                            row_counts[table_name] = 0
+
+                    for category in categories:
+                        header_table_name = str(category.get("header_table_name") or "").upper()
+                        category["registration_count"] = row_counts.get(header_table_name, 0)
                     return categories
         except Exception as e:
             logger.error("カテゴリ一覧取得エラー: %s", e, exc_info=True)
@@ -2163,6 +2200,33 @@ END;"""
         return str(value)
 
     @staticmethod
+    def _serialize_db_value(value: Any) -> Any:
+        """DB 取得値を JSON で返却可能な値へ正規化する。"""
+        if value is None:
+            return None
+
+        if hasattr(value, "read"):
+            value = value.read()
+
+        if isinstance(value, memoryview):
+            value = value.tobytes()
+
+        if isinstance(value, bytes):
+            try:
+                return value.decode("utf-8")
+            except UnicodeDecodeError:
+                return f"<BLOB {len(value)} bytes>"
+
+        return value
+
+    @classmethod
+    def _serialize_db_row(cls, columns: List[str], row: Any) -> Dict[str, Any]:
+        return {
+            column: cls._serialize_db_value(value)
+            for column, value in zip(columns, row)
+        }
+
+    @staticmethod
     def _build_allowed_table_set_from_entries(table_entries: List[Dict[str, Any]]) -> set:
         allowed = set()
         for entry in table_entries:
@@ -2853,20 +2917,7 @@ END;"""
 
     def get_table_browser_tables(self) -> List[Dict[str, Any]]:
         """テーブルブラウザ用の一覧情報を取得（行数・作成日時など）"""
-        table_entries: List[Dict[str, Any]] = [
-            {
-                "table_name": "SLIPS_RAW",
-                "table_type": "header",
-                "category_id": 0,
-                "category_name": "SLIPS",
-            },
-            {
-                "table_name": "SLIPS_CATEGORY",
-                "table_type": "header",
-                "category_id": 0,
-                "category_name": "SLIPS",
-            },
-        ]
+        table_entries: List[Dict[str, Any]] = []
 
         for entry in self.get_allowed_table_names():
             header_table_name = (entry.get("header_table_name") or "").upper()
@@ -2934,7 +2985,9 @@ END;"""
                         bind_map
                     )
                     for row in cursor.fetchall():
-                        table_name = row[0]
+                        table_name = str(row[0] or "").upper()
+                        if table_name not in meta_map:
+                            continue
                         existing_table_names.add(table_name)
                         meta_map[table_name]["estimated_rows"] = int(row[1] or 0)
                         meta_map[table_name]["last_analyzed"] = str(row[2]) if row[2] else ""
@@ -2951,7 +3004,9 @@ END;"""
                         bind_map
                     )
                     for row in cursor.fetchall():
-                        table_name = row[0]
+                        table_name = str(row[0] or "").upper()
+                        if table_name not in meta_map:
+                            continue
                         meta_map[table_name]["column_count"] = int(row[1] or 0)
 
                     for table_name in sorted(existing_table_names):
@@ -3383,7 +3438,7 @@ END;"""
                         cursor.execute(limited_sql, {"max_rows": max_rows})
                         columns = [desc[0] for desc in cursor.description]
                         rows_raw = cursor.fetchall()
-                        rows = [dict(zip(columns, row)) for row in rows_raw]
+                        rows = [self._serialize_db_row(columns, row) for row in rows_raw]
                         return {
                             "success": True,
                             "columns": columns,
@@ -3398,7 +3453,7 @@ END;"""
                     cursor.execute(limited_sql, {"max_rows": max_rows})
                     columns = [desc[0] for desc in cursor.description]
                     rows_raw = cursor.fetchall()
-                    rows = [dict(zip(columns, row)) for row in rows_raw]
+                    rows = [self._serialize_db_row(columns, row) for row in rows_raw]
                     return {
                         "success": True,
                         "columns": columns,
@@ -3628,7 +3683,7 @@ END;"""
                     )
                     columns = [desc[0] for desc in cursor.description]
                     rows_raw = cursor.fetchall()
-                    rows = [dict(zip(columns, row)) for row in rows_raw]
+                    rows = [self._serialize_db_row(columns, row) for row in rows_raw]
                     display_columns = [c for c in columns if c != "ROW_ID_META"]
 
                     return {

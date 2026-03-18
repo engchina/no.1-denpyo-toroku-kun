@@ -4197,6 +4197,7 @@ def register_file(file_id: int):
         # --- 登録レコード作成 ---
         registration_id = db_service.insert_registration(
             file_id=file_id,
+            category_id=resolved_category_id,
             category_name=category_name,
             header_table=header_table_name,
             line_table=line_table_name,
@@ -5448,6 +5449,7 @@ def get_table_data_by_name():
         return jsonify(g.response.get_result())
     except Exception as e:
         logging.error("テーブルデータ取得エラー (table_name=%s): %s", request.args.get("table_name"), e, exc_info=True)
+        g.response.set_data(None)
         g.response.add_error_message(f"データ取得に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
 

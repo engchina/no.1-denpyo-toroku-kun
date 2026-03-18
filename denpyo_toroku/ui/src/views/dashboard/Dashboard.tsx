@@ -54,14 +54,6 @@ const featureCards: FeatureCard[] = [
     Icon: Upload
   },
   {
-    id: 'fileList',
-    titleKey: 'nav.fileList',
-    descriptionKey: 'dashboard.feature.fileList.description',
-    metricKey: 'dashboard.metric.totalRegistrations',
-    metricValue: stats => stats?.registration_stats?.total_registrations ?? 0,
-    Icon: ClipboardList
-  },
-  {
     id: 'categorySamples',
     titleKey: 'nav.categorySamples',
     descriptionKey: 'dashboard.feature.categorySamples.description',
@@ -76,6 +68,14 @@ const featureCards: FeatureCard[] = [
     metricKey: 'dashboard.metric.activeCategories',
     metricValue: stats => stats?.category_stats?.active_categories ?? 0,
     Icon: Tags
+  },
+  {
+    id: 'fileList',
+    titleKey: 'nav.fileList',
+    descriptionKey: 'dashboard.feature.fileList.description',
+    metricKey: 'dashboard.metric.totalRegistrations',
+    metricValue: stats => stats?.registration_stats?.total_registrations ?? 0,
+    Icon: ClipboardList
   },
   {
     id: 'search',

@@ -127,6 +127,8 @@ const DEFAULT_COLUMN_DATA_TYPE: TableColumnDef['data_type'] = 'VARCHAR2';
 const PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
 const CATEGORY_SAMPLES_QUERY_SCOPE = 'cs';
 const CATEGORY_MANAGEMENT_QUERY_SCOPE = 'cm';
+const CATEGORY_MANAGEMENT_HEADER_QUERY_SCOPE = 'cmh';
+const CATEGORY_MANAGEMENT_LINE_QUERY_SCOPE = 'cml';
 const SYSTEM_ID_COLUMN_MAX_LENGTH = 32;
 const RESERVED_SYSTEM_COLUMN_NAMES = new Set(['HEADER_ID', 'LINE_ID']);
 type SortDirection = 'asc' | 'desc';
@@ -285,12 +287,21 @@ function getDefaultDataSortColumn(columns: string[]): string {
   return matched || columns[0];
 }
 
-function formatCellValue(value: any): string {
-  if (value === null || value === undefined) return '';
+function formatCellValue(value: any): { text: string; multiline: boolean } {
+  if (value === null || value === undefined) return { text: '', multiline: false };
   if (typeof value === 'object') {
-    return JSON.stringify(value);
+    return { text: JSON.stringify(value, null, 2), multiline: true };
   }
-  return String(value);
+  const text = String(value);
+  const trimmed = text.trim();
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      return { text: JSON.stringify(JSON.parse(trimmed), null, 2), multiline: true };
+    } catch {
+      return { text, multiline: false };
+    }
+  }
+  return { text, multiline: false };
 }
 
 function FileStatusBadge({ file }: { file: DenpyoFile }) {
@@ -1086,9 +1097,28 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const [categorySortDirection, setCategorySortDirection] = useState<SortDirection>('desc');
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [previewTab, setPreviewTab] = useState<PreviewTabType>('header');
-  const [previewPage, setPreviewPage] = useState(1);
-  const [previewPageSize, setPreviewPageSize] = useState(20);
-  const [previewGoToPageInput, setPreviewGoToPageInput] = useState('');
+  const [previewHeaderPage, setPreviewHeaderPage] = useState(() => {
+    if (mode !== 'management') return 1;
+    const nextPage = readScopedNumber(initialSearchParams, CATEGORY_MANAGEMENT_HEADER_QUERY_SCOPE, 'p', 1);
+    return nextPage >= 1 ? nextPage : 1;
+  });
+  const [previewHeaderPageSize, setPreviewHeaderPageSize] = useState(() => {
+    if (mode !== 'management') return 20;
+    const nextPageSize = readScopedNumber(initialSearchParams, CATEGORY_MANAGEMENT_HEADER_QUERY_SCOPE, 'ps', 20);
+    return PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize) ? nextPageSize : 20;
+  });
+  const [previewHeaderGoToPageInput, setPreviewHeaderGoToPageInput] = useState('');
+  const [previewLinePage, setPreviewLinePage] = useState(() => {
+    if (mode !== 'management') return 1;
+    const nextPage = readScopedNumber(initialSearchParams, CATEGORY_MANAGEMENT_LINE_QUERY_SCOPE, 'p', 1);
+    return nextPage >= 1 ? nextPage : 1;
+  });
+  const [previewLinePageSize, setPreviewLinePageSize] = useState(() => {
+    if (mode !== 'management') return 20;
+    const nextPageSize = readScopedNumber(initialSearchParams, CATEGORY_MANAGEMENT_LINE_QUERY_SCOPE, 'ps', 20);
+    return PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize) ? nextPageSize : 20;
+  });
+  const [previewLineGoToPageInput, setPreviewLineGoToPageInput] = useState('');
   const [previewSortColumn, setPreviewSortColumn] = useState('');
   const [previewSortDirection, setPreviewSortDirection] = useState<SortDirection>('desc');
   const [isBulkDeletingPreviewRows, setIsBulkDeletingPreviewRows] = useState(false);
@@ -1105,6 +1135,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   });
   const [isSamplesQueryReady, setIsSamplesQueryReady] = useState(mode !== 'samples');
   const isCategoryPageSizeInitRef = useRef(true);
+  const isPreviewCategoryInitRef = useRef(true);
 
   const sortedSlipsCategoryFiles = useMemo(() => {
     const factor = slipsSortDirection === 'asc' ? 1 : -1;
@@ -1160,6 +1191,9 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const previewTableName = previewTableType === 'line'
     ? selectedCategory?.line_table_name || ''
     : selectedCategory?.header_table_name || '';
+  const activePreviewPage = previewTableType === 'line' ? previewLinePage : previewHeaderPage;
+  const activePreviewPageSize = previewTableType === 'line' ? previewLinePageSize : previewHeaderPageSize;
+  const activePreviewGoToPageInput = previewTableType === 'line' ? previewLineGoToPageInput : previewHeaderGoToPageInput;
   const sortedPreviewRows = useMemo(() => {
     if (!tableBrowseResult?.rows || tableBrowseResult.rows.length === 0 || !previewSortColumn) {
       return tableBrowseResult?.rows || [];
@@ -1255,6 +1289,22 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     setScopedValue(params, CATEGORY_MANAGEMENT_QUERY_SCOPE, 'ps', categoryPageSize);
     replaceSearchParams(params);
   }, [mode, categoryPagination.currentPage, categoryPageSize]);
+
+  useEffect(() => {
+    if (mode !== 'management') return;
+    const params = getCurrentSearchParams();
+    setScopedValue(params, CATEGORY_MANAGEMENT_HEADER_QUERY_SCOPE, 'p', previewHeaderPage);
+    setScopedValue(params, CATEGORY_MANAGEMENT_HEADER_QUERY_SCOPE, 'ps', previewHeaderPageSize);
+    replaceSearchParams(params);
+  }, [mode, previewHeaderPage, previewHeaderPageSize]);
+
+  useEffect(() => {
+    if (mode !== 'management') return;
+    const params = getCurrentSearchParams();
+    setScopedValue(params, CATEGORY_MANAGEMENT_LINE_QUERY_SCOPE, 'p', previewLinePage);
+    setScopedValue(params, CATEGORY_MANAGEMENT_LINE_QUERY_SCOPE, 'ps', previewLinePageSize);
+    replaceSearchParams(params);
+  }, [mode, previewLinePage, previewLinePageSize]);
 
   // ── Slips file list pagination ────────────────────────────────────────────
   const handleSlipsPageChange = useCallback((newPage: number) => {
@@ -1364,16 +1414,22 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   }, [previewTab, hasLineTable]);
 
   useEffect(() => {
-    setPreviewPage(1);
-    setPreviewGoToPageInput('');
+    if (isPreviewCategoryInitRef.current) {
+      isPreviewCategoryInitRef.current = false;
+      return;
+    }
+    setPreviewHeaderPage(1);
+    setPreviewHeaderGoToPageInput('');
+    setPreviewLinePage(1);
+    setPreviewLineGoToPageInput('');
     setPreviewSortColumn('');
     setPreviewSortDirection('desc');
     previewRowSelection.reset();
-  }, [selectedCategoryId, previewTab]);
+  }, [selectedCategoryId]);
 
   useEffect(() => {
     previewRowSelection.reset();
-  }, [previewPage, previewTableName, previewTableType]);
+  }, [activePreviewPage, previewTableName, previewTableType]);
 
   useEffect(() => {
     if (!tableBrowseResult?.columns || tableBrowseResult.columns.length === 0) {
@@ -1392,11 +1448,11 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       fetchTableDataByName({
         tableName: previewTableName,
         tableType: previewTableType,
-        page: previewPage,
-        pageSize: previewPageSize,
+        page: activePreviewPage,
+        pageSize: activePreviewPageSize,
       })
     );
-  }, [dispatch, mode, selectedCategory, previewTableName, previewTableType, previewPage, previewPageSize]);
+  }, [dispatch, mode, selectedCategory, previewTableName, previewTableType, activePreviewPage, activePreviewPageSize]);
 
   useEffect(() => {
     requestCategoryPreview();
@@ -1772,8 +1828,8 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const categoryRangeEnd = categoryPagination.totalItems === 0 ? 0 : categoryPagination.endIndex;
   const previewTotalPages = tableBrowseResult?.total_pages || 1;
   const previewTotal = tableBrowseResult?.total || 0;
-  const previewRangeStart = previewTotal === 0 ? 0 : ((previewPage - 1) * previewPageSize) + 1;
-  const previewRangeEnd = previewTotal === 0 ? 0 : Math.min(previewPage * previewPageSize, previewTotal);
+  const previewRangeStart = previewTotal === 0 ? 0 : ((activePreviewPage - 1) * activePreviewPageSize) + 1;
+  const previewRangeEnd = previewTotal === 0 ? 0 : Math.min(activePreviewPage * activePreviewPageSize, previewTotal);
   const renderSlipsSortIcon = (key: SlipsSortKey) => {
     if (slipsSortKey !== key) return <ArrowUpDown size={13} />;
     return slipsSortDirection === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
@@ -1808,22 +1864,37 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   }, []);
   const handlePreviewPageSizeChange = useCallback((nextPageSize: number) => {
     if (!PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize)) return;
-    setPreviewPageSize(nextPageSize);
-    setPreviewPage(1);
-    setPreviewGoToPageInput('');
-  }, []);
+    if (previewTableType === 'line') {
+      setPreviewLinePageSize(nextPageSize);
+      setPreviewLinePage(1);
+      setPreviewLineGoToPageInput('');
+      return;
+    }
+    setPreviewHeaderPageSize(nextPageSize);
+    setPreviewHeaderPage(1);
+    setPreviewHeaderGoToPageInput('');
+  }, [previewTableType]);
   const handlePreviewPageChange = useCallback((nextPage: number) => {
     if (nextPage >= 1 && nextPage <= previewTotalPages) {
-      setPreviewPage(nextPage);
+      if (previewTableType === 'line') {
+        setPreviewLinePage(nextPage);
+        return;
+      }
+      setPreviewHeaderPage(nextPage);
     }
-  }, [previewTotalPages]);
+  }, [previewTableType, previewTotalPages]);
   const handlePreviewGoToPage = useCallback(() => {
-    const target = parseInt(previewGoToPageInput, 10);
+    const target = parseInt(activePreviewGoToPageInput, 10);
     if (!Number.isNaN(target) && target >= 1 && target <= previewTotalPages) {
-      setPreviewPage(target);
-      setPreviewGoToPageInput('');
+      if (previewTableType === 'line') {
+        setPreviewLinePage(target);
+        setPreviewLineGoToPageInput('');
+        return;
+      }
+      setPreviewHeaderPage(target);
+      setPreviewHeaderGoToPageInput('');
     }
-  }, [previewGoToPageInput, previewTotalPages]);
+  }, [activePreviewGoToPageInput, previewTableType, previewTotalPages]);
   const getPreviewRowId = useCallback((row: Record<string, any>): string | null => {
     const raw = row.ROW_ID_META;
     if (raw === null || raw === undefined || raw === '') return null;
@@ -2554,7 +2625,14 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                       />
                                     </td>
                                     {tableBrowseResult.columns.map((column) => (
-                                      <td key={column}>{formatCellValue(row[column])}</td>
+                                      <td key={column}>
+                                        {(() => {
+                                          const formatted = formatCellValue(row[column]);
+                                          return formatted.multiline
+                                            ? <pre class="ics-table-cell-pretty">{formatted.text}</pre>
+                                            : formatted.text;
+                                        })()}
+                                      </td>
                                     ))}
                                     <td class="ics-fileListView__actions">
                                       <button
@@ -2577,21 +2655,21 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                           </table>
                         </div>
                         <Pagination
-                          currentPage={previewPage}
+                          currentPage={activePreviewPage}
                           totalPages={previewTotalPages}
                           totalItems={previewTotal}
-                          pageSize={previewPageSize}
+                          pageSize={activePreviewPageSize}
                           pageSizeOptions={PAGINATION_PAGE_SIZE_OPTIONS}
                           onPageSizeChange={handlePreviewPageSizeChange}
-                          goToPageInput={previewGoToPageInput}
+                          goToPageInput={activePreviewGoToPageInput}
                           onPageChange={handlePreviewPageChange}
-                          onGoToPageInputChange={setPreviewGoToPageInput}
+                          onGoToPageInputChange={previewTableType === 'line' ? setPreviewLineGoToPageInput : setPreviewHeaderGoToPageInput}
                           onGoToPage={handlePreviewGoToPage}
                           rangeStart={previewRangeStart}
                           rangeEnd={previewRangeEnd}
                           showGoToPage={false}
-                          isFirstPage={previewPage <= 1 || isTableBrowsing}
-                          isLastPage={previewPage >= previewTotalPages || isTableBrowsing}
+                          isFirstPage={activePreviewPage <= 1 || isTableBrowsing}
+                          isLastPage={activePreviewPage >= previewTotalPages || isTableBrowsing}
                           position="bottom"
                           show
                           summaryPlacement="controls"

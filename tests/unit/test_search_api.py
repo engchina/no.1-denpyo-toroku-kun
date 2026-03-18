@@ -259,6 +259,29 @@ def test_delete_table_browser_row_requires_table_name():
     assert response.get_json()["errorMessages"][0] == "table_name を指定してください"
 
 
+def test_table_browser_returns_json_error_when_response_payload_is_not_serializable(monkeypatch):
+    client = _create_client()
+
+    class StubDatabaseService:
+        def get_table_data(self, table_name, limit=50, offset=0):
+            return {
+                "success": True,
+                "table_name": table_name,
+                "columns": ["BAD_VALUE"],
+                "rows": [{"ROW_ID_META": "AAABBB==", "BAD_VALUE": object()}],
+                "total": 1,
+            }
+
+    monkeypatch.setattr(api_blueprint_module, "DatabaseService", StubDatabaseService)
+
+    response = client.get("/api/v1/search/table-browser/data?table_name=SLIPS_CATEGORY")
+
+    assert response.status_code == 500
+    payload = response.get_json()
+    assert "data" not in payload
+    assert "データ取得に失敗しました" in payload["errorMessages"][0]
+
+
 def test_delete_table_browser_row_requires_row_id():
     client = _create_client()
 

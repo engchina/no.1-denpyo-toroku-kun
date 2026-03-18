@@ -1,20 +1,20 @@
 import { APP_ROUTES } from '../constants/routes';
 
-export type QueryPaginationScope = 'fl' | 'cs' | 'cm' | 'sbnr' | 'sbtl' | 'sbdp';
+export type QueryPaginationScope = 'fl' | 'cs' | 'cm' | 'cmh' | 'cml' | 'sbnr' | 'sbtl' | 'sbdp';
 
 type ScopeKey = 'p' | 'ps' | 'status';
 const PAGINATION_SCOPE_KEYS: ScopeKey[] = ['p', 'ps', 'status'];
 
-const ALL_SCOPES: QueryPaginationScope[] = ['fl', 'cs', 'cm', 'sbnr', 'sbtl', 'sbdp'];
+const ALL_SCOPES: QueryPaginationScope[] = ['fl', 'cs', 'cm', 'cmh', 'cml', 'sbnr', 'sbtl', 'sbdp'];
 
 const VIEW_SCOPES: Record<string, QueryPaginationScope[]> = {
   fileList: ['fl'],
   categorySamples: ['cs'],
-  categoryManagement: ['cm'],
+  categoryManagement: ['cm', 'cmh', 'cml'],
   search: ['sbnr', 'sbtl', 'sbdp'],
   [APP_ROUTES.fileList]: ['fl'],
   [APP_ROUTES.categorySamples]: ['cs'],
-  [APP_ROUTES.categoryManagement]: ['cm'],
+  [APP_ROUTES.categoryManagement]: ['cm', 'cmh', 'cml'],
   [APP_ROUTES.search]: ['sbnr', 'sbtl', 'sbdp'],
 };
 
@@ -122,7 +122,7 @@ function resolveScopes(routeKey: string): QueryPaginationScope[] {
     return ['cs'];
   }
   if (normalized.startsWith(APP_ROUTES.categoryManagement)) {
-    return ['cm'];
+    return ['cm', 'cmh', 'cml'];
   }
   if (normalized.startsWith(APP_ROUTES.search)) {
     return ['sbnr', 'sbtl', 'sbdp'];

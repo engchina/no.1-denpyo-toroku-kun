@@ -595,17 +595,6 @@ def test_get_table_browser_tables_includes_category_tables(monkeypatch):
             "created_at": "2026-03-03 00:00:00",
             "last_analyzed": "2026-03-04 00:00:00",
         },
-        {
-            "table_name": "SLIPS_RAW",
-            "table_type": "header",
-            "category_id": 0,
-            "category_name": "SLIPS",
-            "row_count": 2,
-            "estimated_rows": 2,
-            "column_count": 9,
-            "created_at": "2026-02-28 00:00:00",
-            "last_analyzed": "2026-03-01 00:00:00",
-        },
     ]
 
 
@@ -1026,6 +1015,82 @@ def test_management_table_initialization_is_shared_across_instances(monkeypatch)
         assert enter_count["value"] == 1
     finally:
         DatabaseService._shared_management_tables_initialized = False
+
+
+def test_backfill_registration_category_ids_updates_legacy_rows():
+    service = DatabaseService()
+    executed = []
+
+    class FakeCursor:
+        rowcount = 3
+
+        def execute(self, sql, params=None):
+            executed.append((sql, params))
+
+    cursor = FakeCursor()
+    service._backfill_registration_category_ids(cursor)
+
+    assert len(executed) == 1
+    assert "UPDATE DENPYO_REGISTRATIONS r" in executed[0][0]
+    assert "SET CATEGORY_ID =" in executed[0][0]
+    assert "WHERE r.CATEGORY_ID IS NULL" in executed[0][0]
+
+
+def test_get_categories_uses_header_table_row_counts(monkeypatch):
+    service = DatabaseService()
+
+    class FakeCursor:
+        def __init__(self):
+            self._sql = ""
+
+        def execute(self, sql, params=None):
+            self._sql = sql
+
+        def fetchall(self):
+            if "FROM DENPYO_CATEGORIES c" in self._sql:
+                return [
+                    (
+                        5, "領収証_5", "receipt_5", "RECEIPT_H_5", "RECEIPT_L_5",
+                        "", "profile-a", "team-a", 1, "2026-03-08 21:20:34", "hash-1",
+                        "", 1, "2026-03-08 20:00:00", "2026-03-08 21:20:34",
+                    ),
+                    (
+                        4, "領収書_4", "receipt_4", "RECEIPT_H_4", "",
+                        "", "", "", 0, None, "",
+                        "", 1, "2026-03-08 17:00:00", "2026-03-08 17:25:52",
+                    ),
+                ]
+            return []
+
+        def fetchone(self):
+            if "SELECT COUNT(*) FROM RECEIPT_H_5" in self._sql:
+                return (7,)
+            if "SELECT COUNT(*) FROM RECEIPT_H_4" in self._sql:
+                return (0,)
+            return (0,)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+    @contextmanager
+    def fake_get_connection():
+        yield FakeConnection()
+
+    monkeypatch.setattr(service, "_ensure_management_tables", lambda: True)
+    monkeypatch.setattr(service, "get_connection", fake_get_connection)
+
+    result = service.get_categories()
+
+    assert [category["registration_count"] for category in result] == [7, 0]
+    assert result[0]["header_table_name"] == "RECEIPT_H_5"
+    assert result[1]["header_table_name"] == "RECEIPT_H_4"
 
 
 def test_get_connection_recreates_pool_once_when_shared_pool_was_closed(monkeypatch):
