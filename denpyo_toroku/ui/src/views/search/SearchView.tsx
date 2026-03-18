@@ -9,7 +9,8 @@ import { useAppSelector, useAppDispatch } from '../../redux/store';
 import {
   fetchSearchableTables,
   fetchTableBrowserTables,
-  nlSearch,
+  nlSearchStartAsync,
+  nlSearchPollJob,
   fetchTableDataByName,
   clearSearchResults,
   clearSearchError,
@@ -26,7 +27,7 @@ import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
 import { apiPost } from '../../utils/apiUtils';
 import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
-import type { NLSearchResponse, SearchableTable, TableBrowseResult, TableBrowserTable } from '../../types/denpyoTypes';
+import type { NLSearchResponse, NLSearchJobStatus, SearchableTable, TableBrowseResult, TableBrowserTable } from '../../types/denpyoTypes';
 import { Search, Database, Copy, Check, Loader2, RefreshCw, Trash2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 type TabType = 'nlSearch' | 'tableBrowser';
@@ -76,6 +77,9 @@ export function SearchView() {
     isTableBrowserTablesLoading,
     nlSearchResult,
     isNLSearching,
+    nlSearchAsyncJobId,
+    nlSearchAsyncJobStatus,
+    nlSearchAsyncJobStartedAt,
     tableBrowseResult,
     isTableBrowsing,
     searchError,
@@ -85,12 +89,13 @@ export function SearchView() {
   } = useAppSelector(state => state.denpyo);
 
   // Load searchable tables on mount
+  // クリーンアップで clearSearchResults を呼ばない:
+  //   - 処理中ジョブのステータスを保持するため
+  //   - 完了済み結果を保持して、戻ってきた際にそのまま表示するため
+  // 結果のクリアは「新しい検索開始時」と「カテゴリ変更時」のみ行う
   useEffect(() => {
     dispatch(fetchSearchableTables());
     dispatch(fetchTableBrowserTables());
-    return () => {
-      dispatch(clearSearchResults());
-    };
   }, [dispatch]);
 
   const handleTabChange = (tab: TabType) => {
@@ -154,6 +159,9 @@ export function SearchView() {
           result={nlSearchResult}
           persistedQuery={nlSearchQuery}
           persistedCategoryId={nlSearchCategoryId}
+          asyncJobId={nlSearchAsyncJobId}
+          asyncJobStatus={nlSearchAsyncJobStatus}
+          asyncJobStartedAt={nlSearchAsyncJobStartedAt}
         />
       ) : (
         <TableBrowserTab
@@ -178,20 +186,25 @@ interface NLSearchTabProps {
   result: NLSearchResponse | null;
   persistedQuery: string;
   persistedCategoryId: number | undefined;
+  asyncJobId: string | null;
+  asyncJobStatus: NLSearchJobStatus | null;
+  asyncJobStartedAt: number | null;
 }
 
-function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, persistedQuery, persistedCategoryId }: NLSearchTabProps) {
+function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, persistedQuery, persistedCategoryId, asyncJobId, asyncJobStatus, asyncJobStartedAt }: NLSearchTabProps) {
   const dispatch = useAppDispatch();
   const query = persistedQuery;
   const categoryId = persistedCategoryId;
   const setQuery = (value: string) => dispatch(setNlSearchQuery(value));
   const setCategoryId = (value: number | undefined) => dispatch(setNlSearchCategoryId(value));
   const [copied, setCopied] = useState(false);
-  const quickPrompts = [
-    t('search.nl.quickPrompt.topAmount'),
-    t('search.nl.quickPrompt.byVendor'),
-    t('search.nl.quickPrompt.latestReceipt'),
-  ];
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 開始時刻から経過秒数を計算する関数
+  const calcElapsed = () =>
+    asyncJobStartedAt ? Math.floor((Date.now() - asyncJobStartedAt) / 1000) : 0;
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const selectedCategory = useMemo(
     () => searchableTables.find((table) => table.category_id === categoryId) || null,
     [categoryId, searchableTables],
@@ -208,17 +221,69 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
     }
   }, [categoryId, searchableTables]);
 
+  // カテゴリ変更時のみ結果をクリアする（初回マウント時はスキップ）
+  // 初回マウント時にクリアすると、画面遷移後の復帰時に非同期ジョブ状態が消えてしまう
+  const isCategoryInitialMount = useRef(true);
   useEffect(() => {
+    if (isCategoryInitialMount.current) {
+      isCategoryInitialMount.current = false;
+      return;
+    }
     dispatch(clearSearchResults());
   }, [dispatch, categoryId]);
 
+  // 非同期ジョブのポーリング
+  useEffect(() => {
+    if (!asyncJobId || !isLoading) {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      return;
+    }
+    pollingIntervalRef.current = setInterval(() => {
+      dispatch(nlSearchPollJob(asyncJobId));
+    }, 3000);
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [asyncJobId, isLoading, dispatch]);
+
+  // ポーリング完了後にテーブル一覧を更新
+  useEffect(() => {
+    if (asyncJobStatus === 'done' || asyncJobStatus === 'error') {
+      dispatch(fetchSearchableTables());
+    }
+  }, [asyncJobStatus, dispatch]);
+
+  // 経過時間カウンター（処理中の場合のみ）
+  // 開始時刻（asyncJobStartedAt）から計算するため、画面遷移後も正確な経過時間を表示する
+  useEffect(() => {
+    if (isLoading && asyncJobId) {
+      setElapsedSeconds(calcElapsed());
+      elapsedTimerRef.current = setInterval(() => {
+        setElapsedSeconds(calcElapsed());
+      }, 1000);
+    } else {
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current);
+        elapsedTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current);
+        elapsedTimerRef.current = null;
+      }
+    };
+  }, [isLoading, asyncJobId, asyncJobStartedAt]);
+
   const handleSearch = useCallback(() => {
     if (!query.trim() || !selectedCategory) return;
-    dispatch(nlSearch({ query: query.trim(), category_id: selectedCategory.category_id }))
-      .finally(() => {
-        // 検索実行後にProfileが自動作成される場合があるため、最新状態に更新する
-        dispatch(fetchSearchableTables());
-      });
+    dispatch(nlSearchStartAsync({ query: query.trim(), category_id: selectedCategory.category_id }));
   }, [dispatch, query, selectedCategory]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -236,6 +301,10 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
   }, [result]);
 
   const noTables = !isTablesLoading && searchableTables.length === 0;
+
+  const asyncStatusLabel = asyncJobStatus === 'running'
+    ? t('search.nl.asyncStatus.running')
+    : t('search.nl.asyncStatus.pending');
 
   return (
     <div class="ics-nl-search ics-search-stack">
@@ -278,10 +347,7 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
 
               {/* Query input */}
               <div class="ics-form-group">
-                <div class="ics-form-label-row">
-                  <label class="ics-form-label">{t('search.nl.queryLabel')}</label>
-                  <span class="ics-form-hint">Ctrl + Enter</span>
-                </div>
+                <label class="ics-form-label">{t('search.nl.queryLabel')}</label>
                 <textarea
                   class="ics-form-textarea ics-search-query"
                   placeholder={t('search.nl.queryPlaceholder')}
@@ -291,23 +357,6 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
                   disabled={noTables || isLoading}
                   rows={3}
                 />
-              </div>
-
-              <div class="ics-form-group">
-                <label class="ics-form-label">{t('search.nl.quickPrompts')}</label>
-                <div class="ics-search-chipList">
-                  {quickPrompts.map(prompt => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      class="ics-search-chip"
-                      onClick={() => setQuery(prompt)}
-                      disabled={isLoading}
-                    >
-                      {prompt}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {/* Search button */}
@@ -331,6 +380,25 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
                   )}
                 </button>
               </div>
+
+              {/* 処理ステータス */}
+              {isLoading && asyncJobId && (
+                <div class="ics-search-asyncStatus">
+                  <Loader2 size={15} class="ics-spinner" />
+                  <span class="ics-search-asyncStatus__label">
+                    {t('search.nl.asyncStatus.processing')}
+                  </span>
+                  <span class="ics-search-asyncStatus__status">
+                    ({asyncStatusLabel})
+                  </span>
+                  <code class="ics-search-asyncStatus__jobId" title={asyncJobId}>
+                    {asyncJobId.slice(0, 8)}…
+                  </code>
+                  <span class="ics-search-asyncStatus__elapsed">
+                    {t('search.nl.asyncStatus.elapsed').replace('{elapsed}', String(elapsedSeconds))}
+                  </span>
+                </div>
+              )}
             </div>
 
             {noTables && (

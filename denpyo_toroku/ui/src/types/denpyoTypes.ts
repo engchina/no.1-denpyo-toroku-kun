@@ -376,6 +376,21 @@ export interface NLSearchResponse {
   engine_meta?: NLSearchEngineMeta;
 }
 
+export type NLSearchJobStatus = 'pending' | 'running' | 'done' | 'error';
+
+export interface NLSearchAsyncStartResponse {
+  job_id: string;
+  status: NLSearchJobStatus;
+}
+
+export interface NLSearchJobResponse {
+  job_id: string;
+  status: NLSearchJobStatus;
+  created_at?: number;
+  result?: NLSearchResponse;
+  error_message?: string;
+}
+
 export interface TableBrowseResult {
   table_name: string;
   table_type: 'header' | 'line';
@@ -449,6 +464,9 @@ export interface DenpyoSliceState {
   nlSearchResult: NLSearchResponse | null;
   activeNLSearchRequestId?: string | null;
   isNLSearching: boolean;
+  nlSearchAsyncJobId: string | null;
+  nlSearchAsyncJobStatus: NLSearchJobStatus | null;
+  nlSearchAsyncJobStartedAt: number | null;
   tableBrowseResult: TableBrowseResult | null;
   isTableBrowsing: boolean;
   searchError: string | null;

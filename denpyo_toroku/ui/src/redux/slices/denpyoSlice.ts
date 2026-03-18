@@ -24,6 +24,8 @@ import type {
   TableBrowserTable,
   NLSearchRequest,
   NLSearchResponse,
+  NLSearchAsyncStartResponse,
+  NLSearchJobResponse,
   TableBrowseResult,
   CategoryAnalysisResult,
   CategoryCreateRequest,
@@ -75,6 +77,9 @@ const initialState: DenpyoSliceState = {
   nlSearchResult: null,
   activeNLSearchRequestId: null,
   isNLSearching: false,
+  nlSearchAsyncJobId: null,
+  nlSearchAsyncJobStatus: null,
+  nlSearchAsyncJobStartedAt: null,
   tableBrowseResult: null,
   isTableBrowsing: false,
   searchError: null,
@@ -246,11 +251,17 @@ export const fetchSearchableTables = createAsyncThunk(
   }
 );
 
-export const nlSearch = createAsyncThunk(
-  'denpyo/nlSearch',
+export const nlSearchStartAsync = createAsyncThunk(
+  'denpyo/nlSearchStartAsync',
   async (params: NLSearchRequest) => {
-    // GenAI 呼び出しのため 60 秒タイムアウト
-    return await apiPostWithTimeout<NLSearchResponse>('/api/v1/search/nl', params, 60000);
+    return await apiPost<NLSearchAsyncStartResponse>('/api/v1/search/nl/async', params);
+  }
+);
+
+export const nlSearchPollJob = createAsyncThunk(
+  'denpyo/nlSearchPollJob',
+  async (jobId: string) => {
+    return await apiGet<NLSearchJobResponse>(`/api/v1/search/nl/jobs/${jobId}`);
   }
 );
 
@@ -322,6 +333,9 @@ const denpyoSlice = createSlice({
       state.nlSearchResult = null;
       state.activeNLSearchRequestId = null;
       state.isNLSearching = false;
+      state.nlSearchAsyncJobId = null;
+      state.nlSearchAsyncJobStatus = null;
+      state.nlSearchAsyncJobStartedAt = null;
       state.tableBrowseResult = null;
       state.searchError = null;
     },
@@ -699,30 +713,48 @@ const denpyoSlice = createSlice({
       });
 
     builder
-      .addCase(nlSearch.pending, (state, action) => {
+      .addCase(nlSearchStartAsync.pending, (state) => {
         state.isNLSearching = true;
-        state.activeNLSearchRequestId = action.meta.requestId;
         state.nlSearchResult = null;
         state.searchError = null;
+        state.nlSearchAsyncJobId = null;
+        state.nlSearchAsyncJobStatus = null;
+        state.nlSearchAsyncJobStartedAt = Date.now();
       })
-      .addCase(nlSearch.fulfilled, (state, action) => {
-        if (state.activeNLSearchRequestId !== action.meta.requestId) {
-          return;
-        }
-        state.isNLSearching = false;
-        state.activeNLSearchRequestId = null;
-        state.nlSearchResult = action.payload;
-        if (action.payload.error) {
-          state.searchError = action.payload.error;
-        }
+      .addCase(nlSearchStartAsync.fulfilled, (state, action) => {
+        state.nlSearchAsyncJobId = action.payload.job_id;
+        state.nlSearchAsyncJobStatus = action.payload.status;
+        // isNLSearching はポーリング完了まで true を維持
       })
-      .addCase(nlSearch.rejected, (state, action) => {
-        if (state.activeNLSearchRequestId !== action.meta.requestId) {
-          return;
-        }
+      .addCase(nlSearchStartAsync.rejected, (state, action) => {
         state.isNLSearching = false;
-        state.activeNLSearchRequestId = null;
-        state.searchError = action.error.message || '自然言語検索に失敗しました';
+        state.nlSearchAsyncJobId = null;
+        state.nlSearchAsyncJobStatus = null;
+        state.searchError = action.error.message || '検索の開始に失敗しました';
+      });
+
+    builder
+      .addCase(nlSearchPollJob.fulfilled, (state, action) => {
+        const { status, result, error_message } = action.payload;
+        state.nlSearchAsyncJobStatus = status;
+        if (status === 'done') {
+          state.isNLSearching = false;
+          state.nlSearchAsyncJobId = null;
+          state.nlSearchAsyncJobStartedAt = null;
+          state.nlSearchResult = result || null;
+          if (result?.error) {
+            state.searchError = result.error;
+          }
+        } else if (status === 'error') {
+          state.isNLSearching = false;
+          state.nlSearchAsyncJobId = null;
+          state.nlSearchAsyncJobStartedAt = null;
+          state.searchError = error_message || '検索に失敗しました';
+        }
+        // 'pending' / 'running' の場合は isNLSearching = true を維持
+      })
+      .addCase(nlSearchPollJob.rejected, () => {
+        // 一時的なネットワークエラーはポーリングを継続（state は変更しない）
       });
 
     builder

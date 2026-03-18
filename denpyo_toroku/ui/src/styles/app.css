@@ -6765,6 +6765,46 @@ html[dir="rtl"] .oracle-icon {
     padding: 14px 15px;
 }
 
+/* 非同期NL検索ステータス */
+.ics-search-asyncStatus {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    color: #1e40af;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.ics-search-asyncStatus__label {
+    font-weight: 600;
+}
+
+.ics-search-asyncStatus__status {
+    color: #3b82f6;
+    font-size: 0.82rem;
+}
+
+.ics-search-asyncStatus__jobId {
+    font-family: monospace;
+    font-size: 0.78rem;
+    background: #dbeafe;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #1e40af;
+    cursor: default;
+}
+
+.ics-search-asyncStatus__elapsed {
+    color: #4b5563;
+    font-size: 0.82rem;
+    margin-left: auto;
+}
+
 @media (max-width: 840px) {
     .ics-search-controls-card {
         padding: 14px;

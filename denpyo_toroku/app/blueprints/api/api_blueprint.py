@@ -12,6 +12,7 @@ import zipfile
 import datetime as dt
 import hashlib
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -85,6 +86,12 @@ _GENAI_REQUEUE_JITTER_RATIO = min(
     0.5,
     max(0.0, float(os.environ.get("GENAI_REQUEUE_JITTER_RATIO", "0.25"))),
 )
+
+# ── 非同期NL検索ジョブストア ────────────────────────────────────────────────
+_NL_SEARCH_JOB_TTL_SECONDS = 3600   # 1時間で自動削除
+_NL_SEARCH_JOB_MAX_SIZE = 200       # 最大保持ジョブ数
+_nl_search_jobs: Dict[str, Dict[str, Any]] = {}
+_nl_search_jobs_lock = threading.Lock()
 
 
 def _session_expiry_timestamp() -> int:
@@ -5165,6 +5172,187 @@ def natural_language_search():
         logging.error("自然言語検索エラー: %s", e, exc_info=True)
         g.response.add_error_message(f"検索に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
+
+
+def _nl_search_job_cleanup():
+    """TTL超過した期限切れジョブを削除する（ロックは呼び出し元が取得）"""
+    now = time.time()
+    with _nl_search_jobs_lock:
+        expired = [
+            jid for jid, job in _nl_search_jobs.items()
+            if now - job.get("created_at", 0) > _NL_SEARCH_JOB_TTL_SECONDS
+        ]
+        for jid in expired:
+            del _nl_search_jobs[jid]
+
+
+def _nl_search_run_job(job_id: str, query: str, category_id: int) -> None:
+    """バックグラウンドスレッドで自然言語検索を実行し、ジョブストアに結果を書き込む"""
+    def _update_job(**kwargs: Any) -> None:
+        with _nl_search_jobs_lock:
+            if job_id in _nl_search_jobs:
+                _nl_search_jobs[job_id].update(kwargs)
+
+    try:
+        _update_job(status="running")
+
+        db_service = DatabaseService()
+        allowed_tables = db_service.get_allowed_table_names()
+        if not allowed_tables:
+            _update_job(status="error", error_message="検索可能なテーブルがありません")
+            return
+
+        allowed_tables = [t for t in allowed_tables if t["category_id"] == category_id]
+        if not allowed_tables:
+            _update_job(status="error", error_message="指定されたカテゴリに検索可能なテーブルがありません")
+            return
+
+        allowed_table_set = db_service._build_allowed_table_set_from_entries(allowed_tables)
+        settings_snapshot = _load_oci_settings_snapshot()
+        settings = settings_snapshot.get("settings", {})
+
+        result_payload: Optional[Dict[str, Any]] = None
+
+        if _to_bool(settings.get("select_ai_enabled"), default=True):
+            oci_auth_config = _build_oci_test_config(settings)
+            select_ai_result = db_service.run_select_ai_agent_search(
+                query=query,
+                allowed_table_entries=allowed_tables,
+                oci_auth_config=oci_auth_config,
+                model_settings=settings,
+                max_rows=500,
+            )
+            if not select_ai_result.get("success"):
+                if select_ai_result.get("generated_sql"):
+                    result_payload = {
+                        "generated_sql": select_ai_result.get("generated_sql", ""),
+                        "explanation": select_ai_result.get("explanation", ""),
+                        "results": {"columns": [], "rows": [], "total": 0},
+                        "error": select_ai_result.get("message", "クエリ実行に失敗しました"),
+                        "engine": select_ai_result.get("engine", "select_ai_agent"),
+                        "engine_meta": select_ai_result.get("engine_meta", {}),
+                    }
+                elif _should_fallback_from_select_ai(select_ai_result):
+                    logging.warning(
+                        "非同期NL検索: Select AI Agent の基盤エラーのため direct LLM にフォールバックします: %s",
+                        select_ai_result.get("message", ""),
+                    )
+                else:
+                    _update_job(
+                        status="error",
+                        error_message=select_ai_result.get("message", "Select AI Agent での検索に失敗しました"),
+                    )
+                    return
+            else:
+                result_payload = {
+                    "generated_sql": select_ai_result.get("generated_sql", ""),
+                    "explanation": select_ai_result.get("explanation", ""),
+                    "results": {
+                        "columns": select_ai_result.get("results", {}).get("columns", []),
+                        "rows": select_ai_result.get("results", {}).get("rows", []),
+                        "total": select_ai_result.get("results", {}).get("total", 0),
+                    },
+                    "engine": select_ai_result.get("engine", "select_ai_agent"),
+                    "engine_meta": select_ai_result.get("engine_meta", {}),
+                }
+
+        if result_payload is None:
+            direct_result = _run_direct_llm_search(
+                db_service,
+                query=query,
+                allowed_tables=allowed_tables,
+                allowed_table_set=allowed_table_set,
+            )
+            if not direct_result.get("success"):
+                _update_job(
+                    status="error",
+                    error_message=direct_result.get("error_message", "検索に失敗しました"),
+                )
+                return
+            result_payload = direct_result["payload"]
+
+        _update_job(status="done", result=result_payload)
+
+    except Exception as e:
+        logging.error("非同期自然言語検索ジョブエラー (job_id=%s): %s", job_id, e, exc_info=True)
+        _update_job(status="error", error_message=f"検索に失敗しました: {str(e)}")
+
+
+@api_blueprint.route("/api/v1/search/nl/async", methods=["POST"])
+def natural_language_search_async_start():
+    """自然言語検索（非同期）: ジョブを開始して job_id を返す"""
+    try:
+        data = request.get_json(silent=True) or {}
+        query = (data.get("query") or "").strip()
+        category_id = data.get("category_id")
+
+        if not query:
+            g.response.add_error_message("検索クエリを入力してください")
+            return jsonify(g.response.get_result()), 400
+        if category_id is None:
+            g.response.add_error_message("伝票分類を選択してください")
+            return jsonify(g.response.get_result()), 400
+        try:
+            category_id = int(category_id)
+        except (TypeError, ValueError):
+            g.response.add_error_message("category_id は整数で指定してください")
+            return jsonify(g.response.get_result()), 400
+
+        _nl_search_job_cleanup()
+
+        job_id = str(uuid.uuid4())
+        now = time.time()
+        with _nl_search_jobs_lock:
+            while len(_nl_search_jobs) >= _NL_SEARCH_JOB_MAX_SIZE:
+                oldest = min(_nl_search_jobs, key=lambda k: _nl_search_jobs[k].get("created_at", 0))
+                del _nl_search_jobs[oldest]
+            _nl_search_jobs[job_id] = {
+                "job_id": job_id,
+                "status": "pending",
+                "created_at": now,
+                "result": None,
+                "error_message": None,
+            }
+
+        thread = threading.Thread(
+            target=_nl_search_run_job,
+            args=(job_id, query, category_id),
+            daemon=True,
+            name=f"nl_search_{job_id[:8]}",
+        )
+        thread.start()
+
+        g.response.set_data({"job_id": job_id, "status": "pending"})
+        return jsonify(g.response.get_result())
+
+    except Exception as e:
+        logging.error("非同期自然言語検索開始エラー: %s", e, exc_info=True)
+        g.response.add_error_message(f"検索の開始に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/search/nl/jobs/<string:job_id>", methods=["GET"])
+def natural_language_search_job_status(job_id: str):
+    """非同期自然言語検索ジョブの状態・結果を取得"""
+    with _nl_search_jobs_lock:
+        job = dict(_nl_search_jobs.get(job_id, {}))
+
+    if not job:
+        g.response.add_error_message("指定されたジョブが見つかりません")
+        return jsonify(g.response.get_result()), 404
+
+    resp: Dict[str, Any] = {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "created_at": job.get("created_at"),
+    }
+    if job.get("status") == "done":
+        resp["result"] = job.get("result")
+    elif job.get("status") == "error":
+        resp["error_message"] = job.get("error_message")
+
+    g.response.set_data(resp)
+    return jsonify(g.response.get_result())
 
 
 @api_blueprint.route("/api/v1/search/tables/<int:category_id>/data", methods=["GET"])
