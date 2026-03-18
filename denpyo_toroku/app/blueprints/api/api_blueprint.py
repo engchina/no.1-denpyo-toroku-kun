@@ -120,7 +120,7 @@ def _is_session_authenticated() -> bool:
     user = session.get("user", None)
     token = session.get("token", None)
     token_expiry_ts = session.get("token_expiry_ts", None)
-    if not user or not token or not token_expiry_ts:
+    if not user or not token or token_expiry_ts is None:
         return False
     return dt.datetime.now().timestamp() < float(token_expiry_ts)
 
@@ -5175,7 +5175,7 @@ def natural_language_search():
 
 
 def _nl_search_job_cleanup():
-    """TTL超過した期限切れジョブを削除する（ロックは呼び出し元が取得）"""
+    """TTL超過した期限切れジョブを削除する。内部でロックを取得する。"""
     now = time.time()
     with _nl_search_jobs_lock:
         expired = [

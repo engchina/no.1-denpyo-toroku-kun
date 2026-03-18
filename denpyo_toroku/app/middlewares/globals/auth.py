@@ -4,7 +4,7 @@ from denpyo_toroku.auth_config import SESSION_TIMEOUT_SECONDS
 
 
 def _verify_token_not_expired(token_expiry_ts):
-    if not token_expiry_ts:
+    if token_expiry_ts is None:
         return False
     current_time = datetime.datetime.now().timestamp()
     return current_time < float(token_expiry_ts)
