@@ -1,5 +1,6 @@
 import { h } from 'preact';
 import { useEffect } from 'preact/hooks';
+import { X, Check, Loader2 } from 'lucide-react';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -56,6 +57,7 @@ export function ConfirmDialog({
             onClick={onCancel}
             disabled={isBusy}
           >
+            <X size={14} />
             <span>{cancelLabel}</span>
           </button>
           <button
@@ -63,6 +65,7 @@ export function ConfirmDialog({
             onClick={onConfirm}
             disabled={isBusy}
           >
+            {isBusy ? <Loader2 size={14} class="ics-spin" /> : <Check size={14} />}
             <span>{isBusy ? '処理中…' : confirmLabel}</span>
           </button>
         </div>

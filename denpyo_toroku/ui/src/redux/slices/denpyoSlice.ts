@@ -78,6 +78,10 @@ const initialState: DenpyoSliceState = {
   tableBrowseResult: null,
   isTableBrowsing: false,
   searchError: null,
+  // 検索画面UI状態 (ページ遷移後も保持)
+  searchActiveTab: 'nlSearch' as 'nlSearch' | 'tableBrowser',
+  nlSearchQuery: '',
+  nlSearchCategoryId: undefined,
   error: null
 };
 
@@ -323,6 +327,15 @@ const denpyoSlice = createSlice({
     },
     clearSearchError(state) {
       state.searchError = null;
+    },
+    setSearchActiveTab(state, action: { payload: 'nlSearch' | 'tableBrowser' }) {
+      state.searchActiveTab = action.payload;
+    },
+    setNlSearchQuery(state, action: { payload: string }) {
+      state.nlSearchQuery = action.payload;
+    },
+    setNlSearchCategoryId(state, action: { payload: number | undefined }) {
+      state.nlSearchCategoryId = action.payload;
     },
     clearCategoryAnalysis(state) {
       state.categoryAnalysisResult = null;
@@ -742,6 +755,6 @@ const denpyoSlice = createSlice({
   }
 });
 
-export const { clearError, clearUploadResult, setUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListPageSize, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis, setSlipsCategoryPage, setSlipsCategoryPageSize } = denpyoSlice.actions;
+export const { clearError, clearUploadResult, setUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListPageSize, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis, setSlipsCategoryPage, setSlipsCategoryPageSize, setSearchActiveTab, setNlSearchQuery, setNlSearchCategoryId } = denpyoSlice.actions;
 
 export default denpyoSlice.reducer;

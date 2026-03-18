@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { AlertTriangle, AlertCircle, CheckCircle, Info, X } from 'lucide-react';
+import { AlertTriangle, AlertCircle, CheckCircle, Info, X, Check } from 'lucide-react';
 import { t } from '../i18n';
 
 type ConfirmSeverity = 'error' | 'warning' | 'confirmation' | 'info' | 'none';
@@ -95,14 +95,16 @@ function ToastConfirmPopup({
             class="ics-ops-btn ics-ops-btn--ghost"
             onClick={onClose}
           >
-            {request.cancelLabel}
+            <X size={14} />
+            <span>{request.cancelLabel}</span>
           </button>
           <button
             type="button"
             class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
             onClick={onConfirm}
           >
-            {request.confirmLabel}
+            <Check size={14} />
+            <span>{request.confirmLabel}</span>
           </button>
         </div>
       </div>

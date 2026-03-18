@@ -12,7 +12,10 @@ import {
   nlSearch,
   fetchTableDataByName,
   clearSearchResults,
-  clearSearchError
+  clearSearchError,
+  setSearchActiveTab,
+  setNlSearchQuery,
+  setNlSearchCategoryId
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import Pagination from '../../components/Pagination';
@@ -75,10 +78,11 @@ export function SearchView() {
     isNLSearching,
     tableBrowseResult,
     isTableBrowsing,
-    searchError
+    searchError,
+    searchActiveTab: activeTab,
+    nlSearchQuery,
+    nlSearchCategoryId
   } = useAppSelector(state => state.denpyo);
-
-  const [activeTab, setActiveTab] = useState<TabType>('nlSearch');
 
   // Load searchable tables on mount
   useEffect(() => {
@@ -90,7 +94,7 @@ export function SearchView() {
   }, [dispatch]);
 
   const handleTabChange = (tab: TabType) => {
-    setActiveTab(tab);
+    dispatch(setSearchActiveTab(tab));
     dispatch(clearSearchError());
   };
 
@@ -148,6 +152,8 @@ export function SearchView() {
           isLoading={isNLSearching}
           isTablesLoading={isSearchableTablesLoading}
           result={nlSearchResult}
+          persistedQuery={nlSearchQuery}
+          persistedCategoryId={nlSearchCategoryId}
         />
       ) : (
         <TableBrowserTab
@@ -170,12 +176,16 @@ interface NLSearchTabProps {
   isLoading: boolean;
   isTablesLoading: boolean;
   result: NLSearchResponse | null;
+  persistedQuery: string;
+  persistedCategoryId: number | undefined;
 }
 
-function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: NLSearchTabProps) {
+function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, persistedQuery, persistedCategoryId }: NLSearchTabProps) {
   const dispatch = useAppDispatch();
-  const [query, setQuery] = useState('');
-  const [categoryId, setCategoryId] = useState<number | undefined>(undefined);
+  const query = persistedQuery;
+  const categoryId = persistedCategoryId;
+  const setQuery = (value: string) => dispatch(setNlSearchQuery(value));
+  const setCategoryId = (value: number | undefined) => dispatch(setNlSearchCategoryId(value));
   const [copied, setCopied] = useState(false);
   const quickPrompts = [
     t('search.nl.quickPrompt.topAmount'),
@@ -204,7 +214,11 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result }: N
 
   const handleSearch = useCallback(() => {
     if (!query.trim() || !selectedCategory) return;
-    dispatch(nlSearch({ query: query.trim(), category_id: selectedCategory.category_id }));
+    dispatch(nlSearch({ query: query.trim(), category_id: selectedCategory.category_id }))
+      .finally(() => {
+        // 検索実行後にProfileが自動作成される場合があるため、最新状態に更新する
+        dispatch(fetchSearchableTables());
+      });
   }, [dispatch, query, selectedCategory]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -575,7 +589,6 @@ function TableBrowserTab({
     }
   }, [dispatch, selectedTable, page, dataPageSize]);
 
-  const noTables = !isTableListLoading && tableBrowserTables.length === 0;
   const totalPages = result?.total_pages || 1;
 
   const handleRefreshTables = useCallback(() => {

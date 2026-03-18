@@ -452,6 +452,10 @@ export interface DenpyoSliceState {
   tableBrowseResult: TableBrowseResult | null;
   isTableBrowsing: boolean;
   searchError: string | null;
+  // 検索画面UI状態 (ページ遷移後も保持)
+  searchActiveTab: 'nlSearch' | 'tableBrowser';
+  nlSearchQuery: string;
+  nlSearchCategoryId: number | undefined;
 
   // 共通
   error: string | null;

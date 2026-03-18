@@ -2,8 +2,7 @@
  * 共通ページネーション（ページ移動 UI）
  * ページングが必要な画面で再利用可能
  */
-import { Button } from '@oracle/oraclejet-preact/UNSAFE_Button';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { t } from '../i18n';
 
 export interface PaginationProps {
@@ -153,13 +152,15 @@ export function Pagination({
               onInput={(e: any) => onGoToPageInputChange(e.target.value)}
               onKeyDown={handleKeyDown as any}
             />
-            <Button
-              label={t('common.go')}
-              variant="outlined"
-              size="sm"
-              onAction={onGoToPage}
-              isDisabled={isGoToDisabled}
-            />
+            <button
+              type="button"
+              class="ics-btn"
+              onClick={onGoToPage}
+              disabled={isGoToDisabled}
+            >
+              <ArrowRight size={14} />
+              <span>{t('common.go')}</span>
+            </button>
           </div>
         )}
         <div class="ics-btn-group">
