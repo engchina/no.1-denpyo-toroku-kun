@@ -5529,10 +5529,43 @@ def delete_table_browser_row():
             g.response.add_error_message(result.get("message", "削除に失敗しました"))
             return jsonify(g.response.get_result()), 400
 
-        g.response.set_data({"success": True, "deleted": result.get("deleted", 0)})
+        g.response.set_data({
+            "success": True,
+            "deleted": result.get("deleted", 0),
+            "detail_deleted": result.get("detail_deleted", 0),
+            "table_type": result.get("table_type", ""),
+        })
         return jsonify(g.response.get_result())
     except Exception as e:
         logging.error("テーブル行削除エラー (table_name=%s): %s", (request.get_json(silent=True) or {}).get("table_name"), e, exc_info=True)
+        g.response.add_error_message(f"削除に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
+@api_blueprint.route("/api/v1/search/table-browser/delete-table", methods=["POST"])
+def delete_table_browser_table():
+    """テーブルブラウザのテーブルを削除"""
+    try:
+        data = request.get_json(silent=True) or {}
+        table_name = (data.get("table_name") or "").strip()
+
+        if not table_name:
+            g.response.add_error_message("table_name を指定してください")
+            return jsonify(g.response.get_result()), 400
+
+        db_service = DatabaseService()
+        result = db_service.delete_allowed_table(table_name)
+        if not result.get("success"):
+            g.response.add_error_message(result.get("message", "削除に失敗しました"))
+            return jsonify(g.response.get_result()), 400
+
+        g.response.set_data({
+            "success": True,
+            "table_name": result.get("table_name", table_name.upper()),
+        })
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("テーブル削除エラー (table_name=%s): %s", (request.get_json(silent=True) or {}).get("table_name"), e, exc_info=True)
         g.response.add_error_message(f"削除に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
 

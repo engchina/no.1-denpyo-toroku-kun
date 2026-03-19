@@ -38,6 +38,12 @@ const SEARCH_TABLE_LIST_QUERY_SCOPE = 'sbtl';
 const SEARCH_DATA_PREVIEW_QUERY_SCOPE = 'sbdp';
 type SortDirection = 'asc' | 'desc';
 type TableListSortKey = 'table_name' | 'category_name' | 'table_type' | 'row_count' | 'column_count' | 'created_at';
+type DeleteTableBrowserRowResponse = {
+  success: boolean;
+  deleted: number;
+  detail_deleted?: number;
+  table_type?: string;
+};
 
 function compareValues(a: unknown, b: unknown): number {
   if (a === b) return 0;
@@ -623,12 +629,21 @@ function TableBrowserTab({
   });
   const [goToPageInput, setGoToPageInput] = useState('');
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
+  const [isBulkDeletingTables, setIsBulkDeletingTables] = useState(false);
   const [isBulkDeletingRows, setIsBulkDeletingRows] = useState(false);
   const [tableListSortKey, setTableListSortKey] = useState<TableListSortKey>('created_at');
   const [tableListSortDirection, setTableListSortDirection] = useState<SortDirection>('desc');
   const [dataSortColumn, setDataSortColumn] = useState('');
   const [dataSortDirection, setDataSortDirection] = useState<SortDirection>('desc');
   const isTableListPageSizeInitRef = useRef(true);
+  const getTableKey = useCallback(
+    (table: TableBrowserTable) => `${table.category_id}-${table.table_type}-${table.table_name}`,
+    []
+  );
+  const getTableGroupKey = useCallback(
+    (table: TableBrowserTable) => `${table.category_id}::${table.category_name}`,
+    []
+  );
 
   const sortedTableBrowserTables = useMemo(() => {
     const factor = tableListSortDirection === 'asc' ? 1 : -1;
@@ -670,8 +685,45 @@ function TableBrowserTab({
 
   // テーブル一覧選択
   const tableListSelection = useSelection<TableBrowserTable>({
-    getItemId: (table) => `${table.category_id}-${table.table_type}-${table.table_name}`,
+    getItemId: getTableKey,
   });
+
+  const tableListMap = useMemo(() => {
+    const next = new Map<string, TableBrowserTable>();
+    for (const table of tableBrowserTables) {
+      next.set(getTableKey(table), table);
+    }
+    return next;
+  }, [tableBrowserTables, getTableKey]);
+
+  const tableGroupMap = useMemo(() => {
+    const next = new Map<string, TableBrowserTable[]>();
+    for (const table of tableBrowserTables) {
+      const groupKey = getTableGroupKey(table);
+      const current = next.get(groupKey) || [];
+      current.push(table);
+      next.set(groupKey, current);
+    }
+    return next;
+  }, [tableBrowserTables, getTableGroupKey]);
+
+  const getRelatedTables = useCallback((table: TableBrowserTable) => {
+    return tableGroupMap.get(getTableGroupKey(table)) || [table];
+  }, [tableGroupMap, getTableGroupKey]);
+
+  const getRelatedTableIds = useCallback((table: TableBrowserTable) => {
+    return getRelatedTables(table).map(getTableKey);
+  }, [getRelatedTables, getTableKey]);
+
+  const expandTablesWithRelated = useCallback((tables: TableBrowserTable[]) => {
+    const next = new Map<string, TableBrowserTable>();
+    for (const table of tables) {
+      for (const relatedTable of getRelatedTables(table)) {
+        next.set(getTableKey(relatedTable), relatedTable);
+      }
+    }
+    return Array.from(next.values());
+  }, [getRelatedTables, getTableKey]);
 
   // テーブルデータプレビュー行選択
   const dataRowSelection = useSelection<Record<string, any>>({
@@ -801,6 +853,24 @@ function TableBrowserTab({
     setPage(1);
     setGoToPageInput('');
   }, []);
+  const handleToggleTableSelection = useCallback((table: TableBrowserTable) => {
+    const relatedIds = getRelatedTableIds(table);
+    const isGroupSelected = relatedIds.every(id => tableListSelection.isSelected(id));
+    if (isGroupSelected) {
+      tableListSelection.deselectIds(relatedIds);
+      return;
+    }
+    tableListSelection.selectIds(relatedIds);
+  }, [getRelatedTableIds, tableListSelection]);
+  const handleToggleSelectAllTablesOnPage = useCallback(() => {
+    const pageItems = tableListPagination.paginatedItems;
+    if (tableListSelection.isAllSelected(pageItems)) {
+      tableListSelection.deselectAll();
+      return;
+    }
+    const relatedTables = expandTablesWithRelated(pageItems);
+    tableListSelection.selectIds(relatedTables.map(getTableKey));
+  }, [tableListPagination.paginatedItems, tableListSelection, expandTablesWithRelated, getTableKey]);
   const handleTableRowKeyDown = useCallback((e: KeyboardEvent, table: TableBrowserTable) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -828,11 +898,41 @@ function TableBrowserTab({
     return String(raw);
   }, []);
 
+  const getDataPageAfterDelete = useCallback((deletedRows: number) => {
+    const currentTotal = result?.total || 0;
+    const remainingRows = Math.max(0, currentTotal - Math.max(0, deletedRows));
+    const maxPageAfterDelete = Math.max(1, Math.ceil(remainingRows / dataPageSize));
+    return Math.min(page, maxPageAfterDelete);
+  }, [result?.total, dataPageSize, page]);
+
+  const refreshSelectedTableData = useCallback((nextPage: number) => {
+    if (!selectedTable?.table_name) return;
+    if (nextPage !== page) {
+      setPage(nextPage);
+      setGoToPageInput('');
+      return;
+    }
+    dispatch(fetchTableDataByName({
+      tableName: selectedTable.table_name,
+      tableType: selectedTable.table_type,
+      page: nextPage,
+      pageSize: dataPageSize,
+    }));
+  }, [dispatch, selectedTable, page, dataPageSize]);
+
+  const hasLinkedLineTable = useCallback((table: TableBrowserTable | null) => {
+    if (!table || table.table_type !== 'header') return false;
+    return getRelatedTables(table).some((relatedTable) => relatedTable.table_type === 'line');
+  }, [getRelatedTables]);
+
   const handleDeleteRow = useCallback((row: Record<string, any>) => {
     const rowId = getRowId(row);
     if (!rowId || !selectedTable) return;
+    const shouldCascadeDetails = hasLinkedLineTable(selectedTable);
     requestConfirm({
-      message: t('search.browser.deleteRowConfirm'),
+      message: shouldCascadeDetails
+        ? t('search.browser.deleteHeaderRowConfirm')
+        : t('search.browser.deleteRowConfirm'),
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
@@ -840,21 +940,18 @@ function TableBrowserTab({
       onConfirm: async () => {
         setDeletingRowId(rowId);
         try {
-          await apiPost<{ success: boolean }>('/api/v1/search/table-browser/delete-row', {
+          const result = await apiPost<DeleteTableBrowserRowResponse>('/api/v1/search/table-browser/delete-row', {
             table_name: selectedTable.table_name,
             row_id: rowId
           });
           dispatch(addNotification({
             type: 'success',
-            message: t('search.browser.deleteRowSuccess')
+            message: result.detail_deleted && result.detail_deleted > 0
+              ? t('search.browser.deleteHeaderRowSuccess', { detailCount: result.detail_deleted })
+              : t('search.browser.deleteRowSuccess')
           }));
           dispatch(fetchTableBrowserTables());
-          dispatch(fetchTableDataByName({
-            tableName: selectedTable.table_name,
-            tableType: selectedTable.table_type,
-            page,
-            pageSize: dataPageSize
-          }));
+          refreshSelectedTableData(getDataPageAfterDelete(result.deleted || 1));
         } catch {
           dispatch(addNotification({
             type: 'error',
@@ -865,13 +962,16 @@ function TableBrowserTab({
         }
       }
     });
-  }, [dispatch, getRowId, selectedTable, page, dataPageSize, requestConfirm]);
+  }, [dispatch, getRowId, selectedTable, hasLinkedLineTable, page, dataPageSize, requestConfirm]);
 
   const handleBulkDeleteRows = useCallback(() => {
     if (!selectedTable || dataRowSelection.selectedCount === 0) return;
     const targetRowIds = Array.from(dataRowSelection.selectedIds);
+    const shouldCascadeDetails = hasLinkedLineTable(selectedTable);
     requestConfirm({
-      message: t('search.browser.confirmBulkDelete', { count: targetRowIds.length }),
+      message: shouldCascadeDetails
+        ? t('search.browser.confirmBulkDeleteHeaderRows', { count: targetRowIds.length })
+        : t('search.browser.confirmBulkDelete', { count: targetRowIds.length }),
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
@@ -879,35 +979,36 @@ function TableBrowserTab({
       onConfirm: async () => {
         setIsBulkDeletingRows(true);
         let deletedCount = 0;
+        let detailDeletedCount = 0;
         let failedCount = 0;
         for (const rowId of targetRowIds) {
           try {
-            await apiPost<{ success: boolean }>('/api/v1/search/table-browser/delete-row', {
+            const result = await apiPost<DeleteTableBrowserRowResponse>('/api/v1/search/table-browser/delete-row', {
               table_name: selectedTable.table_name,
               row_id: rowId,
             });
             deletedCount += 1;
+            detailDeletedCount += result.detail_deleted || 0;
           } catch {
             failedCount += 1;
           }
         }
         dataRowSelection.deselectAll();
         dispatch(fetchTableBrowserTables());
-        dispatch(fetchTableDataByName({
-          tableName: selectedTable.table_name,
-          tableType: selectedTable.table_type,
-          page,
-          pageSize: dataPageSize,
-        }));
+        refreshSelectedTableData(getDataPageAfterDelete(deletedCount));
         if (deletedCount > 0 && failedCount === 0) {
           dispatch(addNotification({
             type: 'success',
-            message: t('search.browser.bulkDeleteSuccess', { count: deletedCount }),
+            message: detailDeletedCount > 0
+              ? t('search.browser.bulkDeleteHeaderRowsSuccess', { count: deletedCount, detailCount: detailDeletedCount })
+              : t('search.browser.bulkDeleteSuccess', { count: deletedCount }),
           }));
         } else if (deletedCount > 0) {
           dispatch(addNotification({
             type: 'warning',
-            message: t('search.browser.bulkDeletePartial', { deleted: deletedCount, errors: failedCount }),
+            message: detailDeletedCount > 0
+              ? t('search.browser.bulkDeleteHeaderRowsPartial', { deleted: deletedCount, detailCount: detailDeletedCount, errors: failedCount })
+              : t('search.browser.bulkDeletePartial', { deleted: deletedCount, errors: failedCount }),
           }));
         } else {
           dispatch(addNotification({
@@ -918,7 +1019,81 @@ function TableBrowserTab({
         setIsBulkDeletingRows(false);
       },
     });
-  }, [selectedTable, dataRowSelection.selectedCount, dataRowSelection.selectedIds, requestConfirm, dispatch, page, dataPageSize]);
+  }, [selectedTable, dataRowSelection.selectedCount, dataRowSelection.selectedIds, hasLinkedLineTable, requestConfirm, dispatch, getDataPageAfterDelete, refreshSelectedTableData]);
+
+  const handleBulkDeleteTables = useCallback(() => {
+    if (tableListSelection.selectedCount === 0) return;
+
+    const targetTables = Array.from(tableListSelection.selectedIds)
+      .map(id => tableListMap.get(id))
+      .filter((table): table is TableBrowserTable => Boolean(table))
+      .sort((a, b) => {
+        if (a.category_id !== b.category_id) return a.category_id - b.category_id;
+        if (a.table_type !== b.table_type) return a.table_type === 'line' ? -1 : 1;
+        return a.table_name.localeCompare(b.table_name, 'en');
+      });
+
+    if (targetTables.length === 0) return;
+
+    requestConfirm({
+      message: t('search.browser.confirmBulkDeleteTables', { count: targetTables.length }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      severity: 'warning',
+      confirmIcon: Trash2,
+      onConfirm: async () => {
+        setIsBulkDeletingTables(true);
+        let deletedCount = 0;
+        let failedCount = 0;
+        const deletedTableKeys = new Set<string>();
+
+        for (const table of targetTables) {
+          try {
+            await apiPost<{ success: boolean }>('/api/v1/search/table-browser/delete-table', {
+              table_name: table.table_name,
+            });
+            deletedCount += 1;
+            deletedTableKeys.add(getTableKey(table));
+          } catch {
+            failedCount += 1;
+          }
+        }
+
+        tableListSelection.deselectAll();
+
+        if (selectedTable && deletedTableKeys.has(getTableKey(selectedTable))) {
+          const remainingTables = sortedTableBrowserTables.filter(
+            (table) => !deletedTableKeys.has(getTableKey(table))
+          );
+          setSelectedTable(remainingTables[0] || null);
+          setPage(1);
+          setGoToPageInput('');
+          dataRowSelection.deselectAll();
+        }
+
+        dispatch(fetchTableBrowserTables());
+
+        if (deletedCount > 0 && failedCount === 0) {
+          dispatch(addNotification({
+            type: 'success',
+            message: t('search.browser.bulkDeleteTablesSuccess', { count: deletedCount }),
+          }));
+        } else if (deletedCount > 0) {
+          dispatch(addNotification({
+            type: 'warning',
+            message: t('search.browser.bulkDeleteTablesPartial', { deleted: deletedCount, errors: failedCount }),
+          }));
+        } else {
+          dispatch(addNotification({
+            type: 'error',
+            message: t('search.browser.bulkDeleteTablesFailed'),
+          }));
+        }
+
+        setIsBulkDeletingTables(false);
+      },
+    });
+  }, [tableListSelection, tableListMap, requestConfirm, selectedTable, getTableKey, dataRowSelection, dispatch, sortedTableBrowserTables]);
 
   const handleDataPageSizeChange = useCallback((nextPageSize: number) => {
     if (!SEARCH_PAGINATION_PAGE_SIZE_OPTIONS.includes(nextPageSize)) return;
@@ -945,6 +1120,15 @@ function TableBrowserTab({
               <span class="oj-typography-heading-xs">{t('search.browser.tableListTitle')}</span>
               <div class="ics-unified-table-toolbar">
                 <div class="ics-unified-table-toolbar__group">
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--danger"
+                    onClick={handleBulkDeleteTables}
+                    disabled={tableListSelection.selectedCount === 0 || isBulkDeletingTables || isTableListLoading}
+                  >
+                    {isBulkDeletingTables ? <Loader2 size={14} class="ics-spinner" /> : <Trash2 size={14} />}
+                    <span>{t('fileList.bulkDelete')}</span>
+                  </button>
                   <span class="ics-unified-table-toolbar__meta">
                     {t('search.browser.selectedTables', { count: tableListSelection.selectedCount })}
                   </span>
@@ -980,17 +1164,11 @@ function TableBrowserTab({
                               const pageItems = tableListPagination.paginatedItems;
                               const allSelected = tableListSelection.isAllSelected(pageItems);
                               const hasSelectedOnPage = pageItems.some(item =>
-                                tableListSelection.isSelected(`${item.category_id}-${item.table_type}-${item.table_name}`)
+                                tableListSelection.isSelected(getTableKey(item))
                               );
                               el.indeterminate = !allSelected && hasSelectedOnPage;
                             }}
-                            onChange={() => {
-                              if (tableListSelection.isAllSelected(tableListPagination.paginatedItems)) {
-                                tableListSelection.deselectAll();
-                              } else {
-                                tableListSelection.selectAll(tableListPagination.paginatedItems);
-                              }
-                            }}
+                            onChange={handleToggleSelectAllTablesOnPage}
                             aria-label={t('common.selectAll')}
                           />
                         </th>
@@ -1034,7 +1212,7 @@ function TableBrowserTab({
                     </thead>
                     <tbody>
                       {tableListPagination.paginatedItems.map(table => {
-                        const tableKey = `${table.category_id}-${table.table_type}-${table.table_name}`;
+                        const tableKey = getTableKey(table);
                         return (
                           <tr
                             key={tableKey}
@@ -1055,7 +1233,7 @@ function TableBrowserTab({
                               <input
                                 type="checkbox"
                                 checked={tableListSelection.isSelected(tableKey)}
-                                onChange={() => tableListSelection.toggle(tableKey)}
+                                onChange={() => handleToggleTableSelection(table)}
                               />
                             </td>
                             <td>{table.table_name}</td>

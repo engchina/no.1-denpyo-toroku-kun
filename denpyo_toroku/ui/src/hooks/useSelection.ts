@@ -22,6 +22,10 @@ export interface UseSelectionResult<T> {
   isSelected: (id: string) => boolean;
   /** 単一アイテムの選択トグル */
   toggle: (id: string) => void;
+  /** 指定ID群を選択 */
+  selectIds: (ids: Iterable<string>) => void;
+  /** 指定ID群の選択を解除 */
+  deselectIds: (ids: Iterable<string>) => void;
   /** 指定アイテム群をすべて選択（ページ単位で使用） */
   selectAll: (pageItems: T[]) => void;
   /** すべて解除 */
@@ -83,6 +87,34 @@ export function useSelection<T>(
     [maxSelection]
   );
 
+  const selectIds = useCallback(
+    (ids: Iterable<string>) => {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        for (const id of ids) {
+          if (!id || next.has(id)) continue;
+          if (maxSelection !== undefined && next.size >= maxSelection) {
+            break;
+          }
+          next.add(id);
+        }
+        return next;
+      });
+    },
+    [maxSelection]
+  );
+
+  const deselectIds = useCallback((ids: Iterable<string>) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (!id) continue;
+        next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
   const selectAll = useCallback(
     (pageItems: T[]) => {
       const selectableItems = isSelectable
@@ -134,6 +166,8 @@ export function useSelection<T>(
     selectedCount,
     isSelected,
     toggle,
+    selectIds,
+    deselectIds,
     selectAll,
     deselectAll,
     isAllSelected,

@@ -312,7 +312,37 @@ def test_delete_table_browser_row_returns_success_payload(monkeypatch):
 
     assert response.status_code == 200, response.get_json()
     assert calls == [("SLIPS_RAW", "AAABBB==")]
-    assert response.get_json()["data"] == {"success": True, "deleted": 1}
+    assert response.get_json()["data"] == {
+        "success": True,
+        "deleted": 1,
+        "detail_deleted": 0,
+        "table_type": "",
+    }
+
+
+def test_delete_table_browser_header_row_returns_detail_delete_count(monkeypatch):
+    client = _create_client()
+
+    class StubDatabaseService:
+        def delete_table_row_by_rowid(self, table_name, row_id):
+            assert table_name == "RECEIPT_H"
+            assert row_id == "AAABBB=="
+            return {"success": True, "deleted": 1, "detail_deleted": 3, "table_type": "header"}
+
+    monkeypatch.setattr(api_blueprint_module, "DatabaseService", StubDatabaseService)
+
+    response = client.post(
+        "/api/v1/search/table-browser/delete-row",
+        json={"table_name": "RECEIPT_H", "row_id": "AAABBB=="},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["data"] == {
+        "success": True,
+        "deleted": 1,
+        "detail_deleted": 3,
+        "table_type": "header",
+    }
 
 
 def test_delete_table_browser_row_returns_service_validation_error(monkeypatch):

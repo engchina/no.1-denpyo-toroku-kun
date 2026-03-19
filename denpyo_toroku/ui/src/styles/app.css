@@ -5897,38 +5897,6 @@ html[dir="rtl"] .oracle-icon {
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
 }
 
-/* Table name inputs */
-.ics-table-name-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-}
-
-.ics-table-name-field__label {
-    display: block;
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: #4b5563;
-    margin-bottom: 6px;
-}
-
-.ics-table-name-input {
-    width: 100%;
-    padding: 10px 14px;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.88rem;
-    background: #f9fafb;
-    box-sizing: border-box;
-}
-
-.ics-table-name-input:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-}
-
 /* Registration actions bar */
 .ics-registration-actions {
     display: flex;
@@ -6088,10 +6056,6 @@ html[dir="rtl"] .oracle-icon {
 }
 
 @media (max-width: 768px) {
-    .ics-table-name-grid {
-        grid-template-columns: 1fr;
-    }
-
     .ics-registration-reviewLayout {
         grid-template-columns: 1fr;
     }

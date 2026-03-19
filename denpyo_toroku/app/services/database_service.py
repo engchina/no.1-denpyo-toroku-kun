@@ -3720,8 +3720,28 @@ END;"""
             return {"success": False, "message": "不正な row_id 形式です"}
 
         try:
+            relation = self._find_allowed_table_relation(table_name_upper)
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
+                    detail_deleted = 0
+                    if relation.get("table_type") == "header":
+                        cursor.execute(
+                            f"SELECT {_HEADER_ID_COLUMN_NAME} FROM {table_name_upper} WHERE ROWID = CHARTOROWID(:rid)",
+                            {"rid": rowid}
+                        )
+                        header_row = cursor.fetchone()
+                        if not header_row:
+                            return {"success": False, "message": "対象レコードが見つかりません"}
+
+                        header_id = header_row[0]
+                        line_table_name = str(relation.get("line_table_name") or "").upper()
+                        if line_table_name and self._is_safe_table_name(line_table_name):
+                            cursor.execute(
+                                f"DELETE FROM {line_table_name} WHERE {_HEADER_ID_COLUMN_NAME} = :header_id",
+                                {"header_id": header_id}
+                            )
+                            detail_deleted = int(cursor.rowcount or 0)
+
                     cursor.execute(
                         f"DELETE FROM {table_name_upper} WHERE ROWID = CHARTOROWID(:rid)",
                         {"rid": rowid}
@@ -3730,10 +3750,77 @@ END;"""
                 conn.commit()
 
             if deleted > 0:
-                return {"success": True, "deleted": deleted}
+                return {
+                    "success": True,
+                    "deleted": deleted,
+                    "detail_deleted": detail_deleted,
+                    "table_type": relation.get("table_type", ""),
+                }
             return {"success": False, "message": "対象レコードが見つかりません"}
         except Exception as e:
             logger.error("ROWID削除エラー (%s, %s): %s", table_name_upper, rowid, e, exc_info=True)
+            return {"success": False, "message": f"削除エラー: {str(e)}"}
+
+    def _find_allowed_table_relation(self, table_name: str) -> Dict[str, Any]:
+        table_name_upper = (table_name or "").upper()
+        for entry in self.get_allowed_table_names():
+            header_table_name = str(entry.get("header_table_name") or "").upper()
+            line_table_name = str(entry.get("line_table_name") or "").upper()
+            if table_name_upper == header_table_name:
+                return {
+                    "table_type": "header",
+                    "header_table_name": header_table_name,
+                    "line_table_name": line_table_name,
+                    "category_id": int(entry.get("category_id") or 0),
+                    "category_name": entry.get("category_name") or "",
+                }
+            if table_name_upper == line_table_name:
+                return {
+                    "table_type": "line",
+                    "header_table_name": header_table_name,
+                    "line_table_name": line_table_name,
+                    "category_id": int(entry.get("category_id") or 0),
+                    "category_name": entry.get("category_name") or "",
+                }
+        return {
+            "table_type": "",
+            "header_table_name": "",
+            "line_table_name": "",
+            "category_id": 0,
+            "category_name": "",
+        }
+
+    def delete_allowed_table(self, table_name: str) -> Dict[str, Any]:
+        """許可済みテーブルのみ DROP TABLE する"""
+        if not table_name:
+            return {"success": False, "message": "テーブル名が指定されていません"}
+
+        table_name_upper = table_name.upper()
+        allowed = self._get_allowed_table_set()
+        if table_name_upper not in allowed:
+            logger.warning("許可されていないテーブルへの削除試行: %s", table_name)
+            return {"success": False, "message": "許可されていないテーブルです"}
+
+        if not self._is_safe_table_name(table_name_upper):
+            return {"success": False, "message": "不正なテーブル名です"}
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1",
+                        [table_name_upper]
+                    )
+                    table_exists = int(cursor.fetchone()[0] or 0) > 0
+                    if not table_exists:
+                        return {"success": False, "message": "対象テーブルが見つかりません"}
+
+                    cursor.execute(f"DROP TABLE {table_name_upper} PURGE")
+                conn.commit()
+
+            return {"success": True, "table_name": table_name_upper}
+        except Exception as e:
+            logger.error("テーブル削除エラー (%s): %s", table_name_upper, e, exc_info=True)
             return {"success": False, "message": f"削除エラー: {str(e)}"}
 
     def log_activity(self, activity_type: str, description: str,

@@ -242,3 +242,140 @@ def test_get_table_data_serializes_lob_and_memoryview_values(monkeypatch):
             "RAW_BYTES": "<BLOB 2 bytes>",
         }
     ]
+
+
+def test_delete_table_row_by_rowid_cascades_line_rows_when_deleting_header(monkeypatch):
+    service = DatabaseService()
+    executed = []
+    commit_calls = []
+
+    class FakeCursor:
+        def __init__(self):
+            self.rowcount = 0
+            self._fetchone_result = None
+
+        def execute(self, sql, params=None):
+            normalized_sql = " ".join(sql.split())
+            executed.append((normalized_sql, params))
+            if normalized_sql.startswith("SELECT HEADER_ID FROM RECEIPT_H"):
+                self._fetchone_result = ("HDR-001",)
+                self.rowcount = 1
+            elif normalized_sql.startswith("DELETE FROM RECEIPT_L"):
+                self.rowcount = 2
+            elif normalized_sql.startswith("DELETE FROM RECEIPT_H"):
+                self.rowcount = 1
+            else:
+                raise AssertionError(f"unexpected sql: {normalized_sql}")
+
+        def fetchone(self):
+            return self._fetchone_result
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            commit_calls.append(True)
+
+    @contextmanager
+    def fake_get_connection():
+        yield FakeConnection()
+
+    monkeypatch.setattr(service, "get_connection", fake_get_connection)
+    monkeypatch.setattr(service, "_get_allowed_table_set", lambda: {"RECEIPT_H", "RECEIPT_L"})
+    monkeypatch.setattr(
+        service,
+        "get_allowed_table_names",
+        lambda: [
+            {
+                "category_id": 1,
+                "category_name": "領収書",
+                "header_table_name": "RECEIPT_H",
+                "line_table_name": "RECEIPT_L",
+            }
+        ],
+    )
+
+    result = service.delete_table_row_by_rowid("RECEIPT_H", "AAABBB==")
+
+    assert result == {
+        "success": True,
+        "deleted": 1,
+        "detail_deleted": 2,
+        "table_type": "header",
+    }
+    assert commit_calls == [True]
+    assert executed == [
+        ("SELECT HEADER_ID FROM RECEIPT_H WHERE ROWID = CHARTOROWID(:rid)", {"rid": "AAABBB=="}),
+        ("DELETE FROM RECEIPT_L WHERE HEADER_ID = :header_id", {"header_id": "HDR-001"}),
+        ("DELETE FROM RECEIPT_H WHERE ROWID = CHARTOROWID(:rid)", {"rid": "AAABBB=="}),
+    ]
+
+
+def test_delete_table_row_by_rowid_does_not_delete_header_when_deleting_line(monkeypatch):
+    service = DatabaseService()
+    executed = []
+    commit_calls = []
+
+    class FakeCursor:
+        def __init__(self):
+            self.rowcount = 0
+
+        def execute(self, sql, params=None):
+            normalized_sql = " ".join(sql.split())
+            executed.append((normalized_sql, params))
+            if normalized_sql.startswith("DELETE FROM RECEIPT_L"):
+                self.rowcount = 1
+                return
+            raise AssertionError(f"unexpected sql: {normalized_sql}")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            commit_calls.append(True)
+
+    @contextmanager
+    def fake_get_connection():
+        yield FakeConnection()
+
+    monkeypatch.setattr(service, "get_connection", fake_get_connection)
+    monkeypatch.setattr(service, "_get_allowed_table_set", lambda: {"RECEIPT_H", "RECEIPT_L"})
+    monkeypatch.setattr(
+        service,
+        "get_allowed_table_names",
+        lambda: [
+            {
+                "category_id": 1,
+                "category_name": "領収書",
+                "header_table_name": "RECEIPT_H",
+                "line_table_name": "RECEIPT_L",
+            }
+        ],
+    )
+
+    result = service.delete_table_row_by_rowid("RECEIPT_L", "AAABBB==")
+
+    assert result == {
+        "success": True,
+        "deleted": 1,
+        "detail_deleted": 0,
+        "table_type": "line",
+    }
+    assert commit_calls == [True]
+    assert executed == [
+        ("DELETE FROM RECEIPT_L WHERE ROWID = CHARTOROWID(:rid)", {"rid": "AAABBB=="}),
+    ]
