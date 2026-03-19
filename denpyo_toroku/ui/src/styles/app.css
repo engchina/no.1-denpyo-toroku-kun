@@ -7106,11 +7106,16 @@ html[dir="rtl"] .oracle-icon {
     vertical-align: middle !important;
 }
 
-.ics-table__index-col {
+.ics-table th.ics-table__index-col,
+.ics-table td.ics-table__index-col {
     text-align: left !important;
     vertical-align: middle !important;
-    width: 10px;
-    min-width: 10px;
+    width: 1% !important;
+    min-width: 0 !important;
+    max-width: 24px;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    white-space: nowrap !important;
 }
 
 /* form hints & helpers */
