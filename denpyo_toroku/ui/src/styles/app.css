@@ -179,6 +179,10 @@
     /* Gaps */
     --aai-gap-heading-items: 1rem;
     --aai-gap-items: 1.25rem;
+    --aai-page-section-gap: 12px;
+    --aai-card-stack-gap: 12px;
+    --aai-module-title-content-gap: 8px;
+    --aai-supporting-region-gap: 10px;
 
     /* Border Radius */
     --aai-radius-full: 100%;
@@ -1568,7 +1572,7 @@ html[dir="rtl"] .oracle-icon {
 .applicationSettingsView {
     display: flex;
     flex-direction: column;
-    gap: 1.25rem;
+    gap: var(--aai-page-section-gap);
 }
 
 /* アプリケーション設定ページのheroセクションを他ページと統一 */
@@ -1694,7 +1698,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView__description {
-    margin: 0 0 16px 0;
+    margin: 0 0 var(--aai-module-title-content-gap) 0;
     font-size: 0.85rem;
     color: var(--aai-neutral-solid-1);
 }
@@ -1834,7 +1838,7 @@ html[dir="rtl"] .oracle-icon {
 .applicationSettingsView__field {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--aai-module-title-content-gap);
 }
 
 .applicationSettingsView__field--wide {
@@ -1952,7 +1956,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView__actions {
-    margin-top: 14px;
+    margin-top: var(--aai-supporting-region-gap);
     display: flex;
     align-items: center;
     gap: 10px;
@@ -1960,7 +1964,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView__hint {
-    margin: 10px 0 0 0;
+    margin: var(--aai-module-title-content-gap) 0 0 0;
     font-size: 0.82rem;
     color: var(--aai-neutral-solid-1);
 }
@@ -2082,8 +2086,8 @@ html[dir="rtl"] .oracle-icon {
 .applicationSettingsView--model .applicationSettingsView__modelStack {
     display: flex;
     flex-direction: column;
-    gap: 18px;
-    margin-top: 18px;
+    gap: var(--aai-card-stack-gap);
+    margin-top: var(--aai-card-stack-gap);
 }
 
 .applicationSettingsView--model .applicationSettingsView__modelToolbar {
@@ -2486,7 +2490,7 @@ html[dir="rtl"] .oracle-icon {
 .trainView {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: var(--aai-page-section-gap);
     color: var(--aai-neutral-dark-2);
 }
 
@@ -3072,7 +3076,7 @@ html[dir="rtl"] .oracle-icon {
 
 .ics-pagination--top {
     border-bottom: 1px solid var(--aai-neutral-interactive-1);
-    margin-bottom: 12px;
+    margin-bottom: var(--aai-supporting-region-gap);
 }
 
 .ics-pagination--bottom {
@@ -3916,7 +3920,7 @@ html[dir="rtl"] .oracle-icon {
     --ics-warn-border: #f4ca7c;
     --ics-danger-bg: #feeef0;
     --ics-danger-border: #f3a6ae;
-    gap: 1rem;
+    gap: var(--aai-page-section-gap);
     color: var(--ics-text-main);
 }
 
@@ -4310,7 +4314,7 @@ html[dir="rtl"] .oracle-icon {
 .ics-stats--enhanced .ics-ops-grid,
 .ics-model-info--enhanced .ics-ops-grid {
     display: grid;
-    gap: 12px;
+    gap: var(--aai-card-stack-gap);
 }
 
 .ics-dashboard--enhanced .ics-ops-grid--two,
@@ -5278,13 +5282,13 @@ html[dir="rtl"] .oracle-icon {
 
 /* Upload result groups */
 .ics-upload-resultGroup {
-    margin-bottom: 12px;
+    margin-bottom: var(--aai-supporting-region-gap);
 }
 
 .ics-upload-resultGroup__label {
     font-size: 0.85rem;
     font-weight: 600;
-    margin: 0 0 6px 0;
+    margin: 0 0 var(--aai-module-title-content-gap) 0;
     color: #374151;
 }
 
@@ -5350,7 +5354,7 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 12px;
+    margin-bottom: var(--aai-supporting-region-gap);
     padding: 8px 10px;
     border: 1px solid #e4ebf8;
     border-radius: 8px;
@@ -5808,7 +5812,7 @@ html[dir="rtl"] .oracle-icon {
 .ics-dashboard--enhanced .ics-ops-grid--one {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 16px;
+    gap: var(--aai-card-stack-gap);
 }
 
 /* Analysis loading state */
@@ -5942,6 +5946,7 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     align-items: center;
     gap: 8px;
+    margin-bottom: var(--aai-supporting-region-gap);
     padding: 12px 16px;
     background: #fef2f2;
     border: 1px solid #fecaca;
@@ -6199,13 +6204,24 @@ html[dir="rtl"] .oracle-icon {
 /* ================== DATA SEARCH (SCR-006) ================== */
 
 .ics-search-view {
+    display: flex;
+    flex-direction: column;
+    gap: var(--aai-page-section-gap);
     padding-bottom: 20px;
+}
+
+.ics-search-view .ics-ops-hero {
+    padding: 14px 18px;
+}
+
+.ics-search-view .ics-ops-hero__subtitle {
+    margin-top: 4px;
 }
 
 .ics-search-stack {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--aai-card-stack-gap);
 }
 
 .ics-search-tabPanel {
@@ -6369,7 +6385,7 @@ html[dir="rtl"] .oracle-icon {
     align-items: center;
     flex-wrap: wrap;
     gap: 8px 10px;
-    margin-bottom: 12px;
+    margin-bottom: var(--aai-supporting-region-gap);
 }
 
 .ics-search-engineStrip__label {
@@ -6490,7 +6506,7 @@ html[dir="rtl"] .oracle-icon {
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 8px 12px;
-    margin-bottom: 12px;
+    margin-bottom: var(--aai-supporting-region-gap);
     color: #6b7280;
 }
 
@@ -6632,6 +6648,7 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     align-items: center;
     gap: 8px;
+    margin-bottom: var(--aai-supporting-region-gap);
     padding: 12px 16px;
     background: #fef2f2;
     border: 1px solid #fecaca;
@@ -7004,7 +7021,7 @@ html[dir="rtl"] .oracle-icon {
 .ics-unified-table-header {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--aai-module-title-content-gap);
     width: 100%;
 }
 
@@ -7016,7 +7033,7 @@ html[dir="rtl"] .oracle-icon {
     gap: 10px 14px;
     width: 100%;
     border-top: 1px solid #e8edf4;
-    padding-top: 8px;
+    padding-top: var(--aai-module-title-content-gap);
 }
 
 .ics-unified-table-toolbar__group {
@@ -7294,8 +7311,8 @@ html[dir="rtl"] .oracle-icon {
 .ics-table-designer__actions {
     display: flex;
     gap: 8px;
-    margin-top: 4px;
-    margin-bottom: 8px;
+    margin-top: var(--aai-module-title-content-gap);
+    margin-bottom: var(--aai-supporting-region-gap);
 }
 
 .ics-table-designer__row-actions {
@@ -7972,7 +7989,7 @@ html[dir="rtl"] .oracle-icon {
 .applicationSettingsView__promptList {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: var(--aai-card-stack-gap);
     margin-top: 8px;
 }
 
@@ -7994,7 +8011,7 @@ html[dir="rtl"] .oracle-icon {
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    margin-bottom: 6px;
+    margin-bottom: var(--aai-module-title-content-gap);
 }
 
 .applicationSettingsView__promptMeta {
@@ -8045,7 +8062,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView__promptDefaultWrap {
-    margin-bottom: 10px;
+    margin-bottom: var(--aai-module-title-content-gap);
     border: 1px solid var(--aai-neutral-lines-1);
     border-radius: 8px;
     overflow: hidden;
@@ -8086,7 +8103,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView__promptSaveRow {
-    margin-top: 8px;
+    margin-top: var(--aai-supporting-region-gap);
     display: flex;
     justify-content: flex-end;
 }

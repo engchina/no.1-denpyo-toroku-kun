@@ -1,6 +1,6 @@
 /**
  * SideTabBar - 参照（AgentStudio）のレイアウトに合わせた常設サイドナビ。
- * グループ: 伝票登録 / 設定
+ * グループ: 伝票登録 / データ参照 / 設定
  * 参照 MHTML に合わせて Lucide React のアイコンを使用。
  */
 import { useAppSelector, useAppDispatch } from '../../../redux/store';
@@ -21,6 +21,7 @@ import {
   Files,
   Tags,
   Search,
+  Table2,
   MessageSquareText,
   type LucideIcon
 } from 'lucide-react';
@@ -49,6 +50,12 @@ const navGroups: NavGroup[] = [
       { id: 'categoryManagement', nameKey: 'nav.categoryManagement', Icon: Tags, path: APP_ROUTES.categoryManagement },
       { id: 'fileList', nameKey: 'nav.fileList', Icon: FileText, path: APP_ROUTES.fileList },
       { id: 'search', nameKey: 'nav.dataSearch', Icon: Search, path: APP_ROUTES.search }
+    ]
+  },
+  {
+    labelKey: 'nav.section.reference',
+    items: [
+      { id: 'tableBrowser', nameKey: 'nav.tableBrowser', Icon: Table2, path: APP_ROUTES.tableBrowser }
     ]
   },
   {

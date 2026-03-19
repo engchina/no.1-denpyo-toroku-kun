@@ -9,6 +9,7 @@ export const APP_ROUTES = {
   categorySamples: '/category/samples',
   categoryManagement: '/category/management',
   search: '/search',
+  tableBrowser: '/table-browser',
   settingsApplication: '/settings/application',
   settingsOciGenAi: '/settings/oci-genai',
   settingsObjectStorage: '/settings/oci-object-storage',
@@ -25,4 +26,3 @@ export const FEATURE_ROUTES = {
 } as const;
 
 export type FeatureRouteKey = keyof typeof FEATURE_ROUTES;
-

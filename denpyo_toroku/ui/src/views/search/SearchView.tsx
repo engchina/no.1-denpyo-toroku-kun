@@ -1,7 +1,6 @@
 /**
  * SearchView - データ検索画面 (SCR-006)
  * - 自然言語検索 (NL -> SQL)
- * - テーブルブラウザ (直接閲覧)
  */
 import type { ComponentChildren } from 'preact';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
@@ -13,8 +12,6 @@ import {
   nlSearchPollJob,
   fetchTableDataByName,
   clearSearchResults,
-  clearSearchError,
-  setSearchActiveTab,
   setNlSearchQuery,
   setNlSearchCategoryId,
   fetchNlCategorySchema
@@ -30,9 +27,8 @@ import { t } from '../../i18n';
 import { apiPost } from '../../utils/apiUtils';
 import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
 import type { NLSearchResponse, NLSearchJobStatus, SearchableTable, TableBrowseResult, TableBrowserTable, CategorySchema } from '../../types/denpyoTypes';
-import { Search, Database, Copy, Check, Loader2, RefreshCw, Trash2, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronRight, Table2 } from 'lucide-react';
+import { Search, Copy, Check, Loader2, RefreshCw, Trash2, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronRight, Table2 } from 'lucide-react';
 
-type TabType = 'nlSearch' | 'tableBrowser';
 const SEARCH_PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
 const SEARCH_NL_RESULT_QUERY_SCOPE = 'sbnr';
 const SEARCH_TABLE_LIST_QUERY_SCOPE = 'sbtl';
@@ -76,17 +72,12 @@ export function SearchView() {
   const {
     searchableTables,
     isSearchableTablesLoading,
-    tableBrowserTables,
-    isTableBrowserTablesLoading,
     nlSearchResult,
     isNLSearching,
     nlSearchAsyncJobId,
     nlSearchAsyncJobStatus,
     nlSearchAsyncJobStartedAt,
-    tableBrowseResult,
-    isTableBrowsing,
     searchError,
-    searchActiveTab: activeTab,
     nlSearchQuery,
     nlSearchCategoryId,
     nlCategorySchema,
@@ -100,13 +91,7 @@ export function SearchView() {
   // 結果のクリアは「新しい検索開始時」と「カテゴリ変更時」のみ行う
   useEffect(() => {
     dispatch(fetchSearchableTables());
-    dispatch(fetchTableBrowserTables());
   }, [dispatch]);
-
-  const handleTabChange = (tab: TabType) => {
-    dispatch(setSearchActiveTab(tab));
-    dispatch(clearSearchError());
-  };
 
   return (
     <div class="ics-dashboard ics-dashboard--enhanced ics-search-view">
@@ -119,35 +104,6 @@ export function SearchView() {
         </div>
       </section>
 
-      <section class="ics-ops-grid ics-ops-grid--one">
-        <div class="ics-card ics-ops-panel ics-search-tabPanel">
-          <div class="ics-card-body ics-search-tabPanel__body">
-            <div class="ics-search-tabs" role="tablist" aria-label={t('search.title')}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeTab === 'nlSearch'}
-                class={`ics-search-tab ${activeTab === 'nlSearch' ? 'ics-search-tab--active' : ''}`}
-                onClick={() => handleTabChange('nlSearch')}
-              >
-                <Search size={16} />
-                <span>{t('search.tab.nlSearch')}</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeTab === 'tableBrowser'}
-                class={`ics-search-tab ${activeTab === 'tableBrowser' ? 'ics-search-tab--active' : ''}`}
-                onClick={() => handleTabChange('tableBrowser')}
-              >
-                <Database size={16} />
-                <span>{t('search.tab.tableBrowser')}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {searchError && (
         <section class="ics-ops-grid ics-ops-grid--one">
           <div class="ics-error-message">
@@ -156,28 +112,19 @@ export function SearchView() {
         </section>
       )}
 
-      {activeTab === 'nlSearch' ? (
-        <NLSearchTab
-          searchableTables={searchableTables}
-          isLoading={isNLSearching}
-          isTablesLoading={isSearchableTablesLoading}
-          result={nlSearchResult}
-          persistedQuery={nlSearchQuery}
-          persistedCategoryId={nlSearchCategoryId}
-          asyncJobId={nlSearchAsyncJobId}
-          asyncJobStatus={nlSearchAsyncJobStatus}
-          asyncJobStartedAt={nlSearchAsyncJobStartedAt}
-          categorySchema={nlCategorySchema}
-          isCategorySchemaLoading={isNlCategorySchemaLoading}
-        />
-      ) : (
-        <TableBrowserTab
-          tableBrowserTables={tableBrowserTables}
-          isLoading={isTableBrowsing}
-          isTableListLoading={isTableBrowserTablesLoading}
-          result={tableBrowseResult}
-        />
-      )}
+      <NLSearchTab
+        searchableTables={searchableTables}
+        isLoading={isNLSearching}
+        isTablesLoading={isSearchableTablesLoading}
+        result={nlSearchResult}
+        persistedQuery={nlSearchQuery}
+        persistedCategoryId={nlSearchCategoryId}
+        asyncJobId={nlSearchAsyncJobId}
+        asyncJobStatus={nlSearchAsyncJobStatus}
+        asyncJobStartedAt={nlSearchAsyncJobStartedAt}
+        categorySchema={nlCategorySchema}
+        isCategorySchemaLoading={isNlCategorySchemaLoading}
+      />
     </div>
   );
 }
@@ -596,7 +543,7 @@ interface TableBrowserTabProps {
   result: TableBrowseResult | null;
 }
 
-function TableBrowserTab({
+export function TableBrowserTab({
   tableBrowserTables,
   isLoading,
   isTableListLoading,

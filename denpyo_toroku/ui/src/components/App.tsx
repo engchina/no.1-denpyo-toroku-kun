@@ -25,6 +25,7 @@ const ListView = lazy(() => import('../views/fileList/ListView').then(m => ({ de
 const RegistrationView = lazy(() => import('../views/registration/RegistrationView').then(m => ({ default: m.RegistrationView })));
 const CategoryView = lazy(() => import('../views/category/CategoryView').then(m => ({ default: m.CategoryView })));
 const SearchView = lazy(() => import('../views/search/SearchView').then(m => ({ default: m.SearchView })));
+const TableBrowserView = lazy(() => import('../views/tableBrowser/TableBrowserView').then(m => ({ default: m.TableBrowserView })));
 import { NotificationContainer } from './NotificationContainer';
 import { LoginView } from '../views/login/LoginView';
 import { setAuthenticated, setUserName } from '../redux/slices/applicationSlice';
@@ -145,6 +146,7 @@ function AppRoutes() {
           <Route path={APP_ROUTES.categorySamples} element={<CategoryView mode="samples" />} />
           <Route path={APP_ROUTES.categoryManagement} element={<CategoryView mode="management" />} />
           <Route path={APP_ROUTES.search} element={<SearchView />} />
+          <Route path={APP_ROUTES.tableBrowser} element={<TableBrowserView />} />
           <Route path={APP_ROUTES.settingsApplication} element={<ApplicationSettings />} />
           <Route path={APP_ROUTES.settingsOciGenAi} element={<OciGenAiModelSettings />} />
           <Route path={APP_ROUTES.settingsObjectStorage} element={<OciObjectStorageSettings />} />
