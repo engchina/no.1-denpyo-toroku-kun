@@ -380,7 +380,7 @@ export function DatabaseSettings() {
             </label>
           </div>
 
-          <div class="applicationSettingsView__actions" style="margin-bottom: 20px;">
+          <div class="applicationSettingsView__actions">
             <div class="ics-action-bar">
               <button
                 class="ics-ops-btn ics-ops-btn--primary"

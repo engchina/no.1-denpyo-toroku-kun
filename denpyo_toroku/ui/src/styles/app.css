@@ -1704,7 +1704,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView__adbInfo {
-    margin-top: 16px;
+    margin-top: var(--aai-supporting-region-gap);
     padding: 16px;
     background-color: var(--aai-neutral-light-2);
     border-radius: 8px;
@@ -1727,7 +1727,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView__operationResults {
-    margin-top: 20px;
+    margin-top: var(--aai-card-stack-gap);
     border: 1px solid var(--aai-neutral-lines-1);
     border-radius: 8px;
     overflow: hidden;
@@ -1873,14 +1873,14 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView__privateKeySection {
-    margin-top: 16px;
+    margin-top: var(--aai-card-stack-gap);
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
 .applicationSettingsView__walletSection {
-    margin-top: 16px;
+    margin-top: var(--aai-card-stack-gap);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -1980,7 +1980,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .applicationSettingsView__detailsGrid {
-    margin-top: 12px;
+    margin-top: var(--aai-supporting-region-gap);
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
@@ -5102,7 +5102,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .ics-upload-selectedHeader {
-    gap: 14px;
+    gap: var(--aai-supporting-region-gap);
 }
 
 .ics-upload-selectedHeader__main {
@@ -5441,11 +5441,11 @@ html[dir="rtl"] .oracle-icon {
 /* ==================== File List View (SCR-002) ==================== */
 
 .ics-fileListView .ics-ops-hero__meta {
-    margin-top: 12px;
+    margin-top: var(--aai-supporting-region-gap);
 }
 
 .ics-fileListView__heroStats {
-    margin-top: 12px;
+    margin-top: var(--aai-supporting-region-gap);
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
@@ -6661,7 +6661,7 @@ html[dir="rtl"] .oracle-icon {
 .ics-nl-results {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: var(--aai-card-stack-gap);
 }
 
 .ics-nl-results .ics-form-group {
