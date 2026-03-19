@@ -6035,11 +6035,6 @@ html[dir="rtl"] .oracle-icon {
     box-shadow: none;
 }
 
-.ics-registration-lineToolbar {
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: 12px;
-}
 
 .ics-registration-rowActionCell {
     width: 1%;
@@ -6070,6 +6065,11 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .ics-registration-confirm {
+    display: flex;
+    align-items: center;
+    width: fit-content;
+    max-width: 100%;
+    margin-left: auto;
     background: #f8fafc;
     border: 1px solid #e2e8f0;
     border-radius: 8px;

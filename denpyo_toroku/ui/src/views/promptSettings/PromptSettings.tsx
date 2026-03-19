@@ -8,17 +8,12 @@ import { t } from '../../i18n';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 
 const PROMPT_KEY_ORDER = [
-  'ocr_output_rules',
-  'structured_data_reading',
-  'selection_schema_design',
-  'classify_invoice',
-  'extract_data_value_rules',
-  'extract_text_value_rules',
-  'extract_schema_completeness',
-  'extract_schema_oracle_design',
-  'generate_sql_requirements',
-  'suggest_ddl_rules',
-  'text_to_sql_constraints',
+  'ocr_output_rules',           // 1. 伝票アップロード
+  'generate_sql_requirements',  // 2. 分類用サンプル伝票
+  'selection_schema_design',    // 2. 分類用サンプル伝票
+  'extract_text_value_rules',   // 4. 本登録用伝票
+  'structured_data_reading',    // 4. 本登録用伝票
+  'text_to_sql_constraints',    // 5. データ検索
 ] as const;
 
 type PromptKey = typeof PROMPT_KEY_ORDER[number];
