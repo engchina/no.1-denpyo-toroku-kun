@@ -4933,6 +4933,60 @@ def get_searchable_tables():
         return jsonify(g.response.get_result()), 500
 
 
+@api_blueprint.route("/api/v1/search/categories/<int:category_id>/schema", methods=["GET"])
+def get_category_schema_for_nl_search(category_id: int):
+    """NL検索用カテゴリのテーブルスキーマ（論理名付き）を取得"""
+    try:
+        db_service = DatabaseService()
+        schema = db_service.get_category_table_schema(category_id)
+        if not schema:
+            g.response.add_error_message("スキーマ情報が見つかりません")
+            return jsonify(g.response.get_result()), 404
+
+        category_name = schema.get("category_name", "")
+
+        def _build_table_info(table_name: str, logical_name: str, columns: list) -> dict:
+            return {
+                "table_name": table_name,
+                "logical_name": logical_name,
+                "columns": [
+                    {
+                        "column_name": col["column_name"],
+                        "logical_name": col.get("comment") or col["column_name"],
+                        "data_type": col.get("data_type", ""),
+                        "nullable": col.get("nullable", "Y"),
+                    }
+                    for col in columns
+                    if col.get("column_name") and col["column_name"] not in ("HEADER_ID", "LINE_ID", "ROW_ID_META")
+                ],
+            }
+
+        header_info = _build_table_info(
+            schema["header_table_name"],
+            f"{category_name}ヘッダー",
+            schema.get("header_columns", []),
+        )
+        result = {
+            "category_id": category_id,
+            "category_name": category_name,
+            "header": header_info,
+            "line": None,
+        }
+        if schema.get("line_table_name") and schema.get("line_columns"):
+            result["line"] = _build_table_info(
+                schema["line_table_name"],
+                f"{category_name}明細",
+                schema.get("line_columns", []),
+            )
+
+        g.response.set_data(result)
+        return jsonify(g.response.get_result())
+    except Exception as e:
+        logging.error("カテゴリスキーマ取得エラー (id=%s): %s", category_id, e, exc_info=True)
+        g.response.add_error_message(f"スキーマ取得に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
+
+
 @api_blueprint.route("/api/v1/search/table-browser/tables", methods=["GET"])
 def get_table_browser_tables():
     """テーブルブラウザ用のテーブル一覧を取得"""

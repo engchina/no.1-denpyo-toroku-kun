@@ -6802,6 +6802,196 @@ html[dir="rtl"] .oracle-icon {
     margin-left: auto;
 }
 
+/* ================== Schema Panel (NL Search) ================== */
+
+.ics-schema-panel {
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    background: #f8fafc;
+    overflow: hidden;
+}
+
+.ics-schema-panel__header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    background: #eef2f7;
+    border-bottom: 1px solid #e2e8f0;
+    color: #475569;
+}
+
+.ics-schema-panel__title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #334155;
+}
+
+.ics-schema-panel__hint {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-left: 2px;
+}
+
+.ics-schema-panel__loader {
+    margin-left: auto;
+    color: #94a3b8;
+}
+
+.ics-schema-panel__empty {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    padding: 10px 14px;
+    margin: 0;
+}
+
+/* 2カラムグリッド */
+.ics-schema-panel__cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 0;
+}
+
+/* 明細なし: 左半分のみ */
+.ics-schema-panel__cols--half {
+    grid-template-columns: 1fr 1fr;
+}
+
+.ics-schema-panel__col {
+    padding: 8px 10px;
+    overflow: auto;
+    max-height: 220px;
+}
+
+/* 左右の区切り線 */
+.ics-schema-panel__cols .ics-schema-panel__col + .ics-schema-panel__col {
+    border-left: 1px solid #e2e8f0;
+}
+
+/* テーブル見出し行 */
+.ics-schema-table__header {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 2px;
+}
+
+.ics-schema-table__toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    color: #64748b;
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.1s;
+}
+
+.ics-schema-table__toggle:hover {
+    background: #e2e8f0;
+    color: #334155;
+}
+
+.ics-schema-table__name {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    background: #fff;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #1e40af;
+    cursor: pointer;
+    transition: all 0.12s;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ics-schema-table__name:hover:not(:disabled) {
+    background: #dbeafe;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.ics-schema-table__name:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* カラムリスト */
+.ics-schema-columns {
+    list-style: none;
+    margin: 0 0 4px 22px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.ics-schema-column {
+    display: flex;
+}
+
+.ics-schema-column__btn {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 2px 6px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    text-align: left;
+    transition: all 0.1s;
+    min-width: 0;
+}
+
+.ics-schema-column__btn:hover:not(:disabled) {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+}
+
+.ics-schema-column__btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.ics-schema-column__logical {
+    color: #1e40af;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.ics-schema-column__physical {
+    color: #94a3b8;
+    font-size: 0.72rem;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 840px) {
+    .ics-schema-panel__cols,
+    .ics-schema-panel__cols--half {
+        grid-template-columns: 1fr;
+    }
+
+    .ics-schema-panel__cols .ics-schema-panel__col + .ics-schema-panel__col {
+        border-left: none;
+        border-top: 1px solid #e2e8f0;
+    }
+}
+
 @media (max-width: 840px) {
     .ics-search-controls-card {
         padding: 14px;

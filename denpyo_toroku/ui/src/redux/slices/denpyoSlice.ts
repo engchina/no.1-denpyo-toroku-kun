@@ -30,7 +30,8 @@ import type {
   CategoryAnalysisResult,
   CategoryCreateRequest,
   CategoryCreateResponse,
-  StoredAnalysisResultResponse
+  StoredAnalysisResultResponse,
+  CategorySchema
 } from '../../types/denpyoTypes';
 import { apiGet, apiPost, apiPostWithTimeout, apiUpload, apiDelete, apiPut, apiPatch } from '../../utils/apiUtils';
 
@@ -87,6 +88,8 @@ const initialState: DenpyoSliceState = {
   searchActiveTab: 'nlSearch' as 'nlSearch' | 'tableBrowser',
   nlSearchQuery: '',
   nlSearchCategoryId: undefined,
+  nlCategorySchema: null,
+  isNlCategorySchemaLoading: false,
   error: null
 };
 
@@ -248,6 +251,13 @@ export const fetchSearchableTables = createAsyncThunk(
   async () => {
     const res = await apiGet<{ tables: SearchableTable[] }>('/api/v1/search/tables');
     return res.tables;
+  }
+);
+
+export const fetchNlCategorySchema = createAsyncThunk(
+  'denpyo/fetchNlCategorySchema',
+  async (categoryId: number) => {
+    return await apiGet<CategorySchema>(`/api/v1/search/categories/${categoryId}/schema`);
   }
 );
 
@@ -697,6 +707,20 @@ const denpyoSlice = createSlice({
       .addCase(fetchSearchableTables.rejected, (state, action) => {
         state.isSearchableTablesLoading = false;
         state.searchError = action.error.message || '検索可能テーブルの取得に失敗しました';
+      });
+
+    builder
+      .addCase(fetchNlCategorySchema.pending, (state) => {
+        state.isNlCategorySchemaLoading = true;
+        state.nlCategorySchema = null;
+      })
+      .addCase(fetchNlCategorySchema.fulfilled, (state, action) => {
+        state.isNlCategorySchemaLoading = false;
+        state.nlCategorySchema = action.payload;
+      })
+      .addCase(fetchNlCategorySchema.rejected, (state) => {
+        state.isNlCategorySchemaLoading = false;
+        state.nlCategorySchema = null;
       });
 
     builder

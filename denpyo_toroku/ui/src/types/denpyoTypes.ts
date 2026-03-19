@@ -351,6 +351,26 @@ export interface TableBrowserTable {
   last_analyzed: string;
 }
 
+export interface CategorySchemaColumn {
+  column_name: string;
+  logical_name: string;
+  data_type: string;
+  nullable: string;
+}
+
+export interface CategorySchemaTable {
+  table_name: string;
+  logical_name: string;
+  columns: CategorySchemaColumn[];
+}
+
+export interface CategorySchema {
+  category_id: number;
+  category_name: string;
+  header: CategorySchemaTable;
+  line: CategorySchemaTable | null;
+}
+
 export interface NLSearchRequest {
   query: string;
   category_id: number;
@@ -474,6 +494,8 @@ export interface DenpyoSliceState {
   searchActiveTab: 'nlSearch' | 'tableBrowser';
   nlSearchQuery: string;
   nlSearchCategoryId: number | undefined;
+  nlCategorySchema: CategorySchema | null;
+  isNlCategorySchemaLoading: boolean;
 
   // 共通
   error: string | null;

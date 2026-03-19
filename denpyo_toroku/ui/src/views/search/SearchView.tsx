@@ -16,7 +16,8 @@ import {
   clearSearchError,
   setSearchActiveTab,
   setNlSearchQuery,
-  setNlSearchCategoryId
+  setNlSearchCategoryId,
+  fetchNlCategorySchema
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import Pagination from '../../components/Pagination';
@@ -27,8 +28,8 @@ import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
 import { apiPost } from '../../utils/apiUtils';
 import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
-import type { NLSearchResponse, NLSearchJobStatus, SearchableTable, TableBrowseResult, TableBrowserTable } from '../../types/denpyoTypes';
-import { Search, Database, Copy, Check, Loader2, RefreshCw, Trash2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import type { NLSearchResponse, NLSearchJobStatus, SearchableTable, TableBrowseResult, TableBrowserTable, CategorySchema } from '../../types/denpyoTypes';
+import { Search, Database, Copy, Check, Loader2, RefreshCw, Trash2, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronRight, Table2 } from 'lucide-react';
 
 type TabType = 'nlSearch' | 'tableBrowser';
 const SEARCH_PAGINATION_PAGE_SIZE_OPTIONS = [20, 50, 100];
@@ -86,7 +87,9 @@ export function SearchView() {
     searchError,
     searchActiveTab: activeTab,
     nlSearchQuery,
-    nlSearchCategoryId
+    nlSearchCategoryId,
+    nlCategorySchema,
+    isNlCategorySchemaLoading
   } = useAppSelector(state => state.denpyo);
 
   // Load searchable tables on mount
@@ -163,6 +166,8 @@ export function SearchView() {
           asyncJobId={nlSearchAsyncJobId}
           asyncJobStatus={nlSearchAsyncJobStatus}
           asyncJobStartedAt={nlSearchAsyncJobStartedAt}
+          categorySchema={nlCategorySchema}
+          isCategorySchemaLoading={isNlCategorySchemaLoading}
         />
       ) : (
         <TableBrowserTab
@@ -190,15 +195,18 @@ interface NLSearchTabProps {
   asyncJobId: string | null;
   asyncJobStatus: NLSearchJobStatus | null;
   asyncJobStartedAt: number | null;
+  categorySchema: CategorySchema | null;
+  isCategorySchemaLoading: boolean;
 }
 
-function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, persistedQuery, persistedCategoryId, asyncJobId, asyncJobStatus, asyncJobStartedAt }: NLSearchTabProps) {
+function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, persistedQuery, persistedCategoryId, asyncJobId, asyncJobStatus, asyncJobStartedAt, categorySchema, isCategorySchemaLoading }: NLSearchTabProps) {
   const dispatch = useAppDispatch();
   const initialSearchParams = getCurrentSearchParams();
   const query = persistedQuery;
   const categoryId = persistedCategoryId;
   const setQuery = (value: string) => dispatch(setNlSearchQuery(value));
   const setCategoryId = (value: number | undefined) => dispatch(setNlSearchCategoryId(value));
+  const queryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [copied, setCopied] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -259,6 +267,13 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
     setScopedValue(params, SEARCH_NL_RESULT_QUERY_SCOPE, 'ps', nlResultPageSize);
     replaceSearchParams(params);
   }, [nlResultPagination.currentPage, nlResultPageSize]);
+
+  // カテゴリ変更時にスキーマを取得
+  useEffect(() => {
+    if (categoryId !== undefined) {
+      dispatch(fetchNlCategorySchema(categoryId));
+    }
+  }, [dispatch, categoryId]);
 
   // カテゴリ変更時のみ結果をクリアする（初回マウント時はスキップ）
   // 初回マウント時にクリアすると、画面遷移後の復帰時に非同期ジョブ状態が消えてしまう
@@ -339,6 +354,24 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
     }
   }, [result]);
 
+  // スキーマパネルのクリックでクエリに挿入
+  const handleInsertSchemaText = useCallback((text: string) => {
+    const el = queryTextareaRef.current;
+    if (!el) {
+      setQuery(query + text);
+      return;
+    }
+    const start = el.selectionStart ?? query.length;
+    const end = el.selectionEnd ?? query.length;
+    const next = query.slice(0, start) + text + query.slice(end);
+    setQuery(next);
+    // 次のレンダリング後にカーソル位置を復元
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(start + text.length, start + text.length);
+    });
+  }, [query, setQuery]);
+
   const noTables = !isTablesLoading && searchableTables.length === 0;
 
   const asyncStatusLabel = asyncJobStatus === 'running'
@@ -384,10 +417,21 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
                 )}
               </div>
 
+              {/* スキーマパネル */}
+              {selectedCategory && (
+                <SchemaPanel
+                  schema={categorySchema}
+                  isLoading={isCategorySchemaLoading}
+                  onInsert={handleInsertSchemaText}
+                  disabled={noTables || isLoading}
+                />
+              )}
+
               {/* Query input */}
               <div class="ics-form-group">
                 <label class="ics-form-label">{t('search.nl.queryLabel')}</label>
                 <textarea
+                  ref={queryTextareaRef}
                   class="ics-form-textarea ics-search-query"
                   placeholder={t('search.nl.queryPlaceholder')}
                   value={query}
@@ -1275,6 +1319,107 @@ function ResultsTable({
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Schema Panel (NL Search用 テーブル/カラム論理名クリック挿入)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SchemaPanelProps {
+  schema: CategorySchema | null;
+  isLoading: boolean;
+  onInsert: (text: string) => void;
+  disabled: boolean;
+}
+
+function SchemaPanel({ schema, isLoading, onInsert, disabled }: SchemaPanelProps) {
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+
+  const toggleTable = (tableLogicalName: string) => {
+    setExpandedTables(prev => {
+      const next = new Set(prev);
+      if (next.has(tableLogicalName)) {
+        next.delete(tableLogicalName);
+      } else {
+        next.add(tableLogicalName);
+      }
+      return next;
+    });
+  };
+
+  const renderTablePane = (tbl: CategorySchema['header']) => {
+    const isExpanded = expandedTables.has(tbl.logical_name);
+    return (
+      <div class="ics-schema-table">
+        <div class="ics-schema-table__header">
+          <button
+            type="button"
+            class="ics-schema-table__toggle"
+            onClick={() => toggleTable(tbl.logical_name)}
+            aria-expanded={isExpanded}
+          >
+            {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </button>
+          <button
+            type="button"
+            class="ics-schema-table__name"
+            onClick={() => !disabled && onInsert(`"${tbl.logical_name}"`)}
+            disabled={disabled}
+            title={tbl.table_name}
+          >
+            {tbl.logical_name}
+          </button>
+        </div>
+
+        {isExpanded && (
+          <ul class="ics-schema-columns">
+            {tbl.columns.map((col) => (
+              <li key={col.column_name} class="ics-schema-column">
+                <button
+                  type="button"
+                  class="ics-schema-column__btn"
+                  onClick={() => !disabled && onInsert(`"${tbl.logical_name}"."${col.logical_name}"`)}
+                  disabled={disabled}
+                  title={col.column_name}
+                >
+                  <span class="ics-schema-column__logical">{col.logical_name}</span>
+                  <span class="ics-schema-column__physical">{col.column_name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div class="ics-schema-panel">
+      <div class="ics-schema-panel__header">
+        <Table2 size={14} />
+        <span class="ics-schema-panel__title">{t('search.nl.schema.title')}</span>
+        <span class="ics-schema-panel__hint">{t('search.nl.schema.hint')}</span>
+        {isLoading && <Loader2 size={13} class="ics-spinner ics-schema-panel__loader" />}
+      </div>
+
+      {!isLoading && !schema && (
+        <p class="ics-schema-panel__empty">{t('search.nl.schema.empty')}</p>
+      )}
+
+      {schema && (
+        <div class={`ics-schema-panel__cols ${schema.line ? '' : 'ics-schema-panel__cols--half'}`}>
+          <div class="ics-schema-panel__col">
+            {renderTablePane(schema.header)}
+          </div>
+          {schema.line && (
+            <div class="ics-schema-panel__col">
+              {renderTablePane(schema.line)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
