@@ -2,8 +2,8 @@ import { APP_ROUTES } from '../constants/routes';
 
 export type QueryPaginationScope = 'fl' | 'cs' | 'cm' | 'cmh' | 'cml' | 'sbnr' | 'sbtl' | 'sbdp';
 
-type ScopeKey = 'p' | 'ps' | 'status';
-const PAGINATION_SCOPE_KEYS: ScopeKey[] = ['p', 'ps', 'status'];
+type ScopeKey = 'p' | 'ps';
+const PAGINATION_SCOPE_KEYS: ScopeKey[] = ['p', 'ps'];
 
 const ALL_SCOPES: QueryPaginationScope[] = ['fl', 'cs', 'cm', 'cmh', 'cml', 'sbnr', 'sbtl', 'sbdp'];
 

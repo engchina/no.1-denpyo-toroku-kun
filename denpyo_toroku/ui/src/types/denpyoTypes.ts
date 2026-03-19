@@ -430,7 +430,6 @@ export interface FileListState {
   page: number;
   pageSize: number;
   totalPages: number;
-  statusFilter: FileStatus | null;
 }
 
 export interface DenpyoSliceState {

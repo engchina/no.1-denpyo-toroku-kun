@@ -1,6 +1,6 @@
 /**
  * ListView - 伝票ファイル一覧画面 (SCR-002)
- * テーブル + ステータスフィルタ + ページング + 削除
+ * テーブル + ページング + 削除
  */
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
@@ -12,8 +12,7 @@ import {
   fetchAnalysisResult,
   fetchCategories,
   setFileListPage,
-  setFileListPageSize,
-  setFileListStatusFilter
+  setFileListPageSize
 } from '../../redux/slices/denpyoSlice';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import { useNavigate } from 'react-router-dom';
@@ -21,7 +20,7 @@ import { APP_ROUTES } from '../../constants/routes';
 import Pagination from '../../components/Pagination';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
 import { t } from '../../i18n';
-import { clearLegacyFileListParams, getCurrentSearchParams, readScopedNumber, readScopedString, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
+import { clearLegacyFileListParams, getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
 import type { DenpyoFile, FileStatus } from '../../types/denpyoTypes';
 import {
   RefreshCw,
@@ -61,14 +60,6 @@ function formatFileSize(bytes: number | null | undefined): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-const STATUS_OPTIONS: { value: FileStatus | ''; labelKey: Parameters<typeof t>[0] }[] = [
-  { value: '', labelKey: 'fileList.filter.all' },
-  { value: 'UPLOADED', labelKey: 'fileList.status.uploaded' },
-  { value: 'ANALYZING', labelKey: 'fileList.status.analyzing' },
-  { value: 'ANALYZED', labelKey: 'fileList.status.analyzed' },
-  { value: 'REGISTERED', labelKey: 'fileList.status.registered' },
-  { value: 'ERROR', labelKey: 'fileList.status.error' }
-];
 const FILE_LIST_PAGE_SIZE_OPTIONS = [20, 50, 100];
 const FILE_LIST_QUERY_SCOPE = 'fl';
 
@@ -127,7 +118,7 @@ function canAnalyzeFile(file: Pick<DenpyoFile, 'status' | 'can_retry_analysis'>)
 export function ListView() {
   const dispatch = useAppDispatch();
   const { requestConfirm, confirmToast } = useToastConfirm();
-  const { files, total, page, pageSize, totalPages, statusFilter } = useAppSelector(
+  const { files, total, page, pageSize, totalPages } = useAppSelector(
     state => state.denpyo.fileList
   );
   const isLoading = useAppSelector(state => state.denpyo.isFileListLoading);
@@ -147,8 +138,8 @@ export function ListView() {
   const [isQueryReady, setIsQueryReady] = useState(false);
 
   const loadFiles = useCallback(() => {
-    dispatch(fetchFileList({ page, pageSize, status: statusFilter, uploadKind: 'raw' }));
-  }, [dispatch, page, pageSize, statusFilter]);
+    dispatch(fetchFileList({ page, pageSize, uploadKind: 'raw' }));
+  }, [dispatch, page, pageSize]);
 
   useEffect(() => {
     if (!isQueryReady) return;
@@ -172,16 +163,11 @@ export function ListView() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = getCurrentSearchParams();
-    const rawStatus = readScopedString(params, FILE_LIST_QUERY_SCOPE, 'status') || params.get('file_status');
     const rawPage = readScopedNumber(params, FILE_LIST_QUERY_SCOPE, 'p', parseInt(params.get('file_page') || '1', 10));
     const rawPageSize = readScopedNumber(params, FILE_LIST_QUERY_SCOPE, 'ps', parseInt(params.get('file_page_size') || '20', 10));
-    const nextStatus = STATUS_OPTIONS.some(opt => opt.value === rawStatus && rawStatus !== '') ? rawStatus as FileStatus : null;
     const nextPage = Number.isNaN(rawPage) ? null : rawPage;
     const nextPageSize = Number.isNaN(rawPageSize) ? null : rawPageSize;
 
-    if (nextStatus !== null) {
-      dispatch(setFileListStatusFilter(nextStatus));
-    }
     if (typeof nextPageSize === 'number' && FILE_LIST_PAGE_SIZE_OPTIONS.includes(nextPageSize)) {
       dispatch(setFileListPageSize(nextPageSize));
     }
@@ -193,9 +179,6 @@ export function ListView() {
     if (typeof nextPageSize === 'number' && FILE_LIST_PAGE_SIZE_OPTIONS.includes(nextPageSize)) {
       setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'ps', nextPageSize);
     }
-    if (nextStatus) {
-      setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'status', nextStatus);
-    }
     replaceSearchParams(params);
     setIsQueryReady(true);
   }, [dispatch]);
@@ -205,10 +188,9 @@ export function ListView() {
     const params = getCurrentSearchParams();
     setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'p', page);
     setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'ps', pageSize);
-    setScopedValue(params, FILE_LIST_QUERY_SCOPE, 'status', statusFilter || null);
     clearLegacyFileListParams(params);
     replaceSearchParams(params);
-  }, [isQueryReady, page, pageSize, statusFilter]);
+  }, [isQueryReady, page, pageSize]);
 
   useEffect(() => {
     const currentIds = new Set(files.map(f => String(f.file_id)));
@@ -327,11 +309,6 @@ export function ListView() {
       }));
     }
   }, [dispatch, navigate]);
-
-  const handleStatusChange = useCallback((e: Event) => {
-    const value = (e.target as HTMLSelectElement).value;
-    dispatch(setFileListStatusFilter(value || null));
-  }, [dispatch]);
 
   const handlePageChange = useCallback((newPage: number) => {
     dispatch(setFileListPage(newPage));
@@ -511,7 +488,7 @@ export function ListView() {
         </div>
       </section>
 
-      {/* フィルタ + テーブル */}
+      {/* テーブル */}
       <section class="ics-ops-grid ics-ops-grid--one">
         <div class="ics-card ics-ops-panel">
           <div class="ics-card-header ics-card-header--table-toolbar">
@@ -534,17 +511,6 @@ export function ListView() {
                   </span>
                 </div>
                 <div class="ics-unified-table-toolbar__group ics-unified-table-toolbar__group--secondary">
-                  <select
-                    class="ics-select"
-                    value={statusFilter || ''}
-                    onChange={handleStatusChange}
-                    disabled={isLoading || isDeleting}
-                    aria-label={t('fileList.filter.all')}
-                  >
-                    {STATUS_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
-                    ))}
-                  </select>
                   <button
                     class="ics-ops-btn ics-ops-btn--ghost"
                     onClick={loadFiles}

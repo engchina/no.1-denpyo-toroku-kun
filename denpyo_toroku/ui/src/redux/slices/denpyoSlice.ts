@@ -47,8 +47,7 @@ const initialState: DenpyoSliceState = {
     total: 0,
     page: 1,
     pageSize: 20,
-    totalPages: 0,
-    statusFilter: null
+    totalPages: 0
   },
   isFileListLoading: false,
   isDeleting: false,
@@ -333,10 +332,6 @@ const denpyoSlice = createSlice({
     },
     setFileListPageSize(state, action) {
       state.fileList.pageSize = action.payload;
-      state.fileList.page = 1;
-    },
-    setFileListStatusFilter(state, action) {
-      state.fileList.statusFilter = action.payload;
       state.fileList.page = 1;
     },
     clearSearchResults(state) {
@@ -811,6 +806,6 @@ const denpyoSlice = createSlice({
   }
 });
 
-export const { clearError, clearUploadResult, setUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListPageSize, setFileListStatusFilter, clearSearchResults, clearSearchError, clearCategoryAnalysis, setSlipsCategoryPage, setSlipsCategoryPageSize, setSearchActiveTab, setNlSearchQuery, setNlSearchCategoryId } = denpyoSlice.actions;
+export const { clearError, clearUploadResult, setUploadResult, clearAnalysisResult, clearRegistrationResult, setFileListPage, setFileListPageSize, clearSearchResults, clearSearchError, clearCategoryAnalysis, setSlipsCategoryPage, setSlipsCategoryPageSize, setSearchActiveTab, setNlSearchQuery, setNlSearchCategoryId } = denpyoSlice.actions;
 
 export default denpyoSlice.reducer;

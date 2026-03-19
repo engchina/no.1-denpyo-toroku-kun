@@ -333,7 +333,6 @@ export const ja = {
   'fileList.col.status': 'ステータス',
   'fileList.col.uploadedAt': 'アップロード日時',
   'fileList.col.actions': '操作',
-  'fileList.filter.all': 'すべて',
   'fileList.sort.current': 'ソート: {field} ({direction})',
   'fileList.sort.asc': '昇順',
   'fileList.sort.desc': '降順',
