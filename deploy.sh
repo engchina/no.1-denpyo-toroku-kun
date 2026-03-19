@@ -10,14 +10,12 @@ BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "${BASE_DIR}/scripts/lib/common.sh"
 LOG_DIR="${BASE_DIR}/denpyo_toroku/log"
-MODEL_DIR="${BASE_DIR}/denpyo_toroku/models"
 DOCKER_COMPOSE_CMD=""
 
 # Create required directories
 setup_directories() {
     log_info "Creating required directories..."
     mkdir -p "$LOG_DIR"
-    mkdir -p "$MODEL_DIR"
     log_info "Directories ready"
 }
 
@@ -38,12 +36,6 @@ check_environment() {
     if [ ! -f ~/.oci/config ]; then
         log_warn "OCI config file (~/.oci/config) not found"
         log_warn "Complete OCI configuration before deploying"
-    fi
-
-    # Model file check
-    if [ ! -f "$MODEL_DIR/intent_model_production.pkl" ]; then
-        log_warn "Model file not found: $MODEL_DIR/intent_model_production.pkl"
-        log_warn "Run training script first to generate model"
     fi
 
     log_info "Environment check complete"

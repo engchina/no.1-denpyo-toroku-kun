@@ -309,15 +309,15 @@ def test_build_select_ai_asset_names_are_stable_and_short():
 
 def test_resolve_select_ai_model_name_uses_region_compatible_fallback_for_xai_grok():
     assert (
-        DatabaseService._resolve_select_ai_model_name("xai.grok-code-fast-1", "ap-osaka-1")
+        DatabaseService._resolve_select_ai_model_name("xai.grok-4-1-fast-reasoning", "ap-osaka-1")
         == "meta.llama-3.3-70b-instruct"
     )
 
 
 def test_resolve_select_ai_model_name_keeps_xai_grok_in_supported_region():
     assert (
-        DatabaseService._resolve_select_ai_model_name("xai.grok-code-fast-1", "us-chicago-1")
-        == "xai.grok-code-fast-1"
+        DatabaseService._resolve_select_ai_model_name("xai.grok-4-1-fast-reasoning", "us-chicago-1")
+        == "xai.grok-4-1-fast-reasoning"
     )
 
 

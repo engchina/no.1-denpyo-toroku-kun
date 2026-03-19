@@ -8,7 +8,7 @@
 'use strict';
 
 /**
- * RequireJS bootstrap for Intent Classifier Service
+ * RequireJS bootstrap for Denpyo Toroku Service
  * Uses Oracle JET CDN for all library dependencies.
  * CDN bundles-config.js (loaded before this file) defines all paths and bundles.
  * Only baseUrl needs to be set here.

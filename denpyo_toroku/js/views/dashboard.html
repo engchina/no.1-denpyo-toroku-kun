@@ -19,75 +19,50 @@
                     </span>
                 </div>
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">モデル読込済:</span>
-                    <span>
-                        <oj-bind-if test="[[modelLoaded]]"><span class="span-green">読込済</span></oj-bind-if>
-                        <oj-bind-if test="[[!modelLoaded()]]"><span class="span-red">未読込</span></oj-bind-if>
-                    </span>
+                    <span class="oj-text-secondary-color">メッセージ:</span>
+                    <span><oj-bind-text value="[[statusMessage]]"></oj-bind-text></span>
                 </div>
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
                     <span class="oj-text-secondary-color">バージョン:</span>
                     <span><oj-bind-text value="[[version]]"></oj-bind-text></span>
                 </div>
+            </div>
+        </div>
+
+        <!-- アップロード -->
+        <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 280px; flex: 1;">
+            <h5>アップロード</h5>
+            <div class="oj-sm-margin-2x-top">
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">稼働時間:</span>
-                    <span><oj-bind-text value="[[uptime]]"></oj-bind-text></span>
+                    <span class="oj-text-secondary-color">総ファイル数:</span>
+                    <span class="font-semibold"><oj-bind-text value="[[totalFiles]]"></oj-bind-text></span>
                 </div>
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">キャッシュ有効:</span>
-                    <span>
-                        <oj-bind-if test="[[cacheEnabled]]"><span class="span-green">有効</span></oj-bind-if>
-                        <oj-bind-if test="[[!cacheEnabled()]]"><span class="span-red">無効</span></oj-bind-if>
-                    </span>
-                </div>
-                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">監視有効:</span>
-                    <span>
-                        <oj-bind-if test="[[monitoringEnabled]]"><span class="span-green">有効</span></oj-bind-if>
-                        <oj-bind-if test="[[!monitoringEnabled()]]"><span class="span-red">無効</span></oj-bind-if>
-                    </span>
+                    <span class="oj-text-secondary-color">今月の追加:</span>
+                    <span><oj-bind-text value="[[thisMonthFiles]]"></oj-bind-text></span>
                 </div>
             </div>
         </div>
 
-        <!-- パフォーマンス -->
+        <!-- 登録・分類 -->
         <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 280px; flex: 1;">
-            <h5>パフォーマンス</h5>
+            <h5>登録・分類</h5>
             <div class="oj-sm-margin-2x-top">
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">総予測数:</span>
-                    <span class="font-semibold"><oj-bind-text value="[[totalPredictions]]"></oj-bind-text></span>
+                    <span class="oj-text-secondary-color">総登録件数:</span>
+                    <span class="font-semibold"><oj-bind-text value="[[totalRegistrations]]"></oj-bind-text></span>
                 </div>
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">総エラー数:</span>
-                    <span><oj-bind-text value="[[totalErrors]]"></oj-bind-text></span>
+                    <span class="oj-text-secondary-color">今月の登録:</span>
+                    <span><oj-bind-text value="[[thisMonthRegistrations]]"></oj-bind-text></span>
                 </div>
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">エラー率:</span>
-                    <span><oj-bind-text value="[[errorRate]]"></oj-bind-text></span>
+                    <span class="oj-text-secondary-color">分類総数:</span>
+                    <span><oj-bind-text value="[[totalCategories]]"></oj-bind-text></span>
                 </div>
                 <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">平均予測時間:</span>
-                    <span><oj-bind-text value="[[avgPredictionTime]]"></oj-bind-text></span>
-                </div>
-                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">平均埋込時間:</span>
-                    <span><oj-bind-text value="[[avgEmbeddingTime]]"></oj-bind-text></span>
-                </div>
-            </div>
-        </div>
-
-        <!-- キャッシュ -->
-        <div class="oj-panel oj-sm-padding-4x oj-flex-item" style="min-width: 280px; flex: 1;">
-            <h5>キャッシュ</h5>
-            <div class="oj-sm-margin-2x-top">
-                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">ヒット率:</span>
-                    <span class="font-semibold"><oj-bind-text value="[[cacheHitRate]]"></oj-bind-text></span>
-                </div>
-                <div class="oj-flex oj-sm-justify-content-space-between oj-sm-margin-1x-bottom">
-                    <span class="oj-text-secondary-color">サイズ:</span>
-                    <span><oj-bind-text value="[[cacheSize]]"></oj-bind-text></span>
+                    <span class="oj-text-secondary-color">有効分類数:</span>
+                    <span><oj-bind-text value="[[activeCategories]]"></oj-bind-text></span>
                 </div>
             </div>
         </div>

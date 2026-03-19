@@ -11,9 +11,11 @@ This directory contains operational and development scripts.
 
 ## Utilities
 
-- `train.py`: Train intent classifier model.
 - `test_production.py`: Integration-style production test script.
 - `client_example.py`: Example API client usage.
+
+Legacy note:
+- The old offline classifier training flow is no longer part of this repository.
 
 ## Shared Library
 

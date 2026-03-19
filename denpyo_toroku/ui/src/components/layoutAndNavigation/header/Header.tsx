@@ -14,7 +14,7 @@ import { setAuthenticated } from '../../../redux/slices/applicationSlice';
 import { apiGet } from '../../../utils/apiUtils';
 
 const HELP_DOC_URL = 'https://docs.oracle.com/en/database/oracle/';
-const ABOUT_TITLE = 'Intent Classifier Service';
+const ABOUT_TITLE = '伝票登録くん';
 
 export function Header() {
   const dispatch = useAppDispatch();

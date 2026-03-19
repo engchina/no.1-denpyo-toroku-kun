@@ -1,5 +1,5 @@
 /*
- * Intent Classifier Service - Application CSS
+ * Denpyo Toroku Service - Application CSS
  * Oracle JET 18.0.3 + Oracle Redwood Design System
  * Reference: Applied AI Agent Factory layout pattern
  */
@@ -7591,7 +7591,7 @@ html[dir="rtl"] .oracle-icon {
 }
 
 .ics-category-viewer__stage--fit-page {
-    align-items: center;
+    align-items: flex-start;
 }
 
 .ics-category-viewer__frame {

@@ -12,15 +12,10 @@ services:
       - ~/.oci:/home/appuser/.oci:ro
       # Log directory
       - ./denpyo_toroku/log:/home/appuser/install/denpyo_toroku/log
-      # Model files (updatable)
-      - ./denpyo_toroku/models:/home/appuser/install/denpyo_toroku/models
     environment:
       - OCI_CONFIG_PATH=/home/appuser/.oci/config
       - OCI_CONFIG_PROFILE=DEFAULT
-      - MODEL_DIR=/home/appuser/install/denpyo_toroku/models
       - LOG_LEVEL=INFO
-      - ENABLE_CACHE=true
-      - CACHE_SIZE=10000
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/health')"]

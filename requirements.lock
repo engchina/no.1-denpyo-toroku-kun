@@ -3,7 +3,6 @@ python-dotenv==1.2.1
 gunicorn==24.0.0
 gevent==25.9.1
 oci==2.168.1
-scikit-learn==1.7.2
 numpy==2.0.2
 requests==2.32.5
 cachetools==6.2.2

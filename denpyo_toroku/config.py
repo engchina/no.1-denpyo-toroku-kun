@@ -52,11 +52,11 @@ class AppConfig:
     # AI Model Configuration
     LLM_MODEL_ID = os.environ.get(
         "LLM_MODEL_ID",
-        config.get("ai", "llm_model_id", fallback=config.get("ai", "vision_model_name", fallback="xai.grok-code-fast-1"))
+        config.get("ai", "llm_model_id", fallback=config.get("ai", "vision_model_name", fallback="xai.grok-4-1-fast-reasoning"))
     )
     VLM_MODEL_ID = os.environ.get(
         "VLM_MODEL_ID",
-        config.get("ai", "vision_model_name", fallback="google.gemini-2.5-flash")
+        config.get("ai", "vision_model_name", fallback="google.gemini-2.5-pro")
     )
     LLM_MAX_TOKENS = int(os.environ.get(
         "LLM_MAX_TOKENS",
@@ -84,7 +84,7 @@ class AppConfig:
     )
     SELECT_AI_ENABLED = os.environ.get("SELECT_AI_ENABLED", "true").strip().lower() in ("1", "true", "yes", "y", "on")
     SELECT_AI_REGION = os.environ.get("SELECT_AI_REGION", "us-chicago-1")
-    SELECT_AI_MODEL_ID = os.environ.get("SELECT_AI_MODEL_ID", "xai.grok-code-fast-1")
+    SELECT_AI_MODEL_ID = os.environ.get("SELECT_AI_MODEL_ID", "xai.grok-4-1-fast-reasoning")
     SELECT_AI_EMBEDDING_MODEL_ID = os.environ.get("SELECT_AI_EMBEDDING_MODEL_ID", EMBEDDING_MODEL_ID)
     SELECT_AI_ENDPOINT_ID = os.environ.get("SELECT_AI_ENDPOINT_ID", "")
     SELECT_AI_MAX_TOKENS = int(os.environ.get("SELECT_AI_MAX_TOKENS", "32768"))

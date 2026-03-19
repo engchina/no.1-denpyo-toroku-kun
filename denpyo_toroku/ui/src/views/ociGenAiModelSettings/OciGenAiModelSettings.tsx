@@ -6,12 +6,12 @@ import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import { t } from '../../i18n';
 
-const DEFAULT_LLM_MODEL = 'xai.grok-code-fast-1';
-const DEFAULT_VLM_MODEL = 'google.gemini-2.5-flash';
+const DEFAULT_LLM_MODEL = 'xai.grok-4-1-fast-reasoning';
+const DEFAULT_VLM_MODEL = 'google.gemini-2.5-pro';
 const DEFAULT_EMBEDDING_MODEL = 'cohere.embed-v4.0';
 const DEFAULT_ENDPOINT = 'https://inference.generativeai.us-chicago-1.oci.oraclecloud.com';
 const DEFAULT_SELECT_AI_REGION = 'us-chicago-1';
-const DEFAULT_SELECT_AI_MODEL = 'xai.grok-code-fast-1';
+const DEFAULT_SELECT_AI_MODEL = 'xai.grok-4-1-fast-reasoning';
 const DEFAULT_SELECT_AI_MAX_TOKENS = 32768;
 const DEFAULT_SELECT_AI_API_FORMAT = 'GENERIC';
 const DEFAULT_OCR_ROTATION_ANGLES = '0,90,180,270';

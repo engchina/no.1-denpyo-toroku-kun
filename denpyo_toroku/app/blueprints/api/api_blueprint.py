@@ -65,7 +65,7 @@ _OCI_KEY_PATTERN = re.compile(
 )
 _DEFAULT_OCI_REGION = "ap-osaka-1"
 _DEFAULT_SELECT_AI_REGION = "us-chicago-1"
-_DEFAULT_SELECT_AI_MODEL_ID = "xai.grok-code-fast-1"
+_DEFAULT_SELECT_AI_MODEL_ID = "xai.grok-4-1-fast-reasoning"
 _DEFAULT_SELECT_AI_MAX_TOKENS = 32768
 _DEFAULT_OCR_ROTATION_ANGLES = "0,90,180,270"
 _DEFAULT_OCR_IMAGE_MAX_EDGE_STEPS = "2400,1800,1400,1100"
@@ -880,11 +880,11 @@ def _runtime_oci_defaults() -> Dict[str, str]:
         "service_endpoint": service_endpoint,
         "llm_model_id": _normalize_text(
             os.environ.get("LLM_MODEL_ID"),
-            _normalize_text(getattr(AppConfig, "LLM_MODEL_ID", ""), "xai.grok-code-fast-1"),
+            _normalize_text(getattr(AppConfig, "LLM_MODEL_ID", ""), "xai.grok-4-1-fast-reasoning"),
         ),
         "vlm_model_id": _normalize_text(
             os.environ.get("VLM_MODEL_ID"),
-            _normalize_text(getattr(AppConfig, "VLM_MODEL_ID", ""), "google.gemini-2.5-flash"),
+            _normalize_text(getattr(AppConfig, "VLM_MODEL_ID", ""), "google.gemini-2.5-pro"),
         ),
         "embedding_model_id": _normalize_text(
             os.environ.get("EMBEDDING_MODEL_ID"),
@@ -1310,14 +1310,14 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
         "service_endpoint": service_endpoint,
         "llm_model_id": _normalize_text(
             settings_payload.get("llm_model_id"),
-            current_settings.get("llm_model_id", "xai.grok-code-fast-1"),
+            current_settings.get("llm_model_id", "xai.grok-4-1-fast-reasoning"),
         )
-        or "xai.grok-code-fast-1",
+        or "xai.grok-4-1-fast-reasoning",
         "vlm_model_id": _normalize_text(
             settings_payload.get("vlm_model_id"),
-            current_settings.get("vlm_model_id", "google.gemini-2.5-flash"),
+            current_settings.get("vlm_model_id", "google.gemini-2.5-pro"),
         )
-        or "google.gemini-2.5-flash",
+        or "google.gemini-2.5-pro",
         "embedding_model_id": _normalize_text(
             settings_payload.get("embedding_model_id"),
             current_settings.get("embedding_model_id", "cohere.embed-v4.0"),
@@ -1514,12 +1514,12 @@ def _build_oci_model_test_settings(request_settings: Dict[str, Any]) -> Dict[str
     )
     llm_model_id = _normalize_text(
         request_settings.get("llm_model_id"),
-        snapshot_settings.get("llm_model_id", defaults.get("llm_model_id", "xai.grok-code-fast-1")),
-    ) or "xai.grok-code-fast-1"
+        snapshot_settings.get("llm_model_id", defaults.get("llm_model_id", "xai.grok-4-1-fast-reasoning")),
+    ) or "xai.grok-4-1-fast-reasoning"
     vlm_model_id = _normalize_text(
         request_settings.get("vlm_model_id"),
-        snapshot_settings.get("vlm_model_id", defaults.get("vlm_model_id", "google.gemini-2.5-flash")),
-    ) or "google.gemini-2.5-flash"
+        snapshot_settings.get("vlm_model_id", defaults.get("vlm_model_id", "google.gemini-2.5-pro")),
+    ) or "google.gemini-2.5-pro"
     embedding_model_id = _normalize_text(
         request_settings.get("embedding_model_id"),
         snapshot_settings.get("embedding_model_id", defaults.get("embedding_model_id", "cohere.embed-v4.0")),

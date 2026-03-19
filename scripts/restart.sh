@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Intent Classifier Service - Quick Restart Script
+# Denpyo Toroku Service - Quick Restart Script
 # Usage: ./restart.sh
 
 set -e

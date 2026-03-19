@@ -9,6 +9,6 @@ export const AppGlobalContext = createContext<ApplicationGlobalType>({
   isAuthenticated: false,
   isDrawerOpen: false,
   isSidebarCollapsed: false,
-  userName: 'john.hancock@oracle.com',
-  appTitle: 'Intent Classifier Service'
+  userName: 'developer@oracle.com',
+  appTitle: '伝票登録くん'
 });

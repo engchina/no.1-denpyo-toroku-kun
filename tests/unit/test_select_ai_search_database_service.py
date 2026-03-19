@@ -207,7 +207,7 @@ def test_run_select_ai_agent_search_flags_endpoint_not_found_for_direct_fallback
             "region": "ap-osaka-1",
         },
         model_settings={
-            "llm_model_id": "xai.grok-code-fast-1",
+            "llm_model_id": "xai.grok-4-1-fast-reasoning",
             "compartment_id": "ocid1.compartment.oc1..example",
         },
     )
@@ -262,7 +262,7 @@ def test_run_select_ai_agent_search_flags_missing_conversation_id_for_direct_fal
         lambda *args, **kwargs: {
             "profile_name": "DTAIPR_TEST000001",
             "team_name": "DTAITM_TEST000001",
-            "model_name": "xai.grok-code-fast-1",
+            "model_name": "xai.grok-4-1-fast-reasoning",
             "region": "us-chicago-1",
             "config_fingerprint": "ABC123",
         },
@@ -287,7 +287,7 @@ def test_run_select_ai_agent_search_flags_missing_conversation_id_for_direct_fal
             "region": "us-chicago-1",
         },
         model_settings={
-            "llm_model_id": "xai.grok-code-fast-1",
+            "llm_model_id": "xai.grok-4-1-fast-reasoning",
             "compartment_id": "ocid1.compartment.oc1..example",
         },
     )

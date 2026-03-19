@@ -1,5 +1,5 @@
-# Intent Classifier Service - Dependencies
-# Flask + Gunicorn backend with OCI GenAI Embedding + GradientBoosting
+# Denpyo Toroku Service - Dependencies
+# Flask + Gunicorn backend with OCI GenAI / OCR / Database integration
 
 # Web Framework
 Flask>=3.1.2,<3.2
@@ -10,8 +10,7 @@ gevent>=25.9.1,<26
 # OCI SDK (GenAI Embedding)
 oci>=2.168.1,<3
 
-# Machine Learning
-scikit-learn>=1.7.2,<1.8.0
+# Numerical utilities
 numpy>=2.0.2,<2.1.0
 
 # HTTP Client (for OCI API calls)

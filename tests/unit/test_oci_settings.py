@@ -25,7 +25,7 @@ def test_save_oci_settings_persists_config_env_and_snapshot(tmp_path: Path, monk
     monkeypatch.setenv("OCI_CONFIG_PROFILE", "DEFAULT")
     monkeypatch.setenv("OCI_CONFIG_COMPARTMENT", "")
     monkeypatch.setenv("OCI_SERVICE_ENDPOINT", "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com")
-    monkeypatch.setenv("LLM_MODEL_ID", "xai.grok-code-fast-1")
+    monkeypatch.setenv("LLM_MODEL_ID", "xai.grok-4-1-fast-reasoning")
     monkeypatch.setenv("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
     monkeypatch.setenv("SELECT_AI_ENABLED", "true")
     monkeypatch.setenv("SELECT_AI_REGION", "ap-osaka-1")
@@ -49,7 +49,7 @@ def test_save_oci_settings_persists_config_env_and_snapshot(tmp_path: Path, monk
         "profile": "DEFAULT",
         "compartment_id": "ocid1.compartment.oc1..test",
         "service_endpoint": "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-        "llm_model_id": "xai.grok-code-fast-1",
+        "llm_model_id": "xai.grok-4-1-fast-reasoning",
         "embedding_model_id": "cohere.embed-v4.0",
         "select_ai_enabled": True,
         "select_ai_region": "ap-osaka-1",
@@ -110,7 +110,7 @@ def test_save_oci_settings_persists_config_env_and_snapshot(tmp_path: Path, monk
 def test_build_oci_model_test_settings_prefers_request_payload(monkeypatch):
     monkeypatch.setenv("OCI_SERVICE_ENDPOINT", "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com")
     monkeypatch.setenv("OCI_CONFIG_COMPARTMENT", "ocid1.compartment.oc1..env")
-    monkeypatch.setenv("LLM_MODEL_ID", "xai.grok-code-fast-1")
+    monkeypatch.setenv("LLM_MODEL_ID", "xai.grok-4-1-fast-reasoning")
     monkeypatch.setenv("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
     monkeypatch.setenv("SELECT_AI_ENABLED", "false")
     monkeypatch.setenv("SELECT_AI_OCI_API_FORMAT", "COHERE")
@@ -139,12 +139,12 @@ def test_build_oci_model_test_settings_prefers_request_payload(monkeypatch):
 def test_build_oci_model_test_settings_uses_runtime_defaults(monkeypatch):
     monkeypatch.setenv("OCI_SERVICE_ENDPOINT", "https://inference.generativeai.uk-london-1.oci.oraclecloud.com")
     monkeypatch.setenv("OCI_CONFIG_COMPARTMENT", "ocid1.compartment.oc1..fallback")
-    monkeypatch.setenv("LLM_MODEL_ID", "google.gemini-2.5-flash")
+    monkeypatch.setenv("LLM_MODEL_ID", "google.gemini-2.5-pro")
     monkeypatch.setenv("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
     monkeypatch.setenv("SELECT_AI_ENABLED", "true")
     monkeypatch.setenv("SELECT_AI_OCI_API_FORMAT", "GENERIC")
     monkeypatch.setenv("SELECT_AI_REGION", "uk-london-1")
-    monkeypatch.setenv("SELECT_AI_MODEL_ID", "google.gemini-2.5-flash")
+    monkeypatch.setenv("SELECT_AI_MODEL_ID", "google.gemini-2.5-pro")
     monkeypatch.setenv("SELECT_AI_EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
     monkeypatch.setenv("SELECT_AI_MAX_TOKENS", "4096")
     monkeypatch.setenv("SELECT_AI_ENFORCE_OBJECT_LIST", "true")
@@ -156,7 +156,7 @@ def test_build_oci_model_test_settings_uses_runtime_defaults(monkeypatch):
 
     assert result["service_endpoint"] == "https://inference.generativeai.uk-london-1.oci.oraclecloud.com"
     assert result["compartment_id"] == "ocid1.compartment.oc1..fallback"
-    assert result["llm_model_id"] == "google.gemini-2.5-flash"
+    assert result["llm_model_id"] == "google.gemini-2.5-pro"
     assert result["embedding_model_id"] == "cohere.embed-v4.0"
 
 
@@ -185,7 +185,7 @@ def test_build_oci_model_test_settings_builds_endpoint_from_region_when_missing(
     monkeypatch.delenv("OCI_SERVICE_ENDPOINT", raising=False)
     monkeypatch.setenv("OCI_REGION", "eu-frankfurt-1")
     monkeypatch.setenv("OCI_CONFIG_COMPARTMENT", "ocid1.compartment.oc1..fallback")
-    monkeypatch.setenv("LLM_MODEL_ID", "google.gemini-2.5-flash")
+    monkeypatch.setenv("LLM_MODEL_ID", "google.gemini-2.5-pro")
     monkeypatch.setenv("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
 
     result = api_bp._build_oci_model_test_settings({"service_endpoint": "", "region": "eu-frankfurt-1"})
@@ -204,7 +204,7 @@ def test_runtime_oci_defaults_use_select_ai_specific_defaults(monkeypatch):
     defaults = api_bp._runtime_oci_defaults()
 
     assert defaults["select_ai_region"] == "us-chicago-1"
-    assert defaults["select_ai_model_id"] == "xai.grok-code-fast-1"
+    assert defaults["select_ai_model_id"] == "xai.grok-4-1-fast-reasoning"
     assert defaults["select_ai_max_tokens"] == 32768
 
 
@@ -244,8 +244,8 @@ def test_save_oci_settings_persists_ocr_settings_and_refreshes_ai_service(tmp_pa
     monkeypatch.setenv("OCI_CONFIG_PROFILE", "DEFAULT")
     monkeypatch.setenv("OCI_CONFIG_COMPARTMENT", "")
     monkeypatch.setenv("OCI_SERVICE_ENDPOINT", "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com")
-    monkeypatch.setenv("LLM_MODEL_ID", "xai.grok-code-fast-1")
-    monkeypatch.setenv("VLM_MODEL_ID", "google.gemini-2.5-flash")
+    monkeypatch.setenv("LLM_MODEL_ID", "xai.grok-4-1-fast-reasoning")
+    monkeypatch.setenv("VLM_MODEL_ID", "google.gemini-2.5-pro")
     monkeypatch.setenv("EMBEDDING_MODEL_ID", "cohere.embed-v4.0")
     monkeypatch.setenv("GENAI_OCR_EMPTY_RESPONSE_MAX_RETRIES", "1")
     monkeypatch.setenv("GENAI_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES", "1")
@@ -286,8 +286,8 @@ def test_save_oci_settings_persists_ocr_settings_and_refreshes_ai_service(tmp_pa
         "profile": "DEFAULT",
         "compartment_id": "ocid1.compartment.oc1..test",
         "service_endpoint": "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-        "llm_model_id": "xai.grok-code-fast-1",
-        "vlm_model_id": "google.gemini-2.5-flash",
+        "llm_model_id": "xai.grok-4-1-fast-reasoning",
+        "vlm_model_id": "google.gemini-2.5-pro",
         "embedding_model_id": "cohere.embed-v4.0",
         "ocr_empty_response_primary_max_retries": 2,
         "ocr_empty_response_secondary_max_retries": 1,

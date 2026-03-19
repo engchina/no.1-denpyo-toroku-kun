@@ -228,7 +228,7 @@ export function DocumentPreviewWorkspace({
       const nextLeft = Math.max(0, (frame.offsetLeft + frame.offsetWidth / 2) - (viewer.clientWidth / 2));
       viewer.scrollTo({
         left: nextLeft,
-        top: viewerMode === 'fit-page' ? Math.max(0, (viewer.scrollHeight - viewer.clientHeight) / 2) : 0,
+        top: 0,
         behavior: 'auto',
       });
     });

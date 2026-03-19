@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Intent Classifier Service - Backend Startup Script
+# Denpyo Toroku Service - Backend Startup Script
 # Runs Gunicorn in foreground mode (logs visible in terminal)
 
 set -e
