@@ -1365,8 +1365,7 @@ function SchemaPanel({ schema, isLoading, onInsert, disabled }: SchemaPanelProps
           <button
             type="button"
             class="ics-schema-table__name"
-            onClick={() => !disabled && onInsert(`"${tbl.logical_name}"`)}
-            disabled={disabled}
+            onClick={() => toggleTable(tbl.logical_name)}
             title={tbl.table_name}
           >
             {tbl.logical_name}
