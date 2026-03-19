@@ -503,7 +503,7 @@ export const ja = {
   'common.saving': '保存中…',
 
   // SLIPS_CATEGORY ファイル一覧 (SCR-005 新機能)
-  'category.slipsFiles.title': 'SLIPS_CATEGORY ファイル一覧',
+  'category.slipsFiles.title': 'ファイル一覧',
   'category.slipsFiles.selected': '選択中: {count}件',
   'category.slipsFiles.selectAll': 'このページを全選択',
   'category.slipsFiles.colFileName': 'ファイル名',

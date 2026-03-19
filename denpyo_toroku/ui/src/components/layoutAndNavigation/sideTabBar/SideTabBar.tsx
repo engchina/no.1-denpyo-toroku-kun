@@ -99,10 +99,9 @@ export function SideTabBar() {
       </div>
       <div class={`navigationSideMenu__main${collapsed ? ' navigationSideMenu__main--collapsed' : ''}`}>
         {navGroups.map(group => (
-          <div key={group.labelKey}>
+          <div key={group.labelKey} class={`navigationSideMenu__group${collapsed ? ' navigationSideMenu__group--collapsed' : ''}`}>
             <p
-              class={`oj-typography-body-sm oj-typography-semi-bold oj-sm-margin-3x-top oj-sm-margin-1x-bottom${collapsed ? ' navigationSideMenu__groupLabel--collapsed' : ''
-                }`}
+              class={`oj-typography-body-sm oj-typography-semi-bold navigationSideMenu__groupLabel${collapsed ? ' navigationSideMenu__groupLabel--collapsed' : ''}`}
             >
               {t(group.labelKey)}
             </p>

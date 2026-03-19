@@ -599,6 +599,7 @@ html[dir="rtl"] .oracle-icon {
 .navigationSideMenu__main {
     display: flex;
     flex-direction: column;
+    gap: 12px;
     padding-right: 8px;
 }
 
@@ -612,27 +613,25 @@ html[dir="rtl"] .oracle-icon {
     padding: 0px;
 }
 
+.navigationSideMenu__group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.navigationSideMenu__group--collapsed {
+    align-items: center;
+    gap: 6px;
+}
+
 .navigationSideMenu__container-group {
-    margin-top: 0px;
-    margin-bottom: 18px;
+    margin: 0;
     width: 95%;
 }
 
 .navigationSideMenu__container-group--collapsed {
     width: 100%;
-    margin-bottom: 12px;
-}
-
-.navigationSideMenu__groupLabel--collapsed {
-    display: block;
-    width: 100%;
-    text-align: center;
-    font-size: 0.6rem;
-    line-height: 1.05;
-    letter-spacing: 0.01em;
-    margin-top: 14px !important;
-    margin-bottom: 6px !important;
-    overflow-wrap: anywhere;
+    margin: 0;
 }
 
 .navigationSideMenu__groupLabel {
@@ -643,6 +642,17 @@ html[dir="rtl"] .oracle-icon {
     letter-spacing: 0.02em;
     padding: 0;
     margin: 0 0 4px 0;
+}
+
+.navigationSideMenu__groupLabel--collapsed {
+    display: block;
+    width: 100%;
+    text-align: center;
+    font-size: 0.6rem;
+    line-height: 1.05;
+    letter-spacing: 0.01em;
+    margin: 0;
+    overflow-wrap: anywhere;
 }
 
 .navigationSideMenu__toggleBtn {
