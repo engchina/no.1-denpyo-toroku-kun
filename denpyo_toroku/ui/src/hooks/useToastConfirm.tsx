@@ -6,7 +6,7 @@ import { t } from '../i18n';
 type ConfirmSeverity = 'error' | 'warning' | 'confirmation' | 'info' | 'none';
 type ConfirmVariant = 'primary' | 'danger';
 
-type ToastConfirmRequest = {
+export type ToastConfirmRequest = {
   title?: string;
   message: string;
   confirmLabel: string;

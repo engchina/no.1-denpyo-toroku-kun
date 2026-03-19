@@ -25,6 +25,7 @@ import { usePagination } from '../../hooks/usePagination';
 import { useSelection } from '../../hooks/useSelection';
 import type { UseSelectionResult } from '../../hooks/useSelection';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
+import { useTablePreviewRowDeletion } from '../../hooks/useTablePreviewRowDeletion';
 import { t } from '../../i18n';
 import { apiPost } from '../../utils/apiUtils';
 import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
@@ -38,12 +39,6 @@ const SEARCH_TABLE_LIST_QUERY_SCOPE = 'sbtl';
 const SEARCH_DATA_PREVIEW_QUERY_SCOPE = 'sbdp';
 type SortDirection = 'asc' | 'desc';
 type TableListSortKey = 'table_name' | 'category_name' | 'table_type' | 'row_count' | 'column_count' | 'created_at';
-type DeleteTableBrowserRowResponse = {
-  success: boolean;
-  deleted: number;
-  detail_deleted?: number;
-  table_type?: string;
-};
 
 function compareValues(a: unknown, b: unknown): number {
   if (a === b) return 0;
@@ -628,9 +623,7 @@ function TableBrowserTab({
     return next >= 1 ? next : 1;
   });
   const [goToPageInput, setGoToPageInput] = useState('');
-  const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
   const [isBulkDeletingTables, setIsBulkDeletingTables] = useState(false);
-  const [isBulkDeletingRows, setIsBulkDeletingRows] = useState(false);
   const [tableListSortKey, setTableListSortKey] = useState<TableListSortKey>('created_at');
   const [tableListSortDirection, setTableListSortDirection] = useState<SortDirection>('desc');
   const [dataSortColumn, setDataSortColumn] = useState('');
@@ -892,19 +885,6 @@ function TableBrowserTab({
     }
   }, [goToPageInput, totalPages]);
 
-  const getRowId = useCallback((row: Record<string, any>): string | null => {
-    const raw = row.ROW_ID_META;
-    if (raw === null || raw === undefined || raw === '') return null;
-    return String(raw);
-  }, []);
-
-  const getDataPageAfterDelete = useCallback((deletedRows: number) => {
-    const currentTotal = result?.total || 0;
-    const remainingRows = Math.max(0, currentTotal - Math.max(0, deletedRows));
-    const maxPageAfterDelete = Math.max(1, Math.ceil(remainingRows / dataPageSize));
-    return Math.min(page, maxPageAfterDelete);
-  }, [result?.total, dataPageSize, page]);
-
   const refreshSelectedTableData = useCallback((nextPage: number) => {
     if (!selectedTable?.table_name) return;
     if (nextPage !== page) {
@@ -925,101 +905,28 @@ function TableBrowserTab({
     return getRelatedTables(table).some((relatedTable) => relatedTable.table_type === 'line');
   }, [getRelatedTables]);
 
-  const handleDeleteRow = useCallback((row: Record<string, any>) => {
-    const rowId = getRowId(row);
-    if (!rowId || !selectedTable) return;
-    const shouldCascadeDetails = hasLinkedLineTable(selectedTable);
-    requestConfirm({
-      message: shouldCascadeDetails
-        ? t('search.browser.deleteHeaderRowConfirm')
-        : t('search.browser.deleteRowConfirm'),
-      confirmLabel: t('common.delete'),
-      cancelLabel: t('common.cancel'),
-      severity: 'warning',
-      confirmIcon: Trash2,
-      onConfirm: async () => {
-        setDeletingRowId(rowId);
-        try {
-          const result = await apiPost<DeleteTableBrowserRowResponse>('/api/v1/search/table-browser/delete-row', {
-            table_name: selectedTable.table_name,
-            row_id: rowId
-          });
-          dispatch(addNotification({
-            type: 'success',
-            message: result.detail_deleted && result.detail_deleted > 0
-              ? t('search.browser.deleteHeaderRowSuccess', { detailCount: result.detail_deleted })
-              : t('search.browser.deleteRowSuccess')
-          }));
-          dispatch(fetchTableBrowserTables());
-          refreshSelectedTableData(getDataPageAfterDelete(result.deleted || 1));
-        } catch {
-          dispatch(addNotification({
-            type: 'error',
-            message: t('search.browser.deleteRowFailed')
-          }));
-        } finally {
-          setDeletingRowId(null);
-        }
-      }
-    });
-  }, [dispatch, getRowId, selectedTable, hasLinkedLineTable, page, dataPageSize, requestConfirm]);
-
-  const handleBulkDeleteRows = useCallback(() => {
-    if (!selectedTable || dataRowSelection.selectedCount === 0) return;
-    const targetRowIds = Array.from(dataRowSelection.selectedIds);
-    const shouldCascadeDetails = hasLinkedLineTable(selectedTable);
-    requestConfirm({
-      message: shouldCascadeDetails
-        ? t('search.browser.confirmBulkDeleteHeaderRows', { count: targetRowIds.length })
-        : t('search.browser.confirmBulkDelete', { count: targetRowIds.length }),
-      confirmLabel: t('common.delete'),
-      cancelLabel: t('common.cancel'),
-      severity: 'warning',
-      confirmIcon: Trash2,
-      onConfirm: async () => {
-        setIsBulkDeletingRows(true);
-        let deletedCount = 0;
-        let detailDeletedCount = 0;
-        let failedCount = 0;
-        for (const rowId of targetRowIds) {
-          try {
-            const result = await apiPost<DeleteTableBrowserRowResponse>('/api/v1/search/table-browser/delete-row', {
-              table_name: selectedTable.table_name,
-              row_id: rowId,
-            });
-            deletedCount += 1;
-            detailDeletedCount += result.detail_deleted || 0;
-          } catch {
-            failedCount += 1;
-          }
-        }
-        dataRowSelection.deselectAll();
-        dispatch(fetchTableBrowserTables());
-        refreshSelectedTableData(getDataPageAfterDelete(deletedCount));
-        if (deletedCount > 0 && failedCount === 0) {
-          dispatch(addNotification({
-            type: 'success',
-            message: detailDeletedCount > 0
-              ? t('search.browser.bulkDeleteHeaderRowsSuccess', { count: deletedCount, detailCount: detailDeletedCount })
-              : t('search.browser.bulkDeleteSuccess', { count: deletedCount }),
-          }));
-        } else if (deletedCount > 0) {
-          dispatch(addNotification({
-            type: 'warning',
-            message: detailDeletedCount > 0
-              ? t('search.browser.bulkDeleteHeaderRowsPartial', { deleted: deletedCount, detailCount: detailDeletedCount, errors: failedCount })
-              : t('search.browser.bulkDeletePartial', { deleted: deletedCount, errors: failedCount }),
-          }));
-        } else {
-          dispatch(addNotification({
-            type: 'error',
-            message: t('search.browser.bulkDeleteFailed'),
-          }));
-        }
-        setIsBulkDeletingRows(false);
-      },
-    });
-  }, [selectedTable, dataRowSelection.selectedCount, dataRowSelection.selectedIds, hasLinkedLineTable, requestConfirm, dispatch, getDataPageAfterDelete, refreshSelectedTableData]);
+  const {
+    deletingRowId,
+    isBulkDeletingRows,
+    getRowId,
+    handleDeleteRow,
+    handleBulkDeleteRows,
+  } = useTablePreviewRowDeletion({
+    tableName: selectedTable?.table_name || '',
+    hasLinkedLineTable: hasLinkedLineTable(selectedTable),
+    totalRows: result?.total || 0,
+    currentPage: page,
+    pageSize: dataPageSize,
+    selection: dataRowSelection,
+    requestConfirm,
+    notify: (type, message) => {
+      dispatch(addNotification({ type, message }));
+    },
+    refreshPage: refreshSelectedTableData,
+    refreshMeta: () => {
+      dispatch(fetchTableBrowserTables());
+    },
+  });
 
   const handleBulkDeleteTables = useCallback(() => {
     if (tableListSelection.selectedCount === 0) return;

@@ -31,6 +31,7 @@ import Pagination from '../../components/Pagination';
 import { usePagination } from '../../hooks/usePagination';
 import { useSelection } from '../../hooks/useSelection';
 import { useToastConfirm } from '../../hooks/useToastConfirm';
+import { useTablePreviewRowDeletion } from '../../hooks/useTablePreviewRowDeletion';
 import { t } from '../../i18n';
 import { APP_ROUTES } from '../../constants/routes';
 import { getCurrentSearchParams, readScopedNumber, replaceSearchParams, setScopedValue } from '../../utils/queryScope';
@@ -1120,8 +1121,6 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const [previewLineGoToPageInput, setPreviewLineGoToPageInput] = useState('');
   const [previewSortColumn, setPreviewSortColumn] = useState('');
   const [previewSortDirection, setPreviewSortDirection] = useState<SortDirection>('desc');
-  const [isBulkDeletingPreviewRows, setIsBulkDeletingPreviewRows] = useState(false);
-  const [deletingPreviewRowId, setDeletingPreviewRowId] = useState<string | null>(null);
   const [categoryPageSize, setCategoryPageSize] = useState(() => {
     if (mode !== 'management') return 20;
     const nextPageSize = readScopedNumber(initialSearchParams, CATEGORY_MANAGEMENT_QUERY_SCOPE, 'ps', 20);
@@ -1898,89 +1897,51 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       setPreviewHeaderGoToPageInput('');
     }
   }, [activePreviewGoToPageInput, previewTableType, previewTotalPages]);
-  const getPreviewRowId = useCallback((row: Record<string, any>): string | null => {
-    const raw = row.ROW_ID_META;
-    if (raw === null || raw === undefined || raw === '') return null;
-    return String(raw);
-  }, []);
-  const handleDeletePreviewRow = useCallback((row: Record<string, any>) => {
-    const rowId = getPreviewRowId(row);
-    if (!rowId || !previewTableName) return;
-    requestConfirm({
-      message: t('search.browser.deleteRowConfirm'),
-      confirmLabel: t('common.delete'),
-      cancelLabel: t('common.cancel'),
-      severity: 'warning',
-      confirmIcon: Trash2,
-      onConfirm: async () => {
-        setDeletingPreviewRowId(rowId);
-        try {
-          await apiPost<{ success: boolean }>('/api/v1/search/table-browser/delete-row', {
-            table_name: previewTableName,
-            row_id: rowId,
-          });
-          dispatch(addNotification({
-            type: 'success',
-            message: t('search.browser.deleteRowSuccess'),
-          }));
-          requestCategoryPreview();
-        } catch {
-          dispatch(addNotification({
-            type: 'error',
-            message: t('search.browser.deleteRowFailed'),
-          }));
-        } finally {
-          setDeletingPreviewRowId(null);
-        }
-      },
-    });
-  }, [getPreviewRowId, previewTableName, requestConfirm, dispatch, requestCategoryPreview]);
-  const handleBulkDeletePreviewRows = useCallback(() => {
-    if (!previewTableName || previewRowSelection.selectedCount === 0) return;
-    const targetRowIds = Array.from(previewRowSelection.selectedIds);
-    requestConfirm({
-      message: t('search.browser.confirmBulkDelete', { count: targetRowIds.length }),
-      confirmLabel: t('common.delete'),
-      cancelLabel: t('common.cancel'),
-      severity: 'warning',
-      confirmIcon: Trash2,
-      onConfirm: async () => {
-        setIsBulkDeletingPreviewRows(true);
-        let deletedCount = 0;
-        let failedCount = 0;
-        for (const rowId of targetRowIds) {
-          try {
-            await apiPost<{ success: boolean }>('/api/v1/search/table-browser/delete-row', {
-              table_name: previewTableName,
-              row_id: rowId,
-            });
-            deletedCount += 1;
-          } catch {
-            failedCount += 1;
-          }
-        }
-        previewRowSelection.deselectAll();
-        requestCategoryPreview();
-        if (deletedCount > 0 && failedCount === 0) {
-          dispatch(addNotification({
-            type: 'success',
-            message: t('search.browser.bulkDeleteSuccess', { count: deletedCount }),
-          }));
-        } else if (deletedCount > 0) {
-          dispatch(addNotification({
-            type: 'warning',
-            message: t('search.browser.bulkDeletePartial', { deleted: deletedCount, errors: failedCount }),
-          }));
-        } else {
-          dispatch(addNotification({
-            type: 'error',
-            message: t('search.browser.bulkDeleteFailed'),
-          }));
-        }
-        setIsBulkDeletingPreviewRows(false);
-      },
-    });
-  }, [previewTableName, previewRowSelection.selectedCount, previewRowSelection.selectedIds, requestConfirm, requestCategoryPreview, dispatch, previewRowSelection]);
+  const refreshCategoryPreviewPage = useCallback((nextPage: number) => {
+    if (!selectedCategory || !previewTableName) return;
+    if (previewTableType === 'line') {
+      if (nextPage !== previewLinePage) {
+        setPreviewLinePage(nextPage);
+        setPreviewLineGoToPageInput('');
+        return;
+      }
+    } else if (nextPage !== previewHeaderPage) {
+      setPreviewHeaderPage(nextPage);
+      setPreviewHeaderGoToPageInput('');
+      return;
+    }
+
+    requestCategoryPreview();
+  }, [
+    selectedCategory,
+    previewTableName,
+    previewTableType,
+    previewLinePage,
+    previewHeaderPage,
+    requestCategoryPreview,
+  ]);
+  const {
+    deletingRowId: deletingPreviewRowId,
+    isBulkDeletingRows: isBulkDeletingPreviewRows,
+    getRowId: getPreviewRowId,
+    handleDeleteRow: handleDeletePreviewRow,
+    handleBulkDeleteRows: handleBulkDeletePreviewRows,
+  } = useTablePreviewRowDeletion({
+    tableName: previewTableName,
+    hasLinkedLineTable: previewTableType === 'header' && hasLineTable,
+    totalRows: previewTotal,
+    currentPage: activePreviewPage,
+    pageSize: activePreviewPageSize,
+    selection: previewRowSelection,
+    requestConfirm,
+    notify: (type, message) => {
+      dispatch(addNotification({ type, message }));
+    },
+    refreshPage: refreshCategoryPreviewPage,
+    refreshMeta: () => {
+      loadCategories();
+    },
+  });
 
   // ─── Result sub-page mode: 分析結果を別ページとして表示 ───
   const isResultSubPage = mode === 'samples' && !!resultFileId && !!categoryAnalysisResult;

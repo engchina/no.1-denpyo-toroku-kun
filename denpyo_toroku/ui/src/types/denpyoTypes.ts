@@ -422,6 +422,13 @@ export interface TableBrowseResult {
   total_pages: number;
 }
 
+export interface DeleteTableBrowserRowResponse {
+  success: boolean;
+  deleted: number;
+  detail_deleted?: number;
+  table_type?: 'header' | 'line' | '';
+}
+
 // --- Redux State ---
 
 export interface FileListState {

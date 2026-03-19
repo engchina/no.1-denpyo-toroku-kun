@@ -381,3 +381,76 @@ def test_delete_table_browser_row_returns_500_on_unexpected_error(monkeypatch):
 
     assert response.status_code == 500
     assert response.get_json()["errorMessages"][0] == "削除に失敗しました: db down"
+
+
+def test_delete_table_browser_table_requires_table_name():
+    client = _create_client()
+
+    response = client.post(
+        "/api/v1/search/table-browser/delete-table",
+        json={},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["errorMessages"][0] == "table_name を指定してください"
+
+
+def test_delete_table_browser_table_returns_success_payload(monkeypatch):
+    client = _create_client()
+    calls = []
+
+    class StubDatabaseService:
+        def delete_allowed_table(self, table_name):
+            calls.append(table_name)
+            return {"success": True, "table_name": "RECEIPT_H"}
+
+    monkeypatch.setattr(api_blueprint_module, "DatabaseService", StubDatabaseService)
+
+    response = client.post(
+        "/api/v1/search/table-browser/delete-table",
+        json={"table_name": "RECEIPT_H"},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert calls == ["RECEIPT_H"]
+    assert response.get_json()["data"] == {
+        "success": True,
+        "table_name": "RECEIPT_H",
+    }
+
+
+def test_delete_table_browser_table_returns_service_validation_error(monkeypatch):
+    client = _create_client()
+
+    class StubDatabaseService:
+        def delete_allowed_table(self, table_name):
+            assert table_name == "SECRET_TABLE"
+            return {"success": False, "message": "許可されていないテーブルです"}
+
+    monkeypatch.setattr(api_blueprint_module, "DatabaseService", StubDatabaseService)
+
+    response = client.post(
+        "/api/v1/search/table-browser/delete-table",
+        json={"table_name": "SECRET_TABLE"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["errorMessages"][0] == "許可されていないテーブルです"
+
+
+def test_delete_table_browser_table_returns_500_on_unexpected_error(monkeypatch):
+    client = _create_client()
+
+    class StubDatabaseService:
+        def delete_allowed_table(self, table_name):
+            raise RuntimeError("db down")
+
+    monkeypatch.setattr(api_blueprint_module, "DatabaseService", StubDatabaseService)
+
+    response = client.post(
+        "/api/v1/search/table-browser/delete-table",
+        json={"table_name": "RECEIPT_H"},
+    )
+
+    assert response.status_code == 500
+    assert response.get_json()["errorMessages"][0] == "削除に失敗しました: db down"
