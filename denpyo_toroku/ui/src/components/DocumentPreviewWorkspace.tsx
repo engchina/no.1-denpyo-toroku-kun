@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { AlertTriangle, ChevronLeft, ChevronRight, ImageIcon, Loader2, RotateCcw, RotateCw } from 'lucide-react';
 import { apiGet } from '../utils/apiUtils';
 import { t } from '../i18n';
@@ -55,6 +55,7 @@ export function DocumentPreviewWorkspace({
   const [zoomPercent, setZoomPercent] = useState<number>(ZOOM_STEPS[1]);
   const [pageMetrics, setPageMetrics] = useState<Record<string, PageImageMetrics>>({});
   const [pageRotations, setPageRotations] = useState<Record<string, number>>({});
+  const viewerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,6 +214,33 @@ export function DocumentPreviewWorkspace({
       };
     });
   };
+
+  useEffect(() => {
+    if (!activePage) return;
+
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    const frame = viewer.querySelector('.ics-category-viewer__frame') as HTMLDivElement | null;
+    if (!frame) return;
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      const nextLeft = Math.max(0, (frame.offsetLeft + frame.offsetWidth / 2) - (viewer.clientWidth / 2));
+      viewer.scrollTo({
+        left: nextLeft,
+        top: viewerMode === 'fit-page' ? Math.max(0, (viewer.scrollHeight - viewer.clientHeight) / 2) : 0,
+        behavior: 'auto',
+      });
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [
+    activePage?.key,
+    currentPageRotation,
+    viewerMode,
+    pageMetrics[activePage?.key || '']?.width,
+    pageMetrics[activePage?.key || '']?.height,
+  ]);
 
   const handleZoom = (direction: 'in' | 'out') => {
     if (direction === 'out' && viewerMode !== 'zoom') return;
@@ -385,7 +413,7 @@ export function DocumentPreviewWorkspace({
               </div>
             ) : (
               <>
-                <div class="ics-category-viewer">
+                <div class="ics-category-viewer" ref={viewerRef}>
                   <div class={`ics-category-viewer__stage ${viewerMode === 'fit-page' ? 'ics-category-viewer__stage--fit-page' : ''}`}>
                     {currentImageHasError ? (
                       <div class="ics-category-viewer__empty">
