@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { useAppDispatch } from '../../redux/store';
 import { setAuthenticated, setUserName } from '../../redux/slices/applicationSlice';
 import { apiGet } from '../../utils/apiUtils';
@@ -12,6 +12,9 @@ type LoginResponse = {
   message?: string;
 };
 
+const REMEMBER_ME_STORAGE_KEY = 'denpyo_toroku.rememberMe';
+const REMEMBERED_USERNAME_STORAGE_KEY = 'denpyo_toroku.rememberedUsername';
+
 export function LoginView() {
   const dispatch = useAppDispatch();
   const [username, setUsername] = useState('');
@@ -20,6 +23,23 @@ export function LoginView() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      const persistedRememberMe = window.localStorage.getItem(REMEMBER_ME_STORAGE_KEY);
+      const shouldRemember = persistedRememberMe !== 'false';
+      setRememberMe(shouldRemember);
+      if (shouldRemember) {
+        setUsername(window.localStorage.getItem(REMEMBERED_USERNAME_STORAGE_KEY) || '');
+      }
+    } catch {
+      // Ignore storage access failures and keep in-memory defaults.
+    }
+  }, []);
 
   const handleSubmit = async (e: Event) => {
     e.preventDefault();
@@ -45,6 +65,19 @@ export function LoginView() {
       }
       const me = await apiGet<{ authenticated: boolean; user?: string }>('/v1/me');
       if (me.authenticated) {
+        if (typeof window !== 'undefined') {
+          try {
+            if (rememberMe) {
+              window.localStorage.setItem(REMEMBER_ME_STORAGE_KEY, 'true');
+              window.localStorage.setItem(REMEMBERED_USERNAME_STORAGE_KEY, username);
+            } else {
+              window.localStorage.setItem(REMEMBER_ME_STORAGE_KEY, 'false');
+              window.localStorage.removeItem(REMEMBERED_USERNAME_STORAGE_KEY);
+            }
+          } catch {
+            // Ignore storage access failures and continue the login flow.
+          }
+        }
         dispatch(setUserName(me.user || username));
         dispatch(setAuthenticated(true));
       } else {
@@ -56,6 +89,18 @@ export function LoginView() {
       dispatch(setAuthenticated(false));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRememberMeChange = (nextChecked: boolean) => {
+    setRememberMe(nextChecked);
+    if (!nextChecked && typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(REMEMBER_ME_STORAGE_KEY, 'false');
+        window.localStorage.removeItem(REMEMBERED_USERNAME_STORAGE_KEY);
+      } catch {
+        // Ignore storage access failures and keep the UI responsive.
+      }
     }
   };
 
@@ -83,6 +128,7 @@ export function LoginView() {
               type="text"
               placeholder={t('login.emailPlaceholder')}
               value={username}
+              autoComplete="username"
               onInput={(e: any) => setUsername(e.currentTarget.value)}
               onInvalid={(e: any) => e.currentTarget.setCustomValidity(t('login.validation.required'))}
               onChange={(e: any) => e.currentTarget.setCustomValidity('')}
@@ -100,6 +146,7 @@ export function LoginView() {
                 type={showPassword ? 'text' : 'password'}
                 placeholder={t('login.passwordPlaceholder')}
                 value={password}
+                autoComplete="current-password"
                 onInput={(e: any) => setPassword(e.currentTarget.value)}
                 onInvalid={(e: any) => e.currentTarget.setCustomValidity(t('login.validation.required'))}
                 onChange={(e: any) => e.currentTarget.setCustomValidity('')}
@@ -123,7 +170,7 @@ export function LoginView() {
               <input
                 type="checkbox"
                 checked={rememberMe}
-                onChange={(e: any) => setRememberMe(e.currentTarget.checked)}
+                onChange={(e: any) => handleRememberMeChange(e.currentTarget.checked)}
               />
               <span>{t('login.rememberMe')}</span>
             </label>

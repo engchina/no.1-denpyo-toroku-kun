@@ -3,6 +3,10 @@ from flask import request, session, g, redirect, jsonify
 from denpyo_toroku.auth_config import SESSION_TIMEOUT_SECONDS
 
 
+def _session_should_persist():
+    return bool(session.get("remember_me", True))
+
+
 def _verify_token_not_expired(token_expiry_ts):
     if token_expiry_ts is None:
         return False
@@ -47,7 +51,7 @@ def _redirect_legacy_static_path():
 
 def _refresh_session_expiry():
     current_time = datetime.datetime.now() + datetime.timedelta(seconds=SESSION_TIMEOUT_SECONDS)
-    session.permanent = True
+    session.permanent = _session_should_persist()
     session["token_expiry_ts"] = int(current_time.timestamp())
 
 
@@ -101,6 +105,7 @@ def auth_middleware():
         return
 
     session.pop("token", None)
+    session.pop("remember_me", None)
     session.pop("user", None)
     session.pop("token_expiry_ts", None)
     session.pop("user_id", None)

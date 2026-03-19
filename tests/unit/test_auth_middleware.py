@@ -90,6 +90,31 @@ def test_authenticated_request_refreshes_expiry_for_24_hours():
     assert refreshed_expiry <= now + SESSION_TIMEOUT_SECONDS + 5
 
 
+def test_authenticated_request_keeps_non_persistent_session_non_persistent():
+    app = _create_app()
+    now = int(time.time())
+
+    with app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess["user"] = "admin"
+            sess["token"] = "token"
+            sess["token_expiry_ts"] = now + 10
+            sess["remember_me"] = False
+            sess.permanent = False
+
+        response = client.get("/studio/dashboard")
+
+        assert response.status_code == 200
+
+        with client.session_transaction() as sess:
+            refreshed_expiry = sess["token_expiry_ts"]
+            assert sess.permanent is False
+            assert sess["remember_me"] is False
+
+    assert refreshed_expiry >= now + SESSION_TIMEOUT_SECONDS - 5
+    assert refreshed_expiry <= now + SESSION_TIMEOUT_SECONDS + 5
+
+
 def test_expired_api_request_returns_unauthorized():
     app = _create_app()
     now = int(time.time())

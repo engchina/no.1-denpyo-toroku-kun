@@ -99,6 +99,18 @@ def _session_expiry_timestamp() -> int:
     return int(expiry_time.timestamp())
 
 
+def _start_authenticated_session(username: str, remember_me: bool) -> None:
+    session.permanent = remember_me
+    session["remember_me"] = remember_me
+    session["user"] = username
+    session["user_id"] = "admin-user-id"
+    session["role"] = "ADMIN"
+    session["token"] = hashlib.sha256(
+        f"{username}{dt.datetime.now()}".encode()
+    ).hexdigest()
+    session["token_expiry_ts"] = _session_expiry_timestamp()
+
+
 def _to_bool(value, default: bool = True) -> bool:
     if value is None:
         return default
@@ -1901,9 +1913,11 @@ def login_validation():
             data = request.get_json() or {}
             username = (data.get("username") or "").strip()
             password = data.get("password", "")
+            remember_me = _to_bool(data.get("remember_me"), default=True)
         else:
             username = (request.form.get("username", "") or "").strip()
             password = request.form.get("password", "")
+            remember_me = _to_bool(request.form.get("remember_me"), default=True)
 
         if not username or not password:
             return jsonify({"success": False, "message": "ユーザー名とパスワードは必須です"}), 400
@@ -1918,14 +1932,7 @@ def login_validation():
             }), 500
 
         if username == auth_username and password == auth_password:
-            session.permanent = True
-            session["user"] = username
-            session["user_id"] = "admin-user-id"
-            session["role"] = "ADMIN"
-            session["token"] = hashlib.sha256(
-                f"{username}{dt.datetime.now()}".encode()
-            ).hexdigest()
-            session["token_expiry_ts"] = _session_expiry_timestamp()
+            _start_authenticated_session(username, remember_me)
 
             if request.is_json:
                 return jsonify({
@@ -1947,6 +1954,7 @@ def login_validation():
 @api_blueprint.route("/logout", methods=["GET", "POST"])
 def logout():
     """ERP-compatible logout endpoint."""
+    session.pop("remember_me", None)
     session.pop("user", None)
     session.pop("user_id", None)
     session.pop("role", None)
@@ -1975,6 +1983,7 @@ def auth_login_compat():
     data = request.get_json(silent=True) or {}
     username = (data.get("email") or data.get("username") or "").strip()
     password = data.get("password") or ""
+    remember_me = _to_bool(data.get("remember_me"), default=True)
     auth_credentials = _load_login_credentials()
     auth_username = auth_credentials["username"]
     auth_password = auth_credentials["password"]
@@ -1982,14 +1991,7 @@ def auth_login_compat():
         g.response.add_error_message(f"認証設定が不正です。{_DB_CONN_ENV_KEY} を確認してください。")
         return jsonify(g.response.get_result()), 500
     if username == auth_username and password == auth_password:
-        session.permanent = True
-        session["user"] = username
-        session["user_id"] = "admin-user-id"
-        session["role"] = "ADMIN"
-        session["token"] = hashlib.sha256(
-            f"{username}{dt.datetime.now()}".encode()
-        ).hexdigest()
-        session["token_expiry_ts"] = _session_expiry_timestamp()
+        _start_authenticated_session(username, remember_me)
         g.response.set_data({"email": username, "authenticated": True})
         return jsonify(g.response.get_result())
     g.response.add_error_message("ユーザー名またはパスワードが正しくありません")
@@ -1999,6 +2001,7 @@ def auth_login_compat():
 @api_blueprint.route("/api/v1/auth/logout", methods=["POST"])
 def auth_logout_compat():
     """Backward-compatible endpoint."""
+    session.pop("remember_me", None)
     session.pop("user", None)
     session.pop("user_id", None)
     session.pop("role", None)
