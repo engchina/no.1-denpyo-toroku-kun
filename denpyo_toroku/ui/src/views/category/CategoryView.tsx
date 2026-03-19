@@ -898,15 +898,6 @@ function TableDesignerPanel({
               <Database size={18} />
               <span class="oj-typography-heading-xs">{t('category.designer.title')}</span>
             </div>
-            <button
-              type="button"
-              class="ics-ops-btn ics-ops-btn--ghost"
-              onClick={onClose}
-              disabled={isCreating}
-              title={t('common.cancel')}
-            >
-              <X size={16} />
-            </button>
           </div>
 
           <div class="ics-card-body ics-card-body--designer">
