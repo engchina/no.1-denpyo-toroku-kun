@@ -547,6 +547,8 @@ export const ja = {
   'category.designer.zoomOut': '画像を縮小',
   'category.designer.zoomLabelFitWidth': '横幅',
   'category.designer.zoomLabelFitPage': '全体',
+  'category.designer.collapseReview': '画像レビューを最小化',
+  'category.designer.expandReview': '画像レビューを再表示',
   'category.designer.rotationStatus': '回転: {degrees}°',
   'category.designer.tableName': 'テーブル名',
   'category.designer.colName': 'カラム名 (英語)',

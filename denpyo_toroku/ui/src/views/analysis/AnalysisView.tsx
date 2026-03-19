@@ -136,7 +136,7 @@ function LineDataTable({
             <table class="ics-table ics-table--compact">
               <thead>
                 <tr>
-                  <th style={{ width: '40px' }}>#</th>
+                  <th class="ics-table__index-col">#</th>
                   {colKeys.map(key => (
                     <th key={key} title={key}>
                       <div>{commentMap[key] || key}</div>
@@ -150,7 +150,7 @@ function LineDataTable({
               <tbody>
                 {rawLines.map((row, i) => (
                   <tr key={i}>
-                    <td class="oj-text-color-secondary">{i + 1}</td>
+                    <td class="ics-table__index-col oj-text-color-secondary">{i + 1}</td>
                     {colKeys.map(key => (
                       <td key={key}>{String(row[key] ?? '')}</td>
                     ))}

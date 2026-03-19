@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { AlertTriangle, ImageIcon, Loader2, RotateCcw, RotateCw } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, ImageIcon, Loader2, RotateCcw, RotateCw } from 'lucide-react';
 import { apiGet } from '../utils/apiUtils';
 import { t } from '../i18n';
 import type { DocumentPreviewPage, DocumentPreviewResponse } from '../types/denpyoTypes';
@@ -31,10 +31,16 @@ export function DocumentPreviewWorkspace({
   fileIds,
   title,
   hint,
+  collapsible = false,
+  isCollapsed = false,
+  onToggleCollapsed,
 }: {
   fileIds: Array<string | number>;
   title?: string;
   hint?: string;
+  collapsible?: boolean;
+  isCollapsed?: boolean;
+  onToggleCollapsed?: (nextCollapsed: boolean) => void;
 }) {
   const normalizedFileIds = useMemo(
     () => Array.from(new Set((fileIds || []).map((fileId) => String(fileId || '')).filter(Boolean))),
@@ -126,6 +132,8 @@ export function DocumentPreviewWorkspace({
   const canZoomIn = viewerMode !== 'zoom' || zoomStepIndex < ZOOM_STEPS.length - 1;
   const currentImageHasError = activePage ? Boolean(imgErrors[activePage.key]) : false;
   const currentPageRotation = activePage ? normalizeRotation(pageRotations[activePage.key] ?? 0) : 0;
+  const canToggleCollapse = collapsible && typeof onToggleCollapsed === 'function';
+  const collapsedTitle = [title || t('category.designer.reviewWorkspace'), currentLabel].filter(Boolean).join(' ');
   const currentImageFrameClass =
     viewerMode === 'fit-page'
       ? 'ics-category-viewer__frame ics-category-viewer__frame--fit-page'
@@ -247,171 +255,210 @@ export function DocumentPreviewWorkspace({
   };
 
   return (
-    <div class="ics-category-review-panel">
-      <div class="ics-card ics-card--flat ics-category-review-card">
-        <div class="ics-card-header">
-          <div class="ics-category-review-card__heading">
-            <ImageIcon size={16} />
-            <span>{title || t('category.designer.reviewWorkspace')}</span>
-            {activePage && <span class="ics-category-review-card__meta">{currentLabel}</span>}
+    <div class={`ics-category-review-panel ${isCollapsed ? 'is-collapsed' : ''}`}>
+      <div class={`ics-card ics-card--flat ics-category-review-card ${isCollapsed ? 'is-collapsed' : ''}`}>
+        {isCollapsed ? (
+          <div class="ics-category-review-rail" title={collapsedTitle} aria-label={collapsedTitle}>
+            <div class="ics-category-review-rail__marker">
+              <ImageIcon size={18} />
+            </div>
+            {activePage && <span class="ics-category-review-rail__meta">{currentIndex + 1}</span>}
+            {canToggleCollapse && (
+              <button
+                type="button"
+                class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ics-category-review-toolbar__btn--toggle ics-category-review-rail__toggle"
+                onClick={() => onToggleCollapsed?.(false)}
+                title={t('category.designer.expandReview')}
+                aria-label={t('category.designer.expandReview')}
+                aria-expanded={false}
+              >
+                <ChevronRight size={15} />
+              </button>
+            )}
           </div>
-          <div class="ics-category-review-toolbar">
-            <button
-              type="button"
-              class={`ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ${viewerMode === 'fit-width' ? 'is-active' : ''}`}
-              onClick={() => {
-                setViewerMode('fit-width');
-                setZoomPercent(ZOOM_STEPS[0]);
-              }}
-              title={t('category.designer.fitWidth')}
-            >
-              <span>{t('category.designer.fitWidthShort')}</span>
-            </button>
-            <button
-              type="button"
-              class={`ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ${viewerMode === 'fit-page' ? 'is-active' : ''}`}
-              onClick={() => setViewerMode('fit-page')}
-              title={t('category.designer.fitPage')}
-            >
-              <span>{t('category.designer.fitPageShort')}</span>
-            </button>
-            <button
-              type="button"
-              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
-              onClick={() => handleRotate('left')}
-              disabled={!activePage}
-              title={t('category.designer.rotateLeft')}
-              aria-label={t('category.designer.rotateLeft')}
-            >
-              <RotateCcw size={15} />
-            </button>
-            <button
-              type="button"
-              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
-              onClick={() => handleRotate('right')}
-              disabled={!activePage}
-              title={t('category.designer.rotateRight')}
-              aria-label={t('category.designer.rotateRight')}
-            >
-              <RotateCw size={15} />
-            </button>
-            <button
-              type="button"
-              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
-              onClick={() => handleZoom('out')}
-              disabled={!canZoomOut}
-              title={t('category.designer.zoomOut')}
-              aria-label={t('category.designer.zoomOut')}
-            >
-              <span>-</span>
-            </button>
-            <span class="ics-category-review-toolbar__status">{currentZoomLabel}</span>
-            <button
-              type="button"
-              class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
-              onClick={() => handleZoom('in')}
-              disabled={!canZoomIn}
-              title={t('category.designer.zoomIn')}
-              aria-label={t('category.designer.zoomIn')}
-            >
-              <span>+</span>
-            </button>
+        ) : (
+          <div class={`ics-card-header ics-category-review-card__header ${isCollapsed ? 'ics-category-review-card__header--collapsed' : ''}`}>
+            <div class="ics-category-review-card__heading">
+              <ImageIcon size={16} />
+              <span class="ics-category-review-card__headingLabel">{title || t('category.designer.reviewWorkspace')}</span>
+              {activePage && !isCollapsed && <span class="ics-category-review-card__meta">{currentLabel}</span>}
+            </div>
+            <div class="ics-category-review-toolbar">
+              {!isCollapsed && (
+                <>
+                  <button
+                    type="button"
+                    class={`ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ${viewerMode === 'fit-width' ? 'is-active' : ''}`}
+                    onClick={() => {
+                      setViewerMode('fit-width');
+                      setZoomPercent(ZOOM_STEPS[0]);
+                    }}
+                    title={t('category.designer.fitWidth')}
+                  >
+                    <span>{t('category.designer.fitWidthShort')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class={`ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ${viewerMode === 'fit-page' ? 'is-active' : ''}`}
+                    onClick={() => setViewerMode('fit-page')}
+                    title={t('category.designer.fitPage')}
+                  >
+                    <span>{t('category.designer.fitPageShort')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
+                    onClick={() => handleRotate('left')}
+                    disabled={!activePage}
+                    title={t('category.designer.rotateLeft')}
+                    aria-label={t('category.designer.rotateLeft')}
+                  >
+                    <RotateCcw size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
+                    onClick={() => handleRotate('right')}
+                    disabled={!activePage}
+                    title={t('category.designer.rotateRight')}
+                    aria-label={t('category.designer.rotateRight')}
+                  >
+                    <RotateCw size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
+                    onClick={() => handleZoom('out')}
+                    disabled={!canZoomOut}
+                    title={t('category.designer.zoomOut')}
+                    aria-label={t('category.designer.zoomOut')}
+                  >
+                    <span>-</span>
+                  </button>
+                  <span class="ics-category-review-toolbar__status">{currentZoomLabel}</span>
+                  <button
+                    type="button"
+                    class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn"
+                    onClick={() => handleZoom('in')}
+                    disabled={!canZoomIn}
+                    title={t('category.designer.zoomIn')}
+                    aria-label={t('category.designer.zoomIn')}
+                  >
+                    <span>+</span>
+                  </button>
+                </>
+              )}
+              {canToggleCollapse && (
+                <button
+                  type="button"
+                  class="ics-ops-btn ics-ops-btn--ghost ics-category-review-toolbar__btn ics-category-review-toolbar__btn--toggle"
+                  onClick={() => onToggleCollapsed?.(!isCollapsed)}
+                  title={isCollapsed ? t('category.designer.expandReview') : t('category.designer.collapseReview')}
+                  aria-label={isCollapsed ? t('category.designer.expandReview') : t('category.designer.collapseReview')}
+                  aria-expanded={!isCollapsed}
+                >
+                  {isCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
-        <div class="ics-card-body ics-category-review-card__body">
-          {hint && <p class="ics-form-hint">{hint}</p>}
+        {!isCollapsed && (
+          <div class="ics-card-body ics-category-review-card__body">
+            {hint && <p class="ics-form-hint">{hint}</p>}
 
-          {isLoading ? (
-            <div class="ics-category-viewer__empty">
-              <Loader2 size={30} class="ics-spin" />
-              <span>{t('common.loading')}</span>
-            </div>
-          ) : loadError ? (
-            <div class="ics-category-viewer__empty">
-              <AlertTriangle size={30} />
-              <span>{loadError}</span>
-            </div>
-          ) : !activePage ? (
-            <div class="ics-category-viewer__empty">
-              <ImageIcon size={30} />
-              <span>{t('documentPreview.noPages')}</span>
-            </div>
-          ) : (
-            <>
-              <div class="ics-category-viewer">
-                <div class={`ics-category-viewer__stage ${viewerMode === 'fit-page' ? 'ics-category-viewer__stage--fit-page' : ''}`}>
-                  {currentImageHasError ? (
-                    <div class="ics-category-viewer__empty">
-                      <ImageIcon size={30} />
-                      <span>{t('documentPreview.loadFailed')}</span>
-                    </div>
-                  ) : (
-                    <div class={currentImageFrameClass} style={buildMainFrameStyle(activePage.key)}>
-                      <div class="ics-category-viewer__rotation" style={getPageLayout(activePage.key).rotationShellStyle}>
-                        <img
-                          src={`/studio/api/v1/files/${activePage.fileId}/preview-pages/${activePage.page_index}`}
-                          alt={activePage.page_label || activePage.fileName}
-                          class="ics-category-viewer__image"
-                          onLoad={handleImageLoad(activePage.key)}
-                          onError={() => setImgErrors((prev) => ({ ...prev, [activePage.key]: true }))}
-                        />
+            {isLoading ? (
+              <div class="ics-category-viewer__empty">
+                <Loader2 size={30} class="ics-spin" />
+                <span>{t('common.loading')}</span>
+              </div>
+            ) : loadError ? (
+              <div class="ics-category-viewer__empty">
+                <AlertTriangle size={30} />
+                <span>{loadError}</span>
+              </div>
+            ) : !activePage ? (
+              <div class="ics-category-viewer__empty">
+                <ImageIcon size={30} />
+                <span>{t('documentPreview.noPages')}</span>
+              </div>
+            ) : (
+              <>
+                <div class="ics-category-viewer">
+                  <div class={`ics-category-viewer__stage ${viewerMode === 'fit-page' ? 'ics-category-viewer__stage--fit-page' : ''}`}>
+                    {currentImageHasError ? (
+                      <div class="ics-category-viewer__empty">
+                        <ImageIcon size={30} />
+                        <span>{t('documentPreview.loadFailed')}</span>
                       </div>
-                    </div>
+                    ) : (
+                      <div class={currentImageFrameClass} style={buildMainFrameStyle(activePage.key)}>
+                        <div class="ics-category-viewer__rotation" style={getPageLayout(activePage.key).rotationShellStyle}>
+                          <img
+                            src={`/studio/api/v1/files/${activePage.fileId}/preview-pages/${activePage.page_index}`}
+                            alt={activePage.page_label || activePage.fileName}
+                            class="ics-category-viewer__image"
+                            onLoad={handleImageLoad(activePage.key)}
+                            onError={() => setImgErrors((prev) => ({ ...prev, [activePage.key]: true }))}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div class="ics-category-review-card__caption">
+                  <strong>{activePage.page_label || activePage.fileName}</strong>
+                  <span>{activePage.source_name || activePage.fileName}</span>
+                  {currentPageRotation !== 0 && (
+                    <span>{t('category.designer.rotationStatus', { degrees: currentPageRotation })}</span>
                   )}
                 </div>
-              </div>
 
-              <div class="ics-category-review-card__caption">
-                <strong>{activePage.page_label || activePage.fileName}</strong>
-                <span>{activePage.source_name || activePage.fileName}</span>
-                {currentPageRotation !== 0 && (
-                  <span>{t('category.designer.rotationStatus', { degrees: currentPageRotation })}</span>
-                )}
-              </div>
-
-              {pages.length > 1 && (
-                <div class="ics-category-thumbnail-strip">
-                  {pages.map((page, index) => {
-                    const hasError = Boolean(imgErrors[page.key]);
-                    const selected = page.key === activePage.key;
-                    return (
-                      <button
-                        type="button"
-                        key={page.key}
-                        class={`ics-category-thumbnail ${selected ? 'is-active' : ''}`}
-                        onClick={() => setActivePageKey(page.key)}
-                        aria-pressed={selected}
-                        title={page.source_name || t('category.designer.selectImage', { index: index + 1 })}
-                      >
-                        <div class="ics-category-thumbnail__frame">
-                          {hasError ? (
-                            <div class="ics-category-thumbnail__error">
-                              <ImageIcon size={18} />
-                            </div>
-                          ) : (
-                            <div class="ics-category-thumbnail__media" style={buildThumbnailFrameStyle(page.key)}>
-                              <div class="ics-category-thumbnail__rotation" style={getPageLayout(page.key).rotationShellStyle}>
-                                <img
-                                  src={`/studio/api/v1/files/${page.fileId}/preview-pages/${page.page_index}`}
-                                  alt={page.page_label || page.fileName}
-                                  class="ics-category-thumbnail__image"
-                                  onLoad={handleImageLoad(page.key)}
-                                  onError={() => setImgErrors((prev) => ({ ...prev, [page.key]: true }))}
-                                />
+                {pages.length > 1 && (
+                  <div class="ics-category-thumbnail-strip">
+                    {pages.map((page, index) => {
+                      const hasError = Boolean(imgErrors[page.key]);
+                      const selected = page.key === activePage.key;
+                      return (
+                        <button
+                          type="button"
+                          key={page.key}
+                          class={`ics-category-thumbnail ${selected ? 'is-active' : ''}`}
+                          onClick={() => setActivePageKey(page.key)}
+                          aria-pressed={selected}
+                          title={page.source_name || t('category.designer.selectImage', { index: index + 1 })}
+                        >
+                          <div class="ics-category-thumbnail__frame">
+                            {hasError ? (
+                              <div class="ics-category-thumbnail__error">
+                                <ImageIcon size={18} />
                               </div>
-                            </div>
-                          )}
-                        </div>
-                        <span class="ics-category-thumbnail__label">{page.page_label || t('category.designer.imageLabel', { index: index + 1 })}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          )}
-        </div>
+                            ) : (
+                              <div class="ics-category-thumbnail__media" style={buildThumbnailFrameStyle(page.key)}>
+                                <div class="ics-category-thumbnail__rotation" style={getPageLayout(page.key).rotationShellStyle}>
+                                  <img
+                                    src={`/studio/api/v1/files/${page.fileId}/preview-pages/${page.page_index}`}
+                                    alt={page.page_label || page.fileName}
+                                    class="ics-category-thumbnail__image"
+                                    onLoad={handleImageLoad(page.key)}
+                                    onError={() => setImgErrors((prev) => ({ ...prev, [page.key]: true }))}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <span class="ics-category-thumbnail__label">{page.page_label || t('category.designer.imageLabel', { index: index + 1 })}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

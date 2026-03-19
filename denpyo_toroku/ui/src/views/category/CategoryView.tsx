@@ -542,7 +542,7 @@ function ColumnRow({
 
   return (
     <tr>
-      <td class="ics-table__cell--center" style={{ width: '32px' }}>
+      <td class="ics-table__index-col">
         <span class="ics-text-muted">{index + 1}</span>
       </td>
       <td>
@@ -741,7 +741,7 @@ function TableDesigner({
         <table class="ics-table ics-table--compact ics-table--sticky">
           <thead>
             <tr>
-              <th>#</th>
+              <th class="ics-table__index-col">#</th>
               <th>{t('category.designer.colName')} *</th>
               <th>{t('category.designer.colNameJp')} *</th>
               <th>{t('category.designer.dataType')}</th>
@@ -821,6 +821,7 @@ function TableDesignerPanel({
   const [lineColumns, setLineColumns] = useState<TableDesignerColumn[]>(() => normalizeColumns(analysisResult.line_columns, 'LINE_ID', 'HEADER_ID'));
   const [activeTab, setActiveTab] = useState<'header' | 'line'>('header');
   const [validationError, setValidationError] = useState('');
+  const [isReviewCollapsed, setIsReviewCollapsed] = useState(false);
 
   const hasLine = analysisResult.analysis_mode === 'header_line';
   const fileIds = analysisResult.analyzed_file_ids ?? [];
@@ -903,16 +904,25 @@ function TableDesignerPanel({
           <div class="ics-card-body ics-card-body--designer">
             {/* 2カラムレイアウト: 左=画像レビュー、右=フォーム */}
             <div
-              class="ics-category-designer-layout"
-              style={{ gridTemplateColumns: fileIds.length > 0 ? 'minmax(460px, 1.05fr) minmax(620px, 1.15fr)' : '1fr' }}
+              class={`ics-category-designer-layout ${isReviewCollapsed ? 'is-review-collapsed' : ''}`}
+              style={{
+                gridTemplateColumns: fileIds.length > 0
+                  ? isReviewCollapsed
+                    ? '108px minmax(0, 1fr)'
+                    : 'minmax(460px, 1.05fr) minmax(620px, 1.15fr)'
+                  : '1fr'
+              }}
             >
               {/* 左カラム: 画像レビュー */}
               {fileIds.length > 0 && (
-                <div class="ics-category-image-panel">
+                <div class={`ics-category-image-panel ${isReviewCollapsed ? 'is-collapsed' : ''}`}>
                   <DocumentPreviewWorkspace
                     fileIds={fileIds}
                     title={t('category.designer.reviewWorkspace')}
                     hint={t('category.designer.reviewHint')}
+                    collapsible
+                    isCollapsed={isReviewCollapsed}
+                    onToggleCollapsed={setIsReviewCollapsed}
                   />
                 </div>
               )}
