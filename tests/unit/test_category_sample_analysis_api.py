@@ -2,6 +2,7 @@ from flask import Flask
 import denpyo_toroku.app.blueprints.api.api_blueprint as api_blueprint_module
 
 from denpyo_toroku.app.blueprints.api import api_blueprint as api_bp
+from denpyo_toroku.app.services.ai_service import AIRateLimitError
 
 
 def _create_client():
@@ -408,3 +409,107 @@ def test_fetch_category_analysis_result_returns_retry_message_for_stalled_slips_
 
     assert response.status_code == 409
     assert response.get_json()["errorMessages"][0] == "AI分析が長時間完了していません。再分析してください"
+
+
+def test_build_category_analysis_result_payload_merges_sample_values_and_uses_first_line_row_only():
+    class StubAIService:
+        def extract_data_from_text(self, ocr_text, category, table_schema, log_context=None):
+            return {
+                "success": True,
+                "header_fields": [
+                    {"field_name_en": "INVOICE_NO", "value": "INV-001"},
+                    {"field_name_en": "TOTAL_AMOUNT", "value": "12345"},
+                ],
+                "line_fields": [
+                    {"field_name_en": "ITEM_NAME", "value": "fallback-item"},
+                    {"field_name_en": "QUANTITY", "value": "99"},
+                ],
+                "raw_lines": [
+                    {"ITEM_NAME": "商品A", "QUANTITY": "2"},
+                    {"ITEM_NAME": "商品B", "QUANTITY": "4"},
+                ],
+                "line_count": 2,
+            }
+
+    result = api_blueprint_module._build_category_analysis_result_payload(
+        ai_service=StubAIService(),
+        schema_result={
+            "document_type_ja": "請求書",
+            "document_type_en": "invoice",
+            "header_fields": [
+                {
+                    "field_name": "請求番号",
+                    "field_name_en": "INVOICE_NO",
+                    "data_type": "VARCHAR2",
+                    "max_length": 50,
+                    "is_required": True,
+                },
+                {
+                    "field_name": "合計金額",
+                    "field_name_en": "TOTAL_AMOUNT",
+                    "data_type": "NUMBER",
+                    "is_required": False,
+                },
+            ],
+            "line_fields": [
+                {
+                    "field_name": "品名",
+                    "field_name_en": "ITEM_NAME",
+                    "data_type": "VARCHAR2",
+                    "max_length": 100,
+                    "is_required": True,
+                },
+                {
+                    "field_name": "数量",
+                    "field_name_en": "QUANTITY",
+                    "data_type": "NUMBER",
+                    "is_required": True,
+                },
+            ],
+        },
+        analysis_mode="header_line",
+        processed_file_ids=[10, 10, 11],
+        sample_ocr_text="[PAGE 1]\nOCR text",
+        log_context={"request_id": "req-test"},
+    )
+
+    header_columns = {column["column_name"]: column for column in result["header_columns"]}
+    line_columns = {column["column_name"]: column for column in result["line_columns"]}
+
+    assert header_columns["INVOICE_NO"]["sample_data"] == "INV-001"
+    assert header_columns["TOTAL_AMOUNT"]["sample_data"] == "12345"
+    assert line_columns["ITEM_NAME"]["sample_data"] == "商品A"
+    assert line_columns["QUANTITY"]["sample_data"] == "2"
+    assert result["analyzed_file_ids"] == [10, 11]
+
+
+def test_build_category_analysis_result_payload_skips_sample_values_when_auxiliary_extraction_is_rate_limited():
+    class StubAIService:
+        def extract_data_from_text(self, ocr_text, category, table_schema, log_context=None):
+            raise AIRateLimitError("extract_data_from_text", 8.0, Exception("rate limited"))
+
+    result = api_blueprint_module._build_category_analysis_result_payload(
+        ai_service=StubAIService(),
+        schema_result={
+            "document_type_ja": "請求書",
+            "document_type_en": "invoice",
+            "header_fields": [
+                {
+                    "field_name": "請求番号",
+                    "field_name_en": "INVOICE_NO",
+                    "data_type": "VARCHAR2",
+                    "max_length": 50,
+                    "is_required": True,
+                }
+            ],
+            "line_fields": [],
+        },
+        analysis_mode="header_only",
+        processed_file_ids=[1],
+        sample_ocr_text="[PAGE 1]\nOCR text",
+        log_context={"request_id": "req-test"},
+    )
+
+    assert result["category_guess"] == "請求書"
+    assert result["header_columns"][0]["column_name"] == "INVOICE_NO"
+    assert result["header_columns"][0]["sample_data"] == ""

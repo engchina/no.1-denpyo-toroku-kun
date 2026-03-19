@@ -116,6 +116,15 @@ def _to_non_negative_int(value: Any, default: int = 0) -> int:
         return max(0, int(default))
 
 
+def _to_optional_int(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_session_authenticated() -> bool:
     user = session.get("user", None)
     token = session.get("token", None)
@@ -129,6 +138,298 @@ def _normalize_text(value: Any, default: str = "") -> str:
     if value is None:
         return default
     return str(value).strip()
+
+
+def _normalize_column_key(value: Any) -> str:
+    return _normalize_text(value, "").upper().replace(" ", "_").replace("-", "_")
+
+
+def _stringify_sample_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def _merge_category_analysis_fields(
+    fields_list: List[Dict[str, Any]],
+    sample_values: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    sample_values = sample_values or {}
+    seen: Dict[str, Dict[str, Any]] = {}
+    required_count: Dict[str, int] = {}
+    appear_count: Dict[str, int] = {}
+
+    for field in fields_list:
+        raw_key = _normalize_text(field.get("field_name_en"), "")
+        if not raw_key:
+            continue
+
+        key = _normalize_column_key(raw_key)
+        original_data_type = _normalize_text(field.get("data_type"), "VARCHAR2").upper()
+        data_type = original_data_type if original_data_type in ("VARCHAR2", "NUMBER", "DATE", "TIMESTAMP") else "VARCHAR2"
+
+        if key not in seen:
+            max_length = None
+            if data_type == "VARCHAR2":
+                raw_length = field.get("max_length")
+                try:
+                    max_length = int(raw_length) if raw_length else 100
+                except (TypeError, ValueError):
+                    max_length = 100
+                if original_data_type == "CLOB" and not raw_length:
+                    max_length = 4000
+
+            seen[key] = {
+                "column_name": key,
+                "column_name_jp": field.get("field_name") or raw_key,
+                "sample_data": sample_values.get(key, ""),
+                "data_type": data_type,
+                "max_length": max_length,
+                "precision": None,
+                "scale": None,
+                "is_nullable": True,
+                "is_primary_key": False,
+            }
+            appear_count[key] = 1
+            required_count[key] = 1 if field.get("is_required") else 0
+            continue
+
+        existing_data_type = seen[key].get("data_type", "VARCHAR2")
+        if existing_data_type != data_type:
+            seen[key]["data_type"] = "VARCHAR2"
+            if not seen[key].get("max_length"):
+                seen[key]["max_length"] = 100
+            data_type = "VARCHAR2"
+
+        if data_type == "VARCHAR2":
+            existing_length = seen[key].get("max_length") or 100
+            raw_new_length = field.get("max_length")
+            try:
+                new_length = int(raw_new_length) if raw_new_length else 100
+            except (TypeError, ValueError):
+                new_length = 100
+            if original_data_type == "CLOB" and not raw_new_length:
+                new_length = 4000
+            seen[key]["max_length"] = max(existing_length, new_length)
+
+        if not seen[key].get("sample_data") and sample_values.get(key):
+            seen[key]["sample_data"] = sample_values[key]
+
+        appear_count[key] += 1
+        if field.get("is_required"):
+            required_count[key] += 1
+
+    for key in seen:
+        if required_count.get(key, 0) == appear_count.get(key, 0) and appear_count.get(key, 0) > 0:
+            seen[key]["is_nullable"] = False
+
+    return list(seen.values())
+
+
+def _build_extraction_table_schema(
+    header_columns: List[Dict[str, Any]],
+    line_columns: List[Dict[str, Any]],
+    header_table_name: str,
+    line_table_name: str,
+) -> Dict[str, Any]:
+    def _map_columns(columns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        mapped_columns: List[Dict[str, Any]] = []
+        for column in columns:
+            mapped_columns.append({
+                "column_name": _normalize_column_key(column.get("column_name")),
+                "data_type": _normalize_text(column.get("data_type"), "VARCHAR2").upper() or "VARCHAR2",
+                "data_length": _to_optional_int(column.get("max_length")),
+                "precision": _to_optional_int(column.get("precision")),
+                "scale": _to_optional_int(column.get("scale")),
+                "is_nullable": _to_bool(column.get("is_nullable"), default=True),
+                "comment": _normalize_text(column.get("column_name_jp"), ""),
+            })
+        return mapped_columns
+
+    return {
+        "header_table_name": _normalize_text(header_table_name, ""),
+        "line_table_name": _normalize_text(line_table_name, ""),
+        "header_columns": _map_columns(header_columns),
+        "line_columns": _map_columns(line_columns),
+    }
+
+
+def _build_sample_ocr_text(
+    page_texts: Any,
+    page_range: Optional[Dict[str, int]],
+) -> str:
+    if not isinstance(page_texts, list) or not page_range:
+        return ""
+
+    start = max(0, int(page_range.get("start", 0) or 0))
+    end = max(start, int(page_range.get("end", start) or start))
+    pages = page_texts[start:end]
+    if not pages:
+        return ""
+
+    extracted_pages: List[str] = []
+    for index, page in enumerate(pages, start=1):
+        text = _normalize_text(page.get("text") if isinstance(page, dict) else "", "")
+        if text:
+            extracted_pages.append(f"[PAGE {index}]\n{text}")
+
+    return "\n\n".join(extracted_pages).strip()
+
+
+def _extract_sample_value_maps_from_extraction(extraction: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    header_values: Dict[str, str] = {}
+    for field in extraction.get("header_fields", []):
+        if not isinstance(field, dict):
+            continue
+        key = _normalize_column_key(field.get("field_name_en"))
+        if key and key not in header_values:
+            header_values[key] = _stringify_sample_value(field.get("value"))
+
+    line_values: Dict[str, str] = {}
+    raw_lines = extraction.get("raw_lines", [])
+    if isinstance(raw_lines, list) and raw_lines and isinstance(raw_lines[0], dict):
+        for key, value in raw_lines[0].items():
+            normalized_key = _normalize_column_key(key)
+            if normalized_key:
+                line_values[normalized_key] = _stringify_sample_value(value)
+
+    if not line_values:
+        for field in extraction.get("line_fields", []):
+            if not isinstance(field, dict):
+                continue
+            key = _normalize_column_key(field.get("field_name_en"))
+            if key and key not in line_values:
+                line_values[key] = _stringify_sample_value(field.get("value"))
+
+    return {
+        "header": header_values,
+        "line": line_values,
+    }
+
+
+def _extract_category_sample_value_maps(
+    ai_service: Any,
+    sample_ocr_text: str,
+    category_name: str,
+    header_columns: List[Dict[str, Any]],
+    line_columns: List[Dict[str, Any]],
+    header_table_name: str,
+    line_table_name: str,
+    log_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Dict[str, str]]:
+    if not sample_ocr_text or not header_columns:
+        return {"header": {}, "line": {}}
+
+    sample_schema = _build_extraction_table_schema(
+        header_columns=header_columns,
+        line_columns=line_columns,
+        header_table_name=header_table_name,
+        line_table_name=line_table_name,
+    )
+    try:
+        extraction = ai_service.extract_data_from_text(
+            ocr_text=sample_ocr_text,
+            category=category_name,
+            table_schema=sample_schema,
+            log_context=log_context,
+        )
+    except AIRateLimitError as error:
+        logging.warning(
+            "分類用サンプル伝票のサンプル値抽出をスキップしました（rate limit）: retry_after=%.1fs",
+            error.retry_after_seconds,
+            extra=log_context or {},
+        )
+        return {"header": {}, "line": {}}
+    except Exception as error:
+        logging.warning(
+            "分類用サンプル伝票のサンプル値抽出をスキップしました: %s",
+            error,
+            extra=log_context or {},
+        )
+        return {"header": {}, "line": {}}
+
+    if not extraction.get("success"):
+        logging.warning(
+            "分類用サンプル伝票のサンプル値抽出に失敗しました: %s",
+            extraction.get("message"),
+            extra=log_context or {},
+        )
+        return {"header": {}, "line": {}}
+    return _extract_sample_value_maps_from_extraction(extraction)
+
+
+def _resolve_category_guess_names(schema_result: Dict[str, Any]) -> Dict[str, str]:
+    category_guess = _normalize_text(schema_result.get("document_type_ja"), "") or "伝票"
+    category_map = {
+        "請求書": "invoice",
+        "領収書": "receipt",
+        "納品書": "delivery_note",
+        "注文書": "purchase_order",
+        "見積書": "quotation",
+        "発注書": "order_sheet",
+    }
+    llm_doc_type_en = re.sub(
+        r"[^a-z0-9_]+",
+        "_",
+        _normalize_text(schema_result.get("document_type_en"), "").lower(),
+    ).strip("_")
+    return {
+        "category_guess": category_guess,
+        "category_guess_en": llm_doc_type_en or category_map.get(category_guess, "slip"),
+    }
+
+
+def _build_category_analysis_result_payload(
+    ai_service: Any,
+    schema_result: Dict[str, Any],
+    analysis_mode: str,
+    processed_file_ids: List[int],
+    sample_ocr_text: str = "",
+    log_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    header_fields = schema_result.get("header_fields", [])
+    if not header_fields:
+        raise ValueError("分析できるファイルがありませんでした")
+
+    line_fields = schema_result.get("line_fields", []) if analysis_mode == "header_line" else []
+    header_columns = _merge_category_analysis_fields(header_fields)
+    line_columns = _merge_category_analysis_fields(line_fields) if analysis_mode == "header_line" else []
+    category_names = _resolve_category_guess_names(schema_result)
+    category_guess = category_names["category_guess"]
+    category_guess_en = category_names["category_guess_en"]
+
+    sample_values = _extract_category_sample_value_maps(
+        ai_service=ai_service,
+        sample_ocr_text=sample_ocr_text,
+        category_name=category_guess,
+        header_columns=header_columns,
+        line_columns=line_columns,
+        header_table_name=_normalize_text(schema_result.get("header_table_name"), f"{category_guess_en.upper()}_H"),
+        line_table_name=_normalize_text(schema_result.get("line_table_name"), f"{category_guess_en.upper()}_L") if analysis_mode == "header_line" else "",
+        log_context=log_context,
+    )
+    header_columns = _merge_category_analysis_fields(header_fields, sample_values.get("header"))
+    line_columns = (
+        _merge_category_analysis_fields(line_fields, sample_values.get("line"))
+        if analysis_mode == "header_line"
+        else []
+    )
+
+    return {
+        "category_guess": category_guess,
+        "category_guess_en": category_guess_en,
+        "analysis_mode": analysis_mode,
+        "header_columns": header_columns,
+        "line_columns": line_columns,
+        "analyzed_file_ids": list(dict.fromkeys(processed_file_ids)),
+    }
 
 
 def _parse_login_credentials_from_db_connection(connection_string: str) -> Dict[str, str]:
@@ -3426,6 +3727,7 @@ def _queue_category_slip_analysis(
         doc_processor = DocumentProcessor()
         ai_service = AIService()
         processed_file_ids: List[int] = []
+        sample_page_range: Optional[Dict[str, int]] = None
         for rec in file_records:
             object_name = rec.get("object_name", "")
             file_data = storage_service.download_file(object_name)
@@ -3438,14 +3740,18 @@ def _queue_category_slip_analysis(
                 logging.warning("AI分析用画像の生成に失敗", extra={"object_name": object_name, "action": "IMAGE_CONVERSION_FAILED"})
                 continue
 
+            start_page_index = len(tmp_filepaths)
             for image_data, img_content_type in images:
                 suffix = ".jpg" if img_content_type in ("image/jpeg", "image/jpg") else ".png"
                 fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
                 with os.fdopen(fd, "wb") as f:
                     f.write(image_data)
                 tmp_filepaths.append(tmp_path)
+            end_page_index = len(tmp_filepaths)
             if rec.get("id"):
                 processed_file_ids.append(rec.get("id"))
+                if sample_page_range is None and end_page_index > start_page_index:
+                    sample_page_range = {"start": start_page_index, "end": end_page_index}
                 logging.info("ファイルの前処理(ダウンロード・画像変換)完了", extra={"file_id": rec.get("id"), "action": "PREPROCESS_COMPLETE"})
 
         if not tmp_filepaths:
@@ -3457,9 +3763,15 @@ def _queue_category_slip_analysis(
             raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
 
         extracted_text = ocr_result.get("extracted_text", "")
+        sample_ocr_text = _build_sample_ocr_text(ocr_result.get("page_texts"), sample_page_range)
         logging.info(
             "OCRテキスト抽出完了",
-            extra={**ocr_log_context, "text_length": len(extracted_text), "action": "OCR_COMPLETE"},
+            extra={
+                **ocr_log_context,
+                "text_length": len(extracted_text),
+                "sample_text_length": len(sample_ocr_text),
+                "action": "OCR_COMPLETE",
+            },
         )
 
         logging.info(
@@ -3478,98 +3790,14 @@ def _queue_category_slip_analysis(
             extra={**ocr_log_context, "action": "SCHEMA_DESIGN_COMPLETE"},
         )
 
-        def _merge_fields(fields_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-            seen: Dict[str, Dict[str, Any]] = {}
-            required_count: Dict[str, int] = {}
-            appear_count: Dict[str, int] = {}
-            for field in fields_list:
-                raw_key = (field.get("field_name_en") or "").strip()
-                if not raw_key:
-                    continue
-                key = raw_key.upper().replace(" ", "_").replace("-", "_")
-                original_data_type = (field.get("data_type") or "VARCHAR2").upper()
-                data_type = original_data_type
-                if data_type not in ("VARCHAR2", "NUMBER", "DATE", "TIMESTAMP"):
-                    data_type = "VARCHAR2"
-
-                if key not in seen:
-                    max_length = None
-                    if data_type == "VARCHAR2":
-                        try:
-                            max_length = int(field.get("max_length")) if field.get("max_length") else 100
-                        except (TypeError, ValueError):
-                            max_length = 100
-                        if original_data_type == "CLOB" and not field.get("max_length"):
-                            max_length = 4000
-                    seen[key] = {
-                        "column_name": key,
-                        "column_name_jp": field.get("field_name") or raw_key,
-                        "data_type": data_type,
-                        "max_length": max_length,
-                        "precision": None,
-                        "scale": None,
-                        "is_nullable": True,
-                        "is_primary_key": False,
-                    }
-                    appear_count[key] = 1
-                    required_count[key] = 1 if field.get("is_required") else 0
-                    continue
-
-                existing_type = seen[key].get("data_type", "VARCHAR2")
-                if existing_type != data_type:
-                    seen[key]["data_type"] = "VARCHAR2"
-                    if not seen[key].get("max_length"):
-                        seen[key]["max_length"] = 100
-                    data_type = "VARCHAR2"
-
-                if data_type == "VARCHAR2":
-                    existing_len = seen[key].get("max_length") or 100
-                    try:
-                        new_len = int(field.get("max_length")) if field.get("max_length") else 100
-                    except (TypeError, ValueError):
-                        new_len = 100
-                    if original_data_type == "CLOB" and not field.get("max_length"):
-                        new_len = 4000
-                    seen[key]["max_length"] = max(existing_len, new_len)
-                appear_count[key] += 1
-                if field.get("is_required"):
-                    required_count[key] += 1
-
-            for key in seen:
-                if required_count.get(key, 0) == appear_count.get(key, 0) and appear_count.get(key, 0) > 0:
-                    seen[key]["is_nullable"] = False
-
-            return list(seen.values())
-
-        header_columns = _merge_fields(schema_result.get("header_fields", []))
-        if not header_columns:
-            raise ValueError("分析できるファイルがありませんでした")
-
-        line_columns = _merge_fields(schema_result.get("line_fields", [])) if analysis_mode == "header_line" else []
-        category_guess = (schema_result.get("document_type_ja") or "").strip() or "伝票"
-        category_map = {
-            "請求書": "invoice",
-            "領収書": "receipt",
-            "納品書": "delivery_note",
-            "注文書": "purchase_order",
-            "見積書": "quotation",
-            "発注書": "order_sheet",
-        }
-        llm_doc_type_en = re.sub(
-            r"[^a-z0-9_]+",
-            "_",
-            (schema_result.get("document_type_en") or "").strip().lower(),
-        ).strip("_")
-        category_guess_en = llm_doc_type_en or category_map.get(category_guess, "slip")
-        analyzed_file_ids = list(dict.fromkeys(processed_file_ids))
-        result = {
-            "category_guess": category_guess,
-            "category_guess_en": category_guess_en,
-            "analysis_mode": analysis_mode,
-            "header_columns": header_columns,
-            "line_columns": line_columns,
-            "analyzed_file_ids": analyzed_file_ids,
-        }
+        result = _build_category_analysis_result_payload(
+            ai_service=ai_service,
+            schema_result=schema_result,
+            analysis_mode=analysis_mode,
+            processed_file_ids=processed_file_ids,
+            sample_ocr_text=sample_ocr_text,
+            log_context={**ocr_log_context, "action": "CATEGORY_SAMPLE_VALUE_EXTRACT"},
+        )
 
         for target in linked_targets:
             management_file_id = target.get("management_file_id")
@@ -4389,6 +4617,7 @@ def analyze_slips_for_category():
     tmp_filepaths = []
     processed_file_ids: List[int] = []
     schema_result: Dict[str, Any] = {}
+    sample_page_range: Optional[Dict[str, int]] = None
 
     try:
         # 1. すべてのファイルをダウンロードし、OCR用に画像化して /tmp に保存
@@ -4405,14 +4634,18 @@ def analyze_slips_for_category():
                     logging.warning("AI分析用画像の生成に失敗: %s", object_name)
                     continue
 
+                start_page_index = len(tmp_filepaths)
                 for image_data, img_content_type in images:
                     suffix = ".jpg" if img_content_type in ("image/jpeg", "image/jpg") else ".png"
                     fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
                     with os.fdopen(fd, "wb") as f:
                         f.write(image_data)
                     tmp_filepaths.append(tmp_path)
+                end_page_index = len(tmp_filepaths)
                 if rec.get("id"):
                     processed_file_ids.append(rec.get("id"))
+                    if sample_page_range is None and end_page_index > start_page_index:
+                        sample_page_range = {"start": start_page_index, "end": end_page_index}
             except Exception as e:
                 logging.error("ファイルダウンロード/OCR前処理エラー (id=%s): %s", rec.get("id"), e, exc_info=True)
                 continue
@@ -4464,10 +4697,16 @@ def analyze_slips_for_category():
             return jsonify(g.response.get_result()), 500
 
         extracted_text = ocr_result.get("extracted_text", "")
+        sample_ocr_text = _build_sample_ocr_text(ocr_result.get("page_texts"), sample_page_range)
         logging.info(
             "OCRテキスト抽出完了 (文字数=%d)",
             len(extracted_text),
-            extra={**ocr_log_context, "text_length": len(extracted_text), "action": "OCR_COMPLETE"},
+            extra={
+                **ocr_log_context,
+                "text_length": len(extracted_text),
+                "sample_text_length": len(sample_ocr_text),
+                "action": "OCR_COMPLETE",
+            },
         )
 
         # 3. LLMで抽出テキストからスキーマ（JSON）を生成
@@ -4539,104 +4778,37 @@ def analyze_slips_for_category():
         g.response.add_error_message("分析できるファイルがありませんでした")
         return jsonify(g.response.get_result()), 500
 
-    # フィールドをマージ（同名のものは代表1件に集約、大文字英語名で統一）
-    # is_required が全出現で true かつ全ファイルで登場した場合は NOT NULL とする
-    def _merge_fields(fields_list: List[Dict]) -> List[Dict]:
-        seen: Dict[str, Dict] = {}
-        required_count: Dict[str, int] = {}  # is_required=true の出現数
-        appear_count: Dict[str, int] = {}    # 総出現数
-        for f in fields_list:
-            raw_key = (f.get("field_name_en") or "").strip()
-            if not raw_key:
-                continue
-            # snake_case を大文字に統一（スペースはアンダースコアへ）
-            key = raw_key.upper().replace(" ", "_").replace("-", "_")
-            original_dt = (f.get("data_type") or "VARCHAR2").upper()
-            dt = original_dt
-            if dt not in ("VARCHAR2", "NUMBER", "DATE", "TIMESTAMP"):
-                dt = "VARCHAR2"
-
-            if key not in seen:
-                max_length = None
-                if dt == "VARCHAR2":
-                    raw_len = f.get("max_length")
-                    try:
-                        max_length = int(raw_len) if raw_len else 100
-                    except (TypeError, ValueError):
-                        max_length = 100
-                    if original_dt == "CLOB" and not raw_len:
-                        max_length = 4000
-                seen[key] = {
-                    "column_name": key,
-                    "column_name_jp": f.get("field_name") or raw_key,
-                    "data_type": dt,
-                    "max_length": max_length,
-                    "precision": None,
-                    "scale": None,
-                    "is_nullable": True,
-                    "is_primary_key": False,
-                }
-                appear_count[key] = 1
-                required_count[key] = 1 if f.get("is_required") else 0
-            else:
-                existing_dt = seen[key].get("data_type", "VARCHAR2")
-                if existing_dt != dt:
-                    # 同名カラムで型がぶれた場合は安全側に倒して文字列化する
-                    seen[key]["data_type"] = "VARCHAR2"
-                    if not seen[key].get("max_length"):
-                        seen[key]["max_length"] = 100
-                    dt = "VARCHAR2"
-                # 最大長は大きい方を採用
-                if dt == "VARCHAR2":
-                    existing_len = seen[key].get("max_length") or 100
-                    raw_new_len = f.get("max_length")
-                    try:
-                        new_len = int(raw_new_len) if raw_new_len else 100
-                    except (TypeError, ValueError):
-                        new_len = 100
-                    if original_dt == "CLOB" and not raw_new_len:
-                        new_len = 4000
-                    seen[key]["max_length"] = max(existing_len, new_len)
-                appear_count[key] += 1
-                if f.get("is_required"):
-                    required_count[key] += 1
-
-        for key in seen:
-            if required_count.get(key, 0) == appear_count.get(key, 0) and appear_count.get(key, 0) > 0:
-                seen[key]["is_nullable"] = False
-
-        return list(seen.values())
-
-    header_columns = _merge_fields(all_header_fields)
-    line_columns = _merge_fields(all_line_fields) if analysis_mode == "header_line" else []
-
-    category_guess = (schema_result.get("document_type_ja") or "").strip() or "伝票"
-
-    # 英語名の推定（LLM提案を優先。なければ簡易変換）
-    category_map = {
-        "請求書": "invoice", "領収書": "receipt", "納品書": "delivery_note",
-        "注文書": "purchase_order", "見積書": "quotation", "発注書": "order_sheet",
-    }
-    llm_doc_type_en = re.sub(
-        r"[^a-z0-9_]+",
-        "_",
-        (schema_result.get("document_type_en") or "").strip().lower(),
-    ).strip("_")
-    category_guess_en = (
-        llm_doc_type_en
-        or category_map.get(category_guess, "slip")
-    )
-
-    analyzed_file_ids = list(dict.fromkeys(processed_file_ids))
-
-    result = {
-        "category_guess": category_guess,
-        "category_guess_en": category_guess_en,
-        "analysis_mode": analysis_mode,
-        "header_columns": header_columns,
-        "line_columns": line_columns,
-        "analyzed_file_ids": analyzed_file_ids,
-    }
+    try:
+        result = _build_category_analysis_result_payload(
+            ai_service=ai_service,
+            schema_result=schema_result,
+            analysis_mode=analysis_mode,
+            processed_file_ids=processed_file_ids,
+            sample_ocr_text=sample_ocr_text,
+            log_context={**ocr_log_context, "action": "CATEGORY_SAMPLE_VALUE_EXTRACT"},
+        )
+    except Exception as e:
+        logging.error("分類用サンプル伝票の結果組み立てエラー: %s", e, exc_info=True)
+        for target in linked_targets:
+            management_file_id = target.get("management_file_id")
+            category_file_id = target.get("category_file_id")
+            source_file_id = target.get("source_file_id")
+            if management_file_id is not None:
+                db_service.update_file_status(int(management_file_id), "ERROR")
+            if category_file_id is not None:
+                db_service.update_category_file_status(int(category_file_id), "ERROR")
+            db_service.log_activity(
+                activity_type="CATEGORY_ANALYZE_ERROR",
+                description=_build_analysis_error_activity_description(
+                    "分類用サンプル伝票の分析エラー",
+                    e,
+                    request_id=ocr_log_context.get("request_id", ""),
+                ),
+                file_id=management_file_id or source_file_id,
+                user_name=session.get("user", ""),
+            )
+        g.response.add_error_message(f"分類用サンプル伝票の分析結果作成に失敗しました: {str(e)}")
+        return jsonify(g.response.get_result()), 500
     for target in linked_targets:
         management_file_id = target.get("management_file_id")
         category_file_id = target.get("category_file_id")

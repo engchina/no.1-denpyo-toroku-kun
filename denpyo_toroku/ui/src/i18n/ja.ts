@@ -554,6 +554,7 @@ export const ja = {
   'category.designer.tableName': 'テーブル名',
   'category.designer.colName': 'カラム名 (英語)',
   'category.designer.colNameJp': 'カラム名 (日本語)',
+  'category.designer.sampleData': 'サンプルデータ',
   'category.designer.dataType': 'データ型',
   'category.designer.length': '長さ / 精度',
   'category.designer.reorderHint': '矢印ボタンでカラム順を調整できます',

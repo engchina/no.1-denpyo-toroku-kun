@@ -172,6 +172,7 @@ function createSystemIdColumn(systemIdName: string, isPrimaryKey = true): TableD
     ui_key: createTableDesignerColumnKey(),
     column_name: systemIdName,
     column_name_jp: getSystemIdJapaneseName(systemIdName),
+    sample_data: '',
     data_type: 'VARCHAR2',
     max_length: SYSTEM_ID_COLUMN_MAX_LENGTH,
     precision: undefined,
@@ -238,6 +239,7 @@ function normalizeColumnDef(column: Partial<TableDesignerColumn> | null | undefi
     ui_key: String(column?.ui_key || createTableDesignerColumnKey()),
     column_name: String(column?.column_name || '').trim().toUpperCase(),
     column_name_jp: String(column?.column_name_jp || '').trim(),
+    sample_data: String(column?.sample_data || ''),
     data_type: dataType,
     max_length: dataType === 'VARCHAR2' && Number.isFinite(rawMaxLength) && rawMaxLength > 0 ? rawMaxLength : (dataType === 'VARCHAR2' ? fallbackMaxLength : undefined),
     precision: dataType === 'NUMBER' && Number.isFinite(rawPrecision) && rawPrecision > 0 ? rawPrecision : undefined,
@@ -262,7 +264,12 @@ function normalizeColumns(columns: TableColumnDef[] | null | undefined, systemId
 }
 
 function serializeColumns(columns: TableDesignerColumn[], systemIdName: string, fkIdName?: string): TableColumnDef[] {
-  return normalizeColumns(columns, systemIdName, fkIdName).map(({ ui_key: _ui_key, is_system: _isSystem, ...column }) => column);
+  return normalizeColumns(columns, systemIdName, fkIdName).map(({
+    ui_key: _ui_key,
+    is_system: _isSystem,
+    sample_data: _sampleData,
+    ...column
+  }) => column);
 }
 
 function getBusinessColumns(columns: TableDesignerColumn[]): TableDesignerColumn[] {
@@ -568,6 +575,13 @@ function ColumnRow({
           onInput={(e: Event) => update({ column_name_jp: (e.target as HTMLInputElement).value })}
         />
       </td>
+      <td style={{ minWidth: '180px', maxWidth: '280px' }} title={col.sample_data || ''}>
+        {col.sample_data ? (
+          <span>{col.sample_data}</span>
+        ) : (
+          <span class="oj-text-color-secondary">--</span>
+        )}
+      </td>
       <td style={{ minWidth: '120px' }}>
         <select
           class="ics-form-select ics-form-select--sm"
@@ -745,6 +759,7 @@ function TableDesigner({
               <th class="ics-table__index-col">#</th>
               <th>{t('category.designer.colName')} *</th>
               <th>{t('category.designer.colNameJp')} *</th>
+              <th>{t('category.designer.sampleData')}</th>
               <th>{t('category.designer.dataType')}</th>
               <th>{t('category.designer.length')}</th>
               <th title="NOT NULL">NN</th>
