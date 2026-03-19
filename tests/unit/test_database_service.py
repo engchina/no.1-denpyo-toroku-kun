@@ -1,5 +1,6 @@
 import datetime as dt
 import json
+import logging
 from contextlib import contextmanager
 
 import denpyo_toroku.app.services.database_service as database_service_module
@@ -412,6 +413,38 @@ def test_execute_select_query_respects_explicit_allowed_tables(monkeypatch):
 
     assert result["success"] is False
     assert "許可されていないテーブル" in result["message"]
+
+
+def test_execute_select_query_logs_validation_failure_at_debug_for_explicit_allowlist(caplog):
+    service = DatabaseService()
+
+    with caplog.at_level(logging.DEBUG, logger=database_service_module.logger.name):
+        result = service.execute_select_query(
+            "SELECT * FROM RECEIPT_H",
+            allowed_tables={"OTHER_TABLE"},
+        )
+
+    assert result["success"] is False
+    assert any(
+        record.levelno == logging.DEBUG
+        and "SQL 検証失敗（明示 allowlist 適用中）" in record.message
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+
+
+def test_execute_select_query_logs_validation_failure_at_warning_without_explicit_allowlist(monkeypatch, caplog):
+    service = DatabaseService()
+    monkeypatch.setattr(service, "_get_allowed_table_set", lambda: {"OTHER_TABLE"})
+
+    with caplog.at_level(logging.WARNING, logger=database_service_module.logger.name):
+        result = service.execute_select_query("SELECT * FROM RECEIPT_H")
+
+    assert result["success"] is False
+    assert any(
+        record.levelno == logging.WARNING and "SQL 検証エラー" in record.message
+        for record in caplog.records
+    )
 
 
 def test_execute_select_query_allows_where_clause_columns(monkeypatch):

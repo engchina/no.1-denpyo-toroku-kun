@@ -3461,7 +3461,10 @@ END;"""
                         "total": len(rows),
                     }
         except ValueError as e:
-            logger.warning("SQL 検証エラー: %s", e)
+            if allowed_tables is None:
+                logger.warning("SQL 検証エラー: %s", e)
+            else:
+                logger.debug("SQL 検証失敗（明示 allowlist 適用中）: %s", e)
             return {"success": False, "message": str(e), "columns": [], "rows": [], "total": 0}
         except Exception as e:
             logger.error("クエリ実行エラー: %s", e, exc_info=True)
