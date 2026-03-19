@@ -5714,28 +5714,20 @@ html[dir="rtl"] .oracle-icon {
 /* AnalysisModeModal と同じ ics-modal 構造を利用 */
 
 .ics-toast-confirm-modal {
-    max-width: min(560px, calc(100vw - 32px));
+    max-width: min(520px, calc(100vw - 32px));
     max-height: min(90vh, 720px);
     overflow-x: hidden;
     overflow-y: auto;
 }
 
 .ics-toast-confirm-modal__header {
-    align-items: flex-start;
-    gap: 12px;
-}
-
-.ics-toast-confirm-modal__heading {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    min-width: 0;
-    flex: 1;
+    align-items: center;
 }
 
 .ics-toast-confirm-modal__title {
     margin: 0;
     min-width: 0;
+    flex: 1;
     line-height: 1.45;
     overflow-wrap: anywhere;
     word-break: break-word;
@@ -5755,16 +5747,8 @@ html[dir="rtl"] .oracle-icon {
     word-break: break-word;
 }
 
-.ics-toast-confirm-modal__icon {
-    display: inline-flex;
-    align-items: center;
-    flex-shrink: 0;
-    margin-top: 2px;
-}
-
 .ics-toast-confirm-modal__close {
     flex-shrink: 0;
-    align-self: flex-start;
 }
 
 .ics-toast-confirm-modal__footer {

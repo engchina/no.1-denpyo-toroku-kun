@@ -229,6 +229,7 @@ export function ListView() {
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
+      confirmIcon: Trash2,
       onConfirm: async () => {
         try {
           await dispatch(deleteFile(fileId)).unwrap();
@@ -402,6 +403,7 @@ export function ListView() {
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
+      confirmIcon: Trash2,
       onConfirm: async () => {
         try {
           const result = await dispatch(bulkDeleteFiles(targetIds)).unwrap();

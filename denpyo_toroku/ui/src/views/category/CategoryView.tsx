@@ -1471,6 +1471,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
+      confirmIcon: Trash2,
       onConfirm: async () => {
         try {
           const result = await dispatch(bulkDeleteFiles([fileId])).unwrap();
@@ -1598,6 +1599,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
+      confirmIcon: Trash2,
       onConfirm: async () => {
         setIsBulkDeletingSlips(true);
         try {
@@ -1649,6 +1651,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
+      confirmIcon: Trash2,
       onConfirm: async () => {
         setIsBulkDeletingCategories(true);
         let successCount = 0;
@@ -1728,6 +1731,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
         confirmLabel: t('common.delete'),
         cancelLabel: t('common.cancel'),
         severity: 'warning',
+        confirmIcon: Trash2,
         onConfirm: async () => {
           try {
             await dispatch(deleteCategory(cat.id)).unwrap();
@@ -1908,6 +1912,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
+      confirmIcon: Trash2,
       onConfirm: async () => {
         setDeletingPreviewRowId(rowId);
         try {
@@ -1939,6 +1944,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
+      confirmIcon: Trash2,
       onConfirm: async () => {
         setIsBulkDeletingPreviewRows(true);
         let deletedCount = 0;

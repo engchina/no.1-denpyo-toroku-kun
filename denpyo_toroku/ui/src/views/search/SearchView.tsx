@@ -792,6 +792,7 @@ function TableBrowserTab({
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
+      confirmIcon: Trash2,
       onConfirm: async () => {
         setDeletingRowId(rowId);
         try {
@@ -830,6 +831,7 @@ function TableBrowserTab({
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       severity: 'warning',
+      confirmIcon: Trash2,
       onConfirm: async () => {
         setIsBulkDeletingRows(true);
         let deletedCount = 0;

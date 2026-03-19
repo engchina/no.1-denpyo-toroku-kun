@@ -5,6 +5,7 @@ import { apiGet, apiPost } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
 import { t } from '../../i18n';
+import { useToastConfirm } from '../../hooks/useToastConfirm';
 
 const PROMPT_KEY_ORDER = [
   'ocr_output_rules',
@@ -34,6 +35,7 @@ interface PromptSettingsData {
 
 export function PromptSettings() {
   const dispatch = useAppDispatch();
+  const { requestConfirm, confirmToast } = useToastConfirm();
 
   const [promptData, setPromptData] = useState<PromptSettingsData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -67,6 +69,10 @@ export function PromptSettings() {
     void loadSettings();
   }, [loadSettings]);
 
+  const getPersistedValue = useCallback((key: PromptKey, entry: PromptEntry): string => {
+    return entry.is_customized ? (entry.current ?? '') : '';
+  }, []);
+
   const handleSave = useCallback(async (key: PromptKey) => {
     setSavingKey(key);
     try {
@@ -81,11 +87,32 @@ export function PromptSettings() {
   }, [dispatch, edits, loadSettings]);
 
   const handleResetOne = useCallback(async (key: PromptKey) => {
-    if (!confirm(t('settings.prompts.confirm.resetOne'))) return;
+    const entry = promptData?.prompts[key];
+    if (!entry) return;
+
+    const persistedValue = getPersistedValue(key, entry);
+    const currentEditValue = edits[key] ?? persistedValue;
+    const hasUnsavedChanges = currentEditValue !== persistedValue;
+
+    if (!entry.is_customized) {
+      if (!hasUnsavedChanges) return;
+      setEdits(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      dispatch(addNotification({ type: 'success', message: t('notify.prompts.resetOk'), autoClose: true }));
+      return;
+    }
+
     setResettingKey(key);
     try {
       await apiPost('/api/v1/prompts/reset', { keys: [key] });
-      setEdits(prev => { const next = { ...prev }; delete next[key]; return next; });
+      setEdits(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
       await loadSettings();
       dispatch(addNotification({ type: 'success', message: t('notify.prompts.resetOk'), autoClose: true }));
     } catch (err: any) {
@@ -93,10 +120,9 @@ export function PromptSettings() {
     } finally {
       setResettingKey(null);
     }
-  }, [dispatch, loadSettings]);
+  }, [dispatch, edits, getPersistedValue, loadSettings, promptData]);
 
   const handleResetAll = useCallback(async () => {
-    if (!confirm(t('settings.prompts.confirm.resetAll'))) return;
     setIsResettingAll(true);
     try {
       await apiPost('/api/v1/prompts/reset', {});
@@ -109,6 +135,32 @@ export function PromptSettings() {
       setIsResettingAll(false);
     }
   }, [dispatch, loadSettings]);
+
+  const handleResetOneClick = useCallback((key: PromptKey) => {
+    requestConfirm({
+      title: t('settings.prompts.action.resetOne'),
+      message: t('settings.prompts.confirm.resetOne'),
+      confirmLabel: t('settings.prompts.action.resetOne'),
+      cancelLabel: t('common.cancel'),
+      confirmVariant: 'primary',
+      confirmIcon: RotateCcw,
+      onConfirm: async () => {
+        await handleResetOne(key);
+      },
+    });
+  }, [handleResetOne, requestConfirm]);
+
+  const handleResetAllClick = useCallback(() => {
+    requestConfirm({
+      title: t('settings.prompts.action.resetAll'),
+      message: t('settings.prompts.confirm.resetAll'),
+      confirmLabel: t('settings.prompts.action.resetAll'),
+      cancelLabel: t('common.cancel'),
+      confirmVariant: 'primary',
+      confirmIcon: RotateCcw,
+      onConfirm: handleResetAll,
+    });
+  }, [handleResetAll, requestConfirm]);
 
   const isBusy = isResettingAll || savingKey !== null || resettingKey !== null;
 
@@ -147,7 +199,7 @@ export function PromptSettings() {
           <div class="applicationSettingsView__headerActions">
             <button
               class="ics-ops-btn ics-ops-btn--ghost"
-              onClick={() => { void handleResetAll(); }}
+              onClick={handleResetAllClick}
               disabled={isBusy || customizedCount === 0}
             >
               <RotateCcw size={14} class={isResettingAll ? 'ics-spin' : ''} />
@@ -164,10 +216,13 @@ export function PromptSettings() {
               {PROMPT_KEY_ORDER.map((key) => {
                 const entry = promptData.prompts[key];
                 if (!entry) return null;
-                const editValue = edits[key] ?? (entry.is_customized ? (entry.current ?? '') : '');
+                const persistedValue = getPersistedValue(key, entry);
+                const editValue = edits[key] ?? persistedValue;
                 const isShowingDefault = !!showDefault[key];
                 const isSavingThis = savingKey === key;
                 const isResettingThis = resettingKey === key;
+                const hasUnsavedChanges = editValue !== persistedValue;
+                const canResetThis = entry.is_customized || hasUnsavedChanges;
 
                 return (
                   <div
@@ -197,16 +252,14 @@ export function PromptSettings() {
                           {isShowingDefault ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                           <span>{isShowingDefault ? t('settings.prompts.hideDefault') : t('settings.prompts.showDefault')}</span>
                         </button>
-                        {entry.is_customized && (
-                          <button
-                            class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--xs"
-                            onClick={() => { void handleResetOne(key); }}
-                            disabled={isBusy}
-                          >
-                            <RotateCcw size={12} class={isResettingThis ? 'ics-spin' : ''} />
-                            <span>{t('settings.prompts.action.resetOne')}</span>
-                          </button>
-                        )}
+                        <button
+                          class="ics-ops-btn ics-ops-btn--ghost ics-ops-btn--xs"
+                          onClick={() => handleResetOneClick(key)}
+                          disabled={isBusy || !canResetThis}
+                        >
+                          <RotateCcw size={12} class={isResettingThis ? 'ics-spin' : ''} />
+                          <span>{t('settings.prompts.action.resetOne')}</span>
+                        </button>
                       </div>
                     </div>
 
@@ -250,6 +303,7 @@ export function PromptSettings() {
           ) : null}
         </div>
       </section>
+      {confirmToast}
     </div>
   );
 }
