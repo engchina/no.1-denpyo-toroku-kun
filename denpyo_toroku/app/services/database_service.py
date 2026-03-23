@@ -4412,7 +4412,11 @@ END;"""
 
         try:
             payload = json.dumps(analysis_result, ensure_ascii=False).encode("utf-8")
-            attempt_payloads = self._build_attempt_blob_payloads(analysis_result)
+            attempt_payloads = (
+                self._build_attempt_blob_payloads(analysis_result)
+                if (analysis_kind or "").strip().lower() == "category"
+                else [None] * len(_ANALYSIS_RESULT_ATTEMPT_COLUMNS)
+            )
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
@@ -4451,14 +4455,17 @@ END;"""
                     if not row:
                         return None
 
-                    parsed_result = self._merge_analysis_attempts_into_result(
-                        self._decode_json_blob(row[1]),
-                        list(row[2:5]),
+                    analysis_kind = row[0] or ""
+                    base_result = self._decode_json_blob(row[1])
+                    parsed_result = (
+                        self._merge_analysis_attempts_into_result(base_result, list(row[2:5]))
+                        if str(analysis_kind).strip().lower() == "category"
+                        else base_result
                     )
                     if parsed_result is None:
                         return None
                     return {
-                        "analysis_kind": row[0] or "",
+                        "analysis_kind": analysis_kind,
                         "result": parsed_result,
                         "analyzed_at": str(row[5]) if row[5] else "",
                     }
