@@ -3151,6 +3151,7 @@ END;"""
         use_comments: bool = False,
         use_constraints: bool = False,
         use_annotations: bool = False,
+        allowed_table_set: Optional[set] = None,
     ) -> List[Dict[str, str]]:
         """テーブルのカラム情報を取得（許可テーブルのみ）
 
@@ -3159,12 +3160,13 @@ END;"""
             use_comments: True の場合、USER_COL_COMMENTS から列コメントも取得する
             use_constraints: True の場合、主キー・外部キー・ユニーク制約情報も取得する
             use_annotations: True の場合、Oracle アノテーション (USER_ANNOTATIONS_USAGE) も取得する
+            allowed_table_set: 事前計算済みの許可テーブル集合。未指定時は都度取得する
         """
         if not table_name:
             return []
 
         # セキュリティ: 許可テーブルかチェック
-        allowed = self._get_allowed_table_set()
+        allowed = allowed_table_set or self._get_allowed_table_set()
         if table_name.upper() not in allowed:
             logger.warning("許可されていないテーブルへのアクセス試行: %s", table_name)
             return []

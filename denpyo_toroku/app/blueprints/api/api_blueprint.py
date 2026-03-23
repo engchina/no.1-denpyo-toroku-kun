@@ -5222,31 +5222,28 @@ def _build_search_table_schemas(
     use_annotations: bool = False,
 ) -> List[Dict[str, Any]]:
     table_schemas: List[Dict[str, Any]] = []
+    allowed_table_set = db_service._build_allowed_table_set_from_entries(allowed_tables)
+    seen_table_names: set[str] = set()
     for entry in allowed_tables:
-        header_table_name = (entry.get("header_table_name") or "").strip()
-        line_table_name = (entry.get("line_table_name") or "").strip()
-        if header_table_name:
+        candidate_table_names = (
+            (entry.get("header_table_name") or "").strip(),
+            (entry.get("line_table_name") or "").strip(),
+        )
+        for table_name in candidate_table_names:
+            normalized_table_name = table_name.upper()
+            if not table_name or normalized_table_name in seen_table_names:
+                continue
+            seen_table_names.add(normalized_table_name)
             cols = db_service.get_table_columns(
-                header_table_name,
+                table_name,
                 use_comments=use_comments,
                 use_constraints=use_constraints,
                 use_annotations=use_annotations,
+                allowed_table_set=allowed_table_set,
             )
             if cols:
                 table_schemas.append({
-                    "table_name": header_table_name,
-                    "columns": cols,
-                })
-        if line_table_name:
-            cols = db_service.get_table_columns(
-                line_table_name,
-                use_comments=use_comments,
-                use_constraints=use_constraints,
-                use_annotations=use_annotations,
-            )
-            if cols:
-                table_schemas.append({
-                    "table_name": line_table_name,
+                    "table_name": table_name,
                     "columns": cols,
                 })
     return table_schemas
@@ -5309,20 +5306,36 @@ def _run_direct_llm_search(
     query: str,
     allowed_tables: List[Dict[str, Any]],
     allowed_table_set: set,
+    settings: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     from denpyo_toroku.app.services.ai_service import AIService
     from denpyo_toroku.config import AppConfig
 
-    enforce_object_list = AppConfig.SELECT_AI_ENFORCE_OBJECT_LIST
-    use_comments = AppConfig.SELECT_AI_USE_COMMENTS
-    use_constraints = AppConfig.SELECT_AI_USE_CONSTRAINTS
-    use_annotations = AppConfig.SELECT_AI_USE_ANNOTATIONS
+    runtime_settings = settings or {}
+    enforce_object_list = _to_bool(
+        runtime_settings.get("select_ai_enforce_object_list"),
+        default=bool(AppConfig.SELECT_AI_ENFORCE_OBJECT_LIST),
+    )
+    use_comments = _to_bool(
+        runtime_settings.get("select_ai_use_comments"),
+        default=bool(AppConfig.SELECT_AI_USE_COMMENTS),
+    )
+    use_constraints = _to_bool(
+        runtime_settings.get("select_ai_use_constraints"),
+        default=bool(AppConfig.SELECT_AI_USE_CONSTRAINTS),
+    )
+    use_annotations = _to_bool(
+        runtime_settings.get("select_ai_use_annotations"),
+        default=bool(AppConfig.SELECT_AI_USE_ANNOTATIONS),
+    )
 
-    # enforce_object_list=False の場合は全許可テーブルを対象にする
+    # enforce_object_list=False の場合はカテゴリ制限を外し、全カテゴリの許可テーブルを AI / 実行 allowlist に渡す
     if enforce_object_list:
         tables_for_schema = allowed_tables
+        execution_allowed_table_set = allowed_table_set
     else:
         tables_for_schema = db_service.get_allowed_table_names()
+        execution_allowed_table_set = db_service._build_allowed_table_set_from_entries(tables_for_schema)
 
     table_schemas = _build_search_table_schemas(
         db_service,
@@ -5340,7 +5353,13 @@ def _run_direct_llm_search(
 
     ai_service = AIService()
     try:
-        ai_result = ai_service.text_to_sql(query, table_schemas)
+        ai_result = ai_service.text_to_sql(
+            query,
+            table_schemas,
+            use_comments=use_comments,
+            use_constraints=use_constraints,
+            use_annotations=use_annotations,
+        )
     except AIRateLimitError as e:
         return {
             "success": False,
@@ -5363,7 +5382,7 @@ def _run_direct_llm_search(
     exec_result = db_service.execute_select_query(
         generated_sql,
         max_rows=500,
-        allowed_tables=allowed_table_set,
+        allowed_tables=execution_allowed_table_set,
     )
     if not exec_result.get("success"):
         return {
@@ -5378,7 +5397,12 @@ def _run_direct_llm_search(
                 },
                 "error": exec_result.get("message", "クエリ実行に失敗しました"),
                 "engine": "direct_llm",
-                "engine_meta": {},
+                "engine_meta": {
+                    "enforce_object_list": enforce_object_list,
+                    "use_comments": use_comments,
+                    "use_constraints": use_constraints,
+                    "use_annotations": use_annotations,
+                },
             },
         }
 
@@ -5393,7 +5417,12 @@ def _run_direct_llm_search(
                 "total": exec_result.get("total", 0),
             },
             "engine": "direct_llm",
-            "engine_meta": {},
+            "engine_meta": {
+                "enforce_object_list": enforce_object_list,
+                "use_comments": use_comments,
+                "use_constraints": use_constraints,
+                "use_annotations": use_annotations,
+            },
         },
     }
 
@@ -5473,6 +5502,7 @@ def natural_language_search():
             query=query,
             allowed_tables=allowed_tables,
             allowed_table_set=allowed_table_set,
+            settings=settings,
         )
         if not direct_llm_result.get("success"):
             g.response.add_error_message(direct_llm_result.get("error_message", "検索に失敗しました"))
@@ -5570,6 +5600,7 @@ def _nl_search_run_job(job_id: str, query: str, category_id: int) -> None:
                 query=query,
                 allowed_tables=allowed_tables,
                 allowed_table_set=allowed_table_set,
+                settings=settings,
             )
             if not direct_result.get("success"):
                 _update_job(

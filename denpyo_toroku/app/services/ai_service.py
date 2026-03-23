@@ -2449,13 +2449,61 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
             )
             return {"success": False, "message": f"スキーマ生成失敗: {str(e)}"}
 
-    def text_to_sql(self, query: str, table_schemas: List[Dict[str, Any]]) -> Dict[str, Any]:
+    @staticmethod
+    def _filter_table_schemas_for_text_to_sql(
+        table_schemas: List[Dict[str, Any]],
+        *,
+        use_comments: bool = True,
+        use_constraints: bool = True,
+        use_annotations: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """text_to_sql に渡すスキーマ情報を設定に応じて整形する。"""
+        filtered_schemas: List[Dict[str, Any]] = []
+        for table in table_schemas or []:
+            table_name = str(table.get("table_name") or "").strip()
+            columns = table.get("columns", [])
+            if not table_name or not isinstance(columns, list):
+                continue
+
+            filtered_columns: List[Dict[str, Any]] = []
+            for column in columns:
+                if not isinstance(column, dict):
+                    continue
+                filtered_column = dict(column)
+                if not use_comments:
+                    filtered_column["comment"] = ""
+                if not use_constraints:
+                    filtered_column["constraints"] = []
+                if not use_annotations:
+                    filtered_column["annotations"] = []
+                filtered_columns.append(filtered_column)
+
+            if filtered_columns:
+                filtered_schemas.append({
+                    "table_name": table_name,
+                    "columns": filtered_columns,
+                })
+
+        return filtered_schemas
+
+    def text_to_sql(
+        self,
+        query: str,
+        table_schemas: List[Dict[str, Any]],
+        *,
+        use_comments: bool = True,
+        use_constraints: bool = True,
+        use_annotations: bool = True,
+    ) -> Dict[str, Any]:
         """自然言語クエリを SELECT 文に変換する
 
         Args:
             query: ユーザーの自然言語クエリ
             table_schemas: 利用可能なテーブルとカラム情報のリスト
                 [{table_name: str, columns: [{column_name, data_type, ...}]}]
+            use_comments: True の場合のみ列コメントを AI に渡す
+            use_constraints: True の場合のみ制約情報を AI に渡す
+            use_annotations: True の場合のみアノテーションを AI に渡す
 
         Returns:
             変換結果 (success, sql, explanation)
@@ -2470,9 +2518,18 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
         if not table_schemas:
             return {"success": False, "message": "検索可能なテーブルがありません"}
 
+        filtered_table_schemas = self._filter_table_schemas_for_text_to_sql(
+            table_schemas,
+            use_comments=use_comments,
+            use_constraints=use_constraints,
+            use_annotations=use_annotations,
+        )
+        if not filtered_table_schemas:
+            return {"success": False, "message": "検索可能なテーブル情報がありません"}
+
         # スキーマ情報をテキスト形式に変換
         schema_text = ""
-        for table in table_schemas:
+        for table in filtered_table_schemas:
             table_name = table.get("table_name", "")
             columns = table.get("columns", [])
             if table_name and columns:
