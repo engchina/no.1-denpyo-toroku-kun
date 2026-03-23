@@ -128,7 +128,9 @@ export function DocumentPreviewWorkspace({
     return (pageTextsByFileId[activePage.fileId] ?? []).find((pt) => pt.page_index === activePage.page_index)?.text ?? '';
   }, [activePage?.fileId, activePage?.page_index, pageTextsByFileId]);
   const hasAnyPageTexts = useMemo(
-    () => pageTextsByFileId != null && Object.values(pageTextsByFileId).some((arr) => arr.length > 0),
+    () =>
+      pageTextsByFileId != null &&
+      Object.values(pageTextsByFileId).some((arr) => arr.some((pt) => pt.text && pt.text.trim().length > 0)),
     [pageTextsByFileId]
   );
   const currentLabel = activePage

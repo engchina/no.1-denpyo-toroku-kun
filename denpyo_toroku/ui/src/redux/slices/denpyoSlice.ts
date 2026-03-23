@@ -485,6 +485,11 @@ const denpyoSlice = createSlice({
       .addCase(analyzeFile.fulfilled, (state, action) => {
         state.isAnalyzing = false;
         state.analyzingFileId = null;
+        // 再分析が開始されたとき、同じファイルのキャッシュ済み分析結果を無効化する
+        // （古い結果が RegistrationView に表示されないように）
+        if (state.analysisResult && String(state.analysisResult.file_id) === String(action.meta.arg.fileId)) {
+          state.analysisResult = null;
+        }
         // 非同期実行のため、完了までは ANALYZING のまま維持する
         const file = state.fileList.files.find(
           f => String(f.file_id) === String(action.meta.arg.fileId)
