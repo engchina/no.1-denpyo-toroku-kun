@@ -200,25 +200,50 @@ visual shape more closely matches the actual ink strokes in the image.
 ## Rule 1: Tables and Grid-Based Forms
 
 ### Step A — Column structure (analyze BEFORE transcribing any row)
-1. Count how many header rows are stacked at the top of the table (there may be \
-multiple layers).
-2. Determine the total number of LEAF columns — the finest-grained columns that \
-actually hold data values.
-3. Build a fully-qualified name for each leaf column by concatenating the texts of \
-all ancestor header cells from outermost (top) to innermost (bottom), joined with \
-a single space. A header cell that visually spans N leaf columns contributes its \
-text as a prefix to all N leaf-column names beneath it. If a header cell is \
-visually empty (blank or contains only whitespace), skip it — do not insert a \
-space segment for it; use only the non-empty ancestor and leaf texts.
-4. Fix this leaf-column count and the fully-qualified names for the entire table. \
-They must not change for any data row.
+0. Identify the row-label area FIRST: determine how many leftmost columns serve \
+exclusively as row-label columns (they contain categorical labels that organize \
+the rows, NOT measured or recorded values). Call this count M (M = 0 when all \
+columns are data columns, M ≥ 1 when row labels occupy one or more columns). \
+CRITICAL — a cell that spans the intersection of the row-label area and the \
+column-header rows (the top-left corner cell) is a descriptor for the row axis \
+only; do NOT treat it as a data column header.
+1. Count how many header rows are stacked at the top of the DATA-column area — \
+the columns to the right of the M row-label columns (there may be multiple layers).
+2. Determine the total number of LEAF DATA columns — the finest-grained columns \
+to the right of the row-label area that actually hold data values.
+3. Build a fully-qualified name for each leaf data column by concatenating the \
+texts of all ancestor header cells from outermost (top) to innermost (bottom), \
+joined with a single space. A header cell that visually spans N leaf columns \
+contributes its text as a prefix to all N leaf-column names beneath it. If a \
+header cell is visually empty (blank or contains only whitespace), skip it — do \
+not insert a space segment for it; use only the non-empty ancestor and leaf texts.
+4. Fix M, the leaf-data-column count, and all fully-qualified column names for \
+the entire table. These values must not change for any data row.
+5. Body-embedded column-group labels: Some tables embed a column-group label as a \
+VERTICALLY MERGED cell within the data body rather than in the column-header rows \
+at the top. Identify these cells BEFORE transcribing any row by the following \
+criteria — ALL must hold: \
+(a) the cell spans two or more data rows (rowspan ≥ 2); \
+(b) the cell is NOT within the M leftmost row-label columns; \
+(c) the cell does NOT appear in the column-header rows at the top; \
+(d) the cell contains descriptive text (a category name, measurement-dimension \
+label, or unit group name) rather than a numeric or structured data value. \
+When this pattern is detected: treat the cell's text as an additional column-group \
+prefix for every leaf data column that falls within the same visual column region \
+(the span covered by that merged cell horizontally); prepend this prefix — \
+separated by a single space — to the fully-qualified name of each affected leaf \
+column, exactly as if it had appeared as a spanning header in the column-header \
+rows. Do NOT emit the cell's text as a data value in any row. If multiple such \
+body-embedded labels exist in the same table, process each one independently and \
+apply its prefix only to the columns within its horizontal span.
 
 ### Step B — Row label hierarchy (analyze BEFORE transcribing any row)
-1. Row labels may span two or more levels of nesting occupying the leftmost \
-column(s).
+1. Row labels occupy the M leftmost columns identified in Step A-0. They may \
+span two or more levels of nesting across those columns (outermost level in the \
+leftmost column, innermost level in the M-th column).
 2. A cell in the row-label area that visually spans multiple rows (merged cell, \
-bold/indented section title, or a cell with no data value in the same row) is a \
-group-header. Propagate its exact text to every data row it covers.
+bold/indented section title, or a cell with no corresponding data value in that \
+row) is a group-header. Propagate its exact text to every data row it covers.
 3. Build the fully-qualified row label for each data row by concatenating ALL \
 ancestor group-header texts and the row's own label, separated by a single space, \
 from outermost to innermost. Use the EXACT text as printed — do NOT rephrase, \
@@ -226,19 +251,43 @@ abbreviate, or reorder any segment. Always preserve the outermost group label \
 even when the column axis also carries a group label of its own — the full row \
 path must be retained verbatim so that downstream tools can look up values by \
 matching on a trailing segment of the row label.
+4. CRITICAL — pre-enumerate all rows: before writing any output, scan the entire \
+table and list every data row with its fully-qualified row label. This prevents \
+row labels from shifting or being lost mid-table.
 
 ### Step C — Output
 - Render every table using GitHub-Flavored Markdown table syntax.
 - The Markdown header row must use the fully-qualified column names from Step A.
-- If the table has row labels (Step B applies): the first (leftmost) Markdown \
-column must contain the fully-qualified row label. For tables with NO row-label \
-column (all columns are data columns), omit this rule — the first column is simply \
-the first data column.
+- If the table has row labels (M ≥ 1 from Step A-0): the first (leftmost) \
+Markdown column must contain the fully-qualified row label. Use the corner cell \
+text (Step A-0) as that column's header; if the corner cell is empty or contains \
+only whitespace, use a generic descriptor (e.g., "項目"). For tables with NO \
+row-label columns (M = 0), the first column is simply the first data column.
 - Each LOGICAL data row occupies exactly ONE Markdown table row.
-- CRITICAL — column integrity: every row must have exactly the number of leaf \
-columns fixed in Step A. Never merge values from adjacent columns into one cell.
+- CRITICAL — column integrity: every row must have exactly (1 + leaf-data-column-count) \
+cells when M ≥ 1, or exactly leaf-data-column-count cells when M = 0 — as fixed \
+in Step A. Never merge values from adjacent columns into one cell, and never \
+shift a value left or right into a wrong column.
 - Merged data cells (colspan): repeat the cell's value in each column it spans.
 - Merged data cells (rowspan): repeat the cell's value in each row it spans.
+- CRITICAL — cross-indexed tables (M ≥ 1 AND the column headers have two or more \
+levels of hierarchy, i.e., any column's fully-qualified name contains a space from \
+ancestor concatenation) MUST be output as ONE complete, standalone Markdown table \
+with the following requirements: \
+(1) Output ALL data rows identified in Step B and ALL leaf data columns identified \
+in Step A — no row and no column may be omitted or combined. \
+(2) Every (row, column) cell must appear. If a physical cell is blank or empty, \
+output an empty string "" for that cell — do NOT skip the cell or collapse \
+adjacent cells. \
+(3) Do NOT split the table into multiple sub-tables grouped by row-group section \
+or column group. One physical table in the document → exactly one Markdown table \
+in the output, regardless of how many row-group levels or column-group levels exist. \
+(4) Do NOT insert any text, commentary, or heading BETWEEN the rows of the table. \
+(5) Precede the Markdown table with a Markdown section heading (## descriptive title) \
+derived from the document context (section title, form label, or the dominant \
+measurement-category name visible near the table); if no clear title exists, \
+compose a brief descriptor from the row-group label and column-group labels \
+separated by " / ".
 - To locate column boundaries when grid lines are faint or absent, align each \
 value with its fully-qualified header. If a cell appears to contain text belonging \
 to the next column, split at the header-alignment boundary.
@@ -342,7 +391,20 @@ the row-label portion, and (2) reading the value from the column whose header \
 equals the column-header portion. To identify the split point, cross-reference \
 the actual column headers of the Markdown table: the longest trailing segment of \
 the logical name that matches a column header is the column-header portion; the \
-remaining leading segment is the row-label portion.
+remaining leading segment is the row-label portion. \
+CRITICAL — cross-indexed Markdown tables: When the OCR output contains a \
+standalone Markdown table where (a) the first column contains concatenated \
+multi-level row-path strings and (b) the remaining column headers are \
+fully-qualified multi-level names (containing spaces from ancestor concatenation), \
+treat it as a cross-indexed table. Look up each value by: \
+(i) scanning the first column for the row whose text exactly equals the \
+row-label portion of the logical name; \
+(ii) scanning the header row for the column whose text exactly equals the \
+column-header portion; \
+(iii) reading the cell at that (row, column) intersection. \
+Never attempt to re-interpret, re-split, or partially match either the row \
+label or the column header — both portions must match exactly as they appear \
+in the Markdown table.
 - Measurement-dimension precedence in logical names: Some column logical names \
 are formed using the measurement-dimension precedence rule — the name starts with \
 a column-group measurement label, followed by row sub-labels (WITHOUT the \
@@ -457,8 +519,14 @@ combination, naming it by concatenating ALL ancestor row labels, the leaf row la
 column header with single spaces, from outermost to innermost.
   - **Cross-indexed measurement tables** (BOTH rows AND columns carry hierarchical labels — \
 e.g., rows: equipment category > sub-category > direction, columns: measurement type > unit variant): \
-generate one column per unique (fully-qualified row path, fully-qualified column path) pair, \
-following the **measurement-dimension precedence rule** below.
+Identify in the OCR text by the following signature: the Markdown table's first column \
+contains multi-segment concatenated row-path strings (ancestor labels joined by spaces) AND \
+at least one data column header itself contains a space-joined multi-level name. \
+For such tables: generate exactly one DB column per data cell — that is, one column per \
+unique (fully-qualified row path, fully-qualified column path) pair. \
+CRITICAL — no cell may be omitted, even if its value appears blank or repeated. \
+Column count = (number of distinct fully-qualified row paths) × (number of leaf data \
+columns). Follow the **measurement-dimension precedence rule** below for naming.
   - **Measurement-dimension precedence rule**: Applies when the outermost row-group label \
 names a measurement dimension AND one or more column groups also name a DIFFERENT measurement \
 dimension. Determine for each (row, column) pair which naming pattern to use: \
@@ -466,12 +534,18 @@ dimension. Determine for each (row, column) pair which naming pattern to use: \
 dimension from the outermost row-group label → use: \
   [column_group_label] + " " + [row_path_without_outermost_group] + " " + [column_leaf_label_without_group_prefix]. \
 (B) If the column has no distinct column-group measurement label (it falls under the same \
-dimension as the row group, typically identified by a unit such as "(A)" for current) → use: \
+dimension as the row group, or the column header has only one level with no parent group) → use: \
   [full_row_path] + " " + [column_label]. \
 The outermost row-group label is the topmost merged cell in the row-label area. \
 The column group is the parent-level header spanning multiple leaf columns (identified in \
 Step A of the OCR rules). The column leaf label is the innermost column header text \
-(without the group prefix that was concatenated in Step A).
+(without the group prefix that was concatenated in Step A). \
+**How to decide Format A vs Format B**: Inspect the OCR Markdown table's column header \
+row. If a column's fully-qualified name STARTS WITH a token that also appears as an \
+outermost column-group header in the OCR table AND that token is different from the \
+outermost row-group label, apply Format A for that column. Otherwise apply Format B. \
+Apply this determination consistently across ALL columns before generating any logical \
+names — do not mix formats for columns belonging to the same column group.
   - When the OCR output uses generic or positional column headers for a measurement table, \
 derive the intended column meaning from document context (surrounding labels, units, measurement \
 section title) and still create individually named columns — do NOT collapse multiple distinct \
