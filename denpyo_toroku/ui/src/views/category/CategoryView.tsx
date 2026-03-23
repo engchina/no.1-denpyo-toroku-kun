@@ -9,6 +9,7 @@
  *     4. テーブル作成 → 伝票分類登録
  *  B. 伝票分類一覧 CRUD (参照・編集・削除・有効/無効)
  */
+import type { JSX } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import {
@@ -74,6 +75,7 @@ import {
 } from 'lucide-react';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { DocumentPreviewWorkspace } from '../../components/DocumentPreviewWorkspace';
+import { buildSyncedPanelMaxHeightStyle, useObservedElementHeight } from '../../hooks/useObservedElementHeight';
 
 // ─── Utils ───────────────────────────────────────────────────────────────────
 
@@ -824,7 +826,6 @@ function TableDesignerPanel({
 }) {
   const [categoryName, setCategoryName] = useState(analysisResult.category_guess || '');
   const [categoryNameEn, setCategoryNameEn] = useState(analysisResult.category_guess_en || '');
-  const [description, setDescription] = useState('');
   const [headerTableName, setHeaderTableName] = useState(
     (analysisResult.category_guess_en || 'slip').toUpperCase() + '_H'
   );
@@ -841,6 +842,9 @@ function TableDesignerPanel({
 
   const hasLine = analysisResult.analysis_mode === 'header_line';
   const fileIds = analysisResult.analyzed_file_ids ?? [];
+  const isReviewHeightSyncEnabled = fileIds.length > 0 && !isReviewCollapsed;
+  const { elementRef: reviewPanelRef, height: reviewPanelHeight } = useObservedElementHeight<HTMLDivElement>(isReviewHeightSyncEnabled);
+  const syncedPanelStyle = buildSyncedPanelMaxHeightStyle(reviewPanelHeight);
 
   const handleConfirm = () => {
     const headerBusinessColumns = getBusinessColumns(headerColumns);
@@ -894,7 +898,7 @@ function TableDesignerPanel({
     const req: CategoryCreateRequest = {
       category_name: categoryName.trim(),
       category_name_en: categoryNameEn.trim(),
-      description: description.trim(),
+      description: '',
       header_table_name: headerTableName.trim().toUpperCase(),
       header_columns: serializeColumns(headerColumns, 'HEADER_ID'),
     };
@@ -920,7 +924,10 @@ function TableDesignerPanel({
         >
           {/* 左カラム: 画像レビュー */}
           {fileIds.length > 0 && (
-            <div class={`ics-category-image-panel ${isReviewCollapsed ? 'is-collapsed' : ''}`}>
+            <div
+              ref={reviewPanelRef}
+              class={`ics-category-image-panel ${isReviewCollapsed ? 'is-collapsed' : ''}`}
+            >
               <DocumentPreviewWorkspace
                 fileIds={fileIds}
                 title={t('category.designer.reviewWorkspace')}
@@ -934,7 +941,7 @@ function TableDesignerPanel({
 
           {/* 右カラム: フォーム */}
           <div class="ics-category-designer-right">
-            <div class="ics-category-designer-right__scroll">
+            <div class="ics-category-designer-right__scroll ics-synced-panel-height ics-synced-panel-scroll" style={syncedPanelStyle}>
               {/* 伝票分類基本情報 */}
               <div class="ics-card ics-card--flat">
                 <div class="ics-card-header">
@@ -962,16 +969,6 @@ function TableDesignerPanel({
                         placeholder="invoice"
                       />
                     </div>
-                  </div>
-                  <div class="ics-form-group">
-                    <label class="ics-form-label">{t('category.col.description')}</label>
-                    <textarea
-                      class="ics-form-textarea"
-                      value={description}
-                      rows={2}
-                      onInput={(e: Event) => setDescription((e.target as HTMLTextAreaElement).value)}
-                      placeholder={t('category.designer.descriptionPlaceholder')}
-                    />
                   </div>
                 </div>
               </div>
