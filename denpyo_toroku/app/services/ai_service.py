@@ -246,6 +246,25 @@ that are NOT divided by separate grid columns, preserve them as-is in one cell v
 - Always include a header row; if no headers are printed, infer short descriptive \
 names (Column1, Column2, …).
 
+### Step D — Form-style tables (alternating label / value columns)
+Japanese inspection and specification forms (検査表, 仕様書, etc.) often use a \
+grid where each row intermixes label cells and value cells horizontally — e.g., \
+"| 電動機 | 巻上 | 主 | (kW value) | 横行 | (kW value) | 走行 | (kW value) |". \
+In this pattern there is no dedicated header row; the "header" information is \
+encoded inside the leftmost cells and the alternating sub-label cells.
+Detect this pattern when: (a) most rows contain cells that serve as category or \
+sub-category labels followed immediately by value cells, and (b) there is no \
+distinct top-level header row whose cells span the full column set. \
+For such tables, DO NOT use generic column names (e.g., "Section", "Specification", \
+"Value", "Column1"). Instead, reconstruct fully-qualified column names by \
+concatenating ALL ancestor label cells that precede each value cell in reading \
+order (left to right within the row, top to bottom across rows), joined with a \
+single space. If a row spans multiple visual rows for the same logical record, \
+propagate ancestor labels across those rows. Emit the result as a Markdown table \
+whose header row uses those fully-qualified names and whose single data row \
+contains the corresponding values. Apply this same logic within each section \
+block when a document has multiple such sections.
+
 ## Rule 2: Key-Value / Label-Value Fields
 Applies ONLY to standalone label-value fields that are NOT part of a formal table or grid structure (Rule 1 takes precedence inside tables).
 - Horizontal layout (label and value appear on the same line, or in adjacent cells of the same row): output as "Label: Value" on a single line.
@@ -2146,7 +2165,7 @@ class AIService:
         else:
             header_only_hint = "伝票内に繰り返しの明細行がある場合は、明細テーブル（line_table）を分離して設計してください。ない場合は header のみとしてください。"
 
-        prompt = f"""You are a database schema designer. Analyze the following OCR-extracted text from a Japanese business document (伝票) and design Oracle CREATE TABLE structures to store all the structured information found in it.
+        prompt = f"""You are a database schema designer. Analyze the following OCR-extracted text from a Japanese document (文書) — which may be a business document, inspection record, test report, specification sheet, or any other form — and design Oracle CREATE TABLE structures to store all the structured information found in it.
 
 ## OCR Content:
 {ocr_text}
@@ -2157,35 +2176,35 @@ class AIService:
 {_get_prompt("selection_schema_design")}
 
 ### 5. Output Format
-Output ONLY a valid JSON object matching this structure (No explanation or markdown code fences needed):
+Output ONLY a valid JSON object with this exact structure. The header_columns array MUST contain one entry for EVERY labeled field, cell, and data value present in the OCR content — for dense inspection or measurement documents this may be 50 to 100 or more entries. Do not truncate or omit columns. No explanation or markdown code fences.
 {{
-  "document_type_ja": "請求書",
-  "document_type_en": "invoice",
-  "header_table_name": "SEIKYUUSHO",
-  "line_table_name": "SEIKYUUSHO_MEISAI",
+  "document_type_ja": "<日本語文書種別>",
+  "document_type_en": "<document_type_in_english>",
+  "header_table_name": "<TABLE_NAME>",
+  "line_table_name": "<LINE_TABLE_NAME_OR_EMPTY>",
   "header_columns": [
     {{
-      "column_name": "HAKKOOBI",
-      "comment": "発行日",
-      "data_type": "DATE",
-      "data_length": null,
-      "is_nullable": false
+      "column_name": "<UPPERCASE_COLUMN_NAME>",
+      "comment": "<日本語ラベル（文書の原文そのまま）>",
+      "data_type": "<VARCHAR2|NUMBER|DATE|TIMESTAMP>",
+      "data_length": <integer_or_null>,
+      "is_nullable": <true|false>
     }},
     {{
-       "column_name": "ATESAKI_MEI",
-       "comment": "宛先名",
-       "data_type": "VARCHAR2",
-       "data_length": 100,
-       "is_nullable": false
+      "column_name": "<NEXT_COLUMN_NAME>",
+      "comment": "<次のラベル>",
+      "data_type": "VARCHAR2",
+      "data_length": 200,
+      "is_nullable": true
     }}
   ],
   "line_columns": [
     {{
-      "column_name": "SHOUHIN_MEI",
-      "comment": "商品名",
+      "column_name": "<LINE_COLUMN_NAME>",
+      "comment": "<明細ラベル>",
       "data_type": "VARCHAR2",
       "data_length": 200,
-      "is_nullable": false
+      "is_nullable": true
     }}
   ]
 }}
