@@ -7,8 +7,57 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck disable=SC1091
-source "${SCRIPT_DIR}/lib/common.sh"
+COMMON_SH="${SCRIPT_DIR}/lib/common.sh"
+
+if [ -f "$COMMON_SH" ]; then
+    # shellcheck disable=SC1091
+    source "$COMMON_SH"
+else
+    PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+    SERVICE_DIR="${PROJECT_ROOT}/denpyo_toroku"
+    GUNICORN_CONFIG="${PROJECT_ROOT}/gunicorn_config/gunicorn_config.py"
+    VENV_DIR="${PROJECT_ROOT}/.venv"
+
+    RED='[0;31m'
+    GREEN='[0;32m'
+    YELLOW='[1;33m'
+    NC='[0m'
+
+    log_info() {
+        echo -e "${GREEN}[INFO]${NC} $1"
+    }
+
+    log_warn() {
+        echo -e "${YELLOW}[WARN]${NC} $1"
+    }
+
+    log_error() {
+        echo -e "${RED}[ERROR]${NC} $1"
+    }
+
+    load_env_if_present() {
+        local env_file="${PROJECT_ROOT}/.env"
+        if [ -f "$env_file" ]; then
+            set -a
+            # shellcheck disable=SC1090
+            source "$env_file"
+            set +a
+        fi
+    }
+
+    activate_venv() {
+        if [ -d "$VENV_DIR" ]; then
+            # shellcheck disable=SC1091
+            source "${VENV_DIR}/bin/activate"
+        else
+            log_error "Virtual environment not found: $VENV_DIR"
+            log_error "Please create it with: uv venv --python 3.12 .venv"
+            return 1
+        fi
+    }
+fi
+
+load_env_if_present
 PID_FILE="${SERVICE_DIR}/gunicorn.pid"
 SOCK_FILE="${SERVICE_DIR}/denpyo_toroku.sock"
 LOG_DIR="${SERVICE_DIR}/log"

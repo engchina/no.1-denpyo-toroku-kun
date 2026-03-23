@@ -113,6 +113,10 @@ denpyo_toroku/ui/exchange_components/
 # Local Prometheus config (use prometheus.example.yml as template)
 prometheus.yml
 
+# Shared shell helpers should be versioned
+!/scripts/lib/
+!/scripts/lib/common.sh
+
 # Workspace/agent local context files
 /AGENTS.md
 /CLAUDE.md
