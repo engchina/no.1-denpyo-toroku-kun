@@ -222,7 +222,10 @@ group-header. Propagate its exact text to every data row it covers.
 3. Build the fully-qualified row label for each data row by concatenating ALL \
 ancestor group-header texts and the row's own label, separated by a single space, \
 from outermost to innermost. Use the EXACT text as printed — do NOT rephrase, \
-abbreviate, or reorder any segment.
+abbreviate, or reorder any segment. Always preserve the outermost group label \
+even when the column axis also carries a group label of its own — the full row \
+path must be retained verbatim so that downstream tools can look up values by \
+matching on a trailing segment of the row label.
 
 ### Step C — Output
 - Render every table using GitHub-Flavored Markdown table syntax.
@@ -248,8 +251,10 @@ names (Column1, Column2, …).
 
 ### Step D — Form-style tables (alternating label / value columns)
 Japanese inspection and specification forms (検査表, 仕様書, etc.) often use a \
-grid where each row intermixes label cells and value cells horizontally — e.g., \
-"| 電動機 | 巻上 | 主 | (kW value) | 横行 | (kW value) | 走行 | (kW value) |". \
+grid where each row intermixes label cells and value cells horizontally. The \
+pattern looks like: "| CategoryA | SubLabel1 | Primary | (value) | SubLabel2 | \
+(value) | SubLabel3 | (value) |", where CategoryA and each SubLabel are labels \
+and the parenthesized cells are their corresponding values. \
 In this pattern there is no dedicated header row; the "header" information is \
 encoded inside the leftmost cells and the alternating sub-label cells.
 Detect this pattern when: (a) most rows contain cells that serve as category or \
@@ -338,6 +343,25 @@ equals the column-header portion. To identify the split point, cross-reference \
 the actual column headers of the Markdown table: the longest trailing segment of \
 the logical name that matches a column header is the column-header portion; the \
 remaining leading segment is the row-label portion.
+- Measurement-dimension precedence in logical names: Some column logical names \
+are formed using the measurement-dimension precedence rule — the name starts with \
+a column-group measurement label, followed by row sub-labels (WITHOUT the \
+outermost row-group label), followed by the column sub-path without the \
+column-group prefix. \
+Example: logical name "MeasureB ItemP SubQ Cond(unit)" means: column group = \
+"MeasureB", row sub-labels = "ItemP SubQ", column sub-path = "Cond(unit)". \
+To look up the value: \
+(1) Identify the column-group label as the leading token(s) that appear as a \
+top-level column group header in the OCR Markdown table. \
+(2) The remaining tokens before the final parenthesized unit are the row \
+sub-labels. \
+(3) The final token(s) including any unit suffix in parentheses are the column \
+sub-path. \
+(4) Find the Markdown table row whose first-column label ENDS WITH the row \
+sub-labels — the OCR row label contains a longer prefix from the outermost row \
+group (e.g., the row is "MeasureA ItemP SubQ", which ends with "ItemP SubQ"). \
+(5) Read the value from the column whose header equals \
+column-group + " " + column-sub-path (e.g., "MeasureB Cond(unit)").
 - Selection fields: The selected option is identified either by visual marking in \
 the image (circled ○, filled ●, checked ✓, underlined, boxed — but WITHOUT a \
 simultaneous strikethrough) or by the [SELECTED] marker in the text. An option \
@@ -377,7 +401,7 @@ NUMBER(1)."""
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PROMPT_EXTRACT_TEXT_VALUE_RULES_DEFAULT: str = """\
-1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する。ラベルは文書に記載された原文テキストをそのまま使用しており、意味解釈や言い換えを行っていない。階層的な行ラベルの場合は全ての祖先ラベルと末端ラベルを外側から内側の順にスペースで連結した形（例: "祖父 親 子"）で表現されているため、その連結表記のまま（どの階層も分割・再解釈せずに）対応する値を検索すること
+1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する。ラベルは文書に記載された原文テキストをそのまま使用しており、意味解釈や言い換えを行っていない。階層的な行ラベルの場合は全ての祖先ラベルと末端ラベルを外側から内側の順にスペースで連結した形（例: "祖父 親 子"）で表現されているため、その連結表記のまま（どの階層も分割・再解釈せずに）対応する値を検索すること。ただし「計測次元優先形式」の論理名（列グループ名が先頭にあり、行サブラベル、列サブパスが続く形式）については、後掲の「Cell lookup」および「Measurement-dimension precedence」ルールを優先的に適用し、行ラベルのサフィックス一致で行を特定してから列ヘッダーで値を読み取ること
 2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
 3. 日付: ISO 8601形式 YYYY-MM-DD（例: "令和6年1月15日" → "2024-01-15"）
 4. テキスト: OCRテキストの文字をそのまま転記。
@@ -433,8 +457,21 @@ combination, naming it by concatenating ALL ancestor row labels, the leaf row la
 column header with single spaces, from outermost to innermost.
   - **Cross-indexed measurement tables** (BOTH rows AND columns carry hierarchical labels — \
 e.g., rows: equipment category > sub-category > direction, columns: measurement type > unit variant): \
-generate one column per unique (fully-qualified row path, fully-qualified column path) pair. \
-Name the column by concatenating the full row path and the full column path with a single space.
+generate one column per unique (fully-qualified row path, fully-qualified column path) pair, \
+following the **measurement-dimension precedence rule** below.
+  - **Measurement-dimension precedence rule**: Applies when the outermost row-group label \
+names a measurement dimension AND one or more column groups also name a DIFFERENT measurement \
+dimension. Determine for each (row, column) pair which naming pattern to use: \
+(A) If the column belongs to a column group whose label denotes a different measurement \
+dimension from the outermost row-group label → use: \
+  [column_group_label] + " " + [row_path_without_outermost_group] + " " + [column_leaf_label_without_group_prefix]. \
+(B) If the column has no distinct column-group measurement label (it falls under the same \
+dimension as the row group, typically identified by a unit such as "(A)" for current) → use: \
+  [full_row_path] + " " + [column_label]. \
+The outermost row-group label is the topmost merged cell in the row-label area. \
+The column group is the parent-level header spanning multiple leaf columns (identified in \
+Step A of the OCR rules). The column leaf label is the innermost column header text \
+(without the group prefix that was concatenated in Step A).
   - When the OCR output uses generic or positional column headers for a measurement table, \
 derive the intended column meaning from document context (surrounding labels, units, measurement \
 section title) and still create individually named columns — do NOT collapse multiple distinct \
