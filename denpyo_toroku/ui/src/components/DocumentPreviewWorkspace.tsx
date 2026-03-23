@@ -133,6 +133,7 @@ export function DocumentPreviewWorkspace({
   const canZoomIn = viewerMode !== 'zoom' || zoomStepIndex < ZOOM_STEPS.length - 1;
   const currentImageHasError = activePage ? Boolean(imgErrors[activePage.key]) : false;
   const currentPageRotation = activePage ? normalizeRotation(pageRotations[activePage.key] ?? 0) : 0;
+  const showThumbnailStrip = pages.length > 0;
   const canToggleCollapse = collapsible && typeof onToggleCollapsed === 'function';
   const collapsedTitle = [title || t('category.designer.reviewWorkspace'), currentLabel].filter(Boolean).join(' ');
   const currentImageFrameClass =
@@ -436,15 +437,7 @@ export function DocumentPreviewWorkspace({
                   </div>
                 </div>
 
-                <div class="ics-category-review-card__caption">
-                  <strong>{activePage.page_label || activePage.fileName}</strong>
-                  <span>{activePage.source_name || activePage.fileName}</span>
-                  {currentPageRotation !== 0 && (
-                    <span>{t('category.designer.rotationStatus', { degrees: currentPageRotation })}</span>
-                  )}
-                </div>
-
-                {pages.length > 1 && (
+                {showThumbnailStrip && (
                   <div class="ics-category-thumbnail-strip">
                     {pages.map((page, index) => {
                       const hasError = Boolean(imgErrors[page.key]);

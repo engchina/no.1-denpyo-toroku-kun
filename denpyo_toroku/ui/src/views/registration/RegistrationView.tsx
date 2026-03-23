@@ -2,7 +2,6 @@
  * RegistrationView - DB登録確認画面 (SCR-004)
  * INSERTデータ確認・登録
  */
-import type { JSX } from 'preact';
 import { useState, useCallback, useEffect, useMemo } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import {

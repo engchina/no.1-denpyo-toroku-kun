@@ -9,7 +9,6 @@
  *     4. テーブル作成 → 伝票分類登録
  *  B. 伝票分類一覧 CRUD (参照・編集・削除・有効/無効)
  */
-import type { JSX } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useAppDispatch, useAppSelector } from '../../redux/store';
 import {
