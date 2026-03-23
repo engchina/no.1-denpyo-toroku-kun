@@ -195,18 +195,31 @@ columns. Never merge values from adjacent columns into one cell.
 value with the header directly above it. If a data cell appears to contain text \
 that belongs to the next column (e.g., a part number immediately following an item \
 name), split them at the boundary implied by the header alignment.
+- Hierarchical row labels: If a cell in the row-label column acts as a group \
+header that applies to the rows below it (e.g., a merged cell, a bold/indented \
+section title, or a label with no corresponding data value in the same row), \
+represent each sub-row by concatenating the parent label and the sub-row label \
+with a single space, using the EXACT text as printed in the document. Do NOT \
+reinterpret, paraphrase, or restructure the labels (e.g., if the document shows \
+a parent row labelled "A" and sub-rows "(B) X" and "(B) Y", output "A (B) X" \
+and "A (B) Y" — never rewrite them as "B X under A" or any other form).
 
 ## Rule 2: Key-Value / Label-Value Fields
-- Output as "Label: Value" on a single line.
+Applies ONLY to standalone label-value fields that are NOT part of a formal table or grid structure (Rule 1 takes precedence inside tables).
+- Horizontal layout (label and value appear on the same line, or in adjacent cells of the same row): output as "Label: Value" on a single line.
+- Vertical layout (label appears in one row or cell and its corresponding value is directly below in the same column, with no other column separating them): treat each such column as an independent key-value pair and output as "Label: Value" on a single line.
 - If a field value wraps visually across multiple lines, join them into one line.
 
 ## Rule 3: Selection and Choice Fields
 Mark every visually indicated selection regardless of the indicator style:
 - Circled (○ ◯ ●), checked (✓ ✗ ☑ ☒), underlined, boxed, filled, or otherwise \
-highlighted options.
-- Append [SELECTED] immediately after the chosen option.
+highlighted options → append [SELECTED] immediately after the chosen option.
+- CRITICAL — strikethrough overrides any encircling or highlighting mark: if an \
+option carries BOTH a circle/highlight AND a strikethrough or deletion line drawn \
+through it at the same time, treat it as [REJECTED], NOT [SELECTED]. A strikethrough \
+always takes priority over an encircling mark.
 - Append [REJECTED] immediately after any option that is explicitly crossed out \
-or struck through.
+or struck through (including options that are simultaneously circled and struck through).
 - For checkbox lists, prefix each item with [CHECKED] or [ ] on its own line.
 - Example inline:   "Yes[SELECTED] / No"
 - Example checkbox: "[CHECKED] Option A / [ ] Option B / [CHECKED] Option C"
@@ -235,19 +248,29 @@ _PROMPT_STRUCTURED_DATA_READING: str = """\
 Markdown table row with | separators in the text — must map to exactly one record. \
 Do not split a single logical row into multiple records even if it wraps across \
 visual lines.
+- Hierarchical row labels: When the OCR text contains row labels that were formed \
+by concatenating a parent label and a sub-row label (e.g., "Parent SubLabel"), \
+treat the full concatenated string as the unique field identifier. Map the \
+corresponding value to the column whose logical name matches that exact \
+concatenated label. Do not attempt to re-split or re-interpret the concatenated label.
 - Selection fields: The selected option is identified either by visual marking in \
-the image (circled ○, filled ●, checked ✓, underlined, boxed) or by the [SELECTED] \
-marker in the text. Record only the selected option's text as the field value, \
-without any marker (e.g., "Yes[SELECTED] / No" → "Yes").
+the image (circled ○, filled ●, checked ✓, underlined, boxed — but WITHOUT a \
+simultaneous strikethrough) or by the [SELECTED] marker in the text. An option \
+that is visually circled or highlighted but also has a strikethrough drawn through \
+it is NOT selected; it will carry [REJECTED] in the OCR text and must be ignored. \
+Record only the selected option's text as the field value, without any marker \
+(e.g., "Yes[SELECTED] / No" → "Yes").
 - Checkbox fields: Checked items (visually ticked in the image, or prefixed \
 [CHECKED] in the text) → "1". Unchecked items ([ ] prefix or no mark) → "0".
 - Special OCR tags: <STAMP: text> and <HANDWRITTEN: text> → use only the inner \
 text value. <SIGNATURE> → "1". <ILLEGIBLE> and <REDACTED> → empty string ""."""
 
 _PROMPT_SELECTION_SCHEMA_DESIGN: str = """\
-- Selection / choice fields (options visually marked in the image with ○/✓/underline, \
-or tagged [SELECTED] in OCR text): design the column as VARCHAR2 sized to \
-accommodate the longest option value.
+- Selection / choice fields (options visually marked in the image with ○/✓/underline \
+without a simultaneous strikethrough, or tagged [SELECTED] in OCR text): design \
+the column as VARCHAR2 sized to accommodate the longest VALID option value. \
+Options tagged [REJECTED] (circled but struck through) are cancelled and must NOT \
+be counted when sizing the column.
 - Checkbox fields (visually ticked boxes in the image, or [CHECKED] / [ ] markers \
 in OCR text): design each distinct checkbox as NUMBER(1) (1 = checked, \
 0 = unchecked). If checkboxes represent mutually exclusive choices, a single \
@@ -263,7 +286,7 @@ NUMBER(1)."""
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PROMPT_EXTRACT_TEXT_VALUE_RULES_DEFAULT: str = """\
-1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する
+1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する。ラベルは文書に記載された原文テキストをそのまま使用しており、意味解釈や言い換えを行っていない。階層的な行ラベルの場合は親ラベルと子ラベルをスペースで連結した形（例: "親 子"）で表現されているため、その連結表記のまま対応する値を検索すること
 2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
 3. 日付: ISO 8601形式 YYYY-MM-DD（例: "令和6年1月15日" → "2024-01-15"）
 4. テキスト: OCRテキストの文字をそのまま転記。
@@ -279,7 +302,8 @@ _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
 ### 2. Naming Conventions
 - **Table name**: Romanized Katakana in UPPERCASE alphabet (e.g., RYOUSHUUSHO for 領収書, SEIKYUUSHO for 請求書, NOUHINNSHO for 納品書).
 - **Physical column names**: Romanized Katakana in UPPERCASE alphabet with underscores (e.g., HAKKOOBI for 発行日, GOUKEI_KINGAKU for 合計金額, ATESAKI_MEI for 宛先名).
-- **Logical column names**: Japanese (Kanji) via comment (e.g., 発行日, 合計金額).
+- **Logical column names**: Japanese (Kanji) via comment. CRITICAL — always derive the logical name from the **exact label text as it appears in the document**. For hierarchical tables where a parent row/section header applies to multiple sub-rows, form the logical name by concatenating the parent label and the sub-row label with a single space, exactly as written in the document. Never reinterpret, paraphrase, restructure, or infer new terminology that does not appear in the document.
+- **Physical column names for hierarchical or parenthesized labels**: When deriving the romanized physical name from a concatenated hierarchical logical name, apply the following in order: (1) remove all parentheses and the text enclosed within them from the label before romanizing; (2) romanize the remaining words and join them with underscores; (3) if the resulting name would exceed 30 characters, abbreviate each component to its most meaningful prefix while keeping the name uniquely identifiable. The romanization itself must still follow Hepburn rules.
 - Use consistent Hepburn romanization rules (e.g., しょ→SHO, きゅう→KYUU, おう→OU).
 
 ### 3. Schema Design Rules
