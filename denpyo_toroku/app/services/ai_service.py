@@ -331,7 +331,7 @@ _PROMPT_EXTRACT_TEXT_VALUE_RULES_DEFAULT: str = """\
 
 _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
 ### 1. Document Type Detection
-- First, identify the document type (e.g., 領収書, 請求書, 納品書, 見積書, 注文書, 発注書, etc.).
+- First, identify the document type. Documents may be business documents (e.g., 領収書, 請求書, 納品書, 見積書, 注文書, 発注書) or non-business documents (e.g., 検査証明書, 検査記録, 試験成績書, 点検表, 仕様書, 許可証, 届出書, 申請書, 報告書, etc.).
 - Design the table name and structure accordingly.
 
 ### 2. Naming Conventions
@@ -351,13 +351,19 @@ _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
 - For short-looking codes / IDs / numbers, still keep enough room instead of matching the sample exactly.
 - {header_only_hint}
 
-### 4. Capture ALL information present in the document, such as:
-- Document metadata (document number, date, type)
-- Party information (sender/receiver name, address, phone, registration number)
-- Amount summary (subtotal, tax, total)
-- Tax breakdown by rate if present
-- Line item details if present (item name, quantity, unit price, amount, tax rate)
-- Any stamps, notes, remarks, or payment terms"""
+### 4. Capture ALL information present in the document
+CRITICAL — every labeled field, cell, and value visible in the OCR text MUST be mapped to a column. Do NOT omit any field because it looks technical, unusual, or hard to name.
+
+Categories of information to capture (applicable categories depend on document type):
+- **Document metadata**: document number, issue date, validity period, document type, reference numbers
+- **Party information**: names, addresses, phone numbers, registration/license numbers, organization codes
+- **Subject / target information**: item name, model number, serial number, capacity, rating, classification
+- **Specifications and configurations**: all labeled specification fields, settings, modes, options
+- **Measurement and test data**: all numeric readings, measured values, ratings, tolerances — including every cell in measurement tables. For hierarchical measurement tables (e.g., a table where rows are grouped under section headers), generate one column per unique leaf-level combination (section + sub-row + column header).
+- **Financial data** (if present): subtotal, tax, total amount, unit price, quantity, tax rate
+- **Inspection and compliance data**: test results, pass/fail judgments, inspection dates, inspector information
+- **Free-text sections**: remarks, special notes, conditions, payment terms — each distinct labeled free-text area gets its own column
+- **Stamps and signatures**: each stamp or signature field gets its own column"""
 
 _PROMPT_TEXT_TO_SQL_CONSTRAINTS_DEFAULT: str = """\
 - SELECT 文のみ生成（INSERT, UPDATE, DELETE, DROP などは絶対に禁止）
