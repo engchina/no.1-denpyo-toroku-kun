@@ -48,6 +48,91 @@ def test_natural_language_search_requires_category_id():
     assert response.get_json()["errorMessages"][0] == "伝票分類を選択してください"
 
 
+def test_natural_language_search_requires_query():
+    client = _create_client()
+
+    response = client.post(
+        "/api/v1/search/nl",
+        json={"query": "   ", "category_id": 1},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["errorMessages"][0] == "検索クエリを入力してください"
+
+
+def test_natural_language_search_treats_blank_category_as_missing():
+    client = _create_client()
+
+    response = client.post(
+        "/api/v1/search/nl",
+        json={"query": "領収書を検索", "category_id": "   "},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["errorMessages"][0] == "伝票分類を選択してください"
+
+
+def test_natural_language_search_async_requires_category_id():
+    client = _create_client()
+
+    response = client.post(
+        "/api/v1/search/nl/async",
+        json={"query": "領収書を検索"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["errorMessages"][0] == "伝票分類を選択してください"
+
+
+def test_natural_language_search_async_requires_query():
+    client = _create_client()
+
+    response = client.post(
+        "/api/v1/search/nl/async",
+        json={"query": "   ", "category_id": 1},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["errorMessages"][0] == "検索クエリを入力してください"
+
+
+def test_natural_language_search_async_treats_blank_category_as_missing():
+    client = _create_client()
+
+    response = client.post(
+        "/api/v1/search/nl/async",
+        json={"query": "領収書を検索", "category_id": "   "},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["errorMessages"][0] == "伝票分類を選択してください"
+
+
+def test_natural_language_search_async_rejects_unsearchable_category_before_queuing(monkeypatch):
+    client = _create_client()
+
+    class StubDatabaseService:
+        def get_allowed_table_names(self):
+            return [
+                {
+                    "category_id": 1,
+                    "category_name": "領収書",
+                    "header_table_name": "RECEIPT_H",
+                    "line_table_name": "",
+                }
+            ]
+
+    monkeypatch.setattr(api_blueprint_module, "DatabaseService", StubDatabaseService)
+
+    response = client.post(
+        "/api/v1/search/nl/async",
+        json={"query": "領収書を検索", "category_id": 999},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["errorMessages"][0] == "指定されたカテゴリに検索可能なテーブルがありません"
+
+
 def test_natural_language_search_falls_back_to_direct_llm_when_select_ai_agent_fails(monkeypatch):
     client = _create_client()
     calls = {

@@ -5220,6 +5220,38 @@ def _should_fallback_from_select_ai(select_ai_result: Dict[str, Any]) -> bool:
     return any(token in message for token in fallback_tokens)
 
 
+def _parse_nl_search_request_payload(data: Dict[str, Any]) -> tuple[Optional[str], Optional[int], Optional[str]]:
+    query = _normalize_text(data.get("query"), "")
+    raw_category_id = data.get("category_id")
+
+    if not query:
+        return None, None, "検索クエリを入力してください"
+    if raw_category_id is None or (isinstance(raw_category_id, str) and not raw_category_id.strip()):
+        return None, None, "伝票分類を選択してください"
+
+    try:
+        category_id = int(raw_category_id)
+    except (TypeError, ValueError):
+        return None, None, "category_id は整数で指定してください"
+
+    return query, category_id, None
+
+
+def _get_allowed_search_tables_for_category(
+    db_service: DatabaseService,
+    category_id: int,
+) -> tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+    allowed_tables = db_service.get_allowed_table_names()
+    if not allowed_tables:
+        return None, "検索可能なテーブルがありません"
+
+    filtered_tables = [t for t in allowed_tables if t["category_id"] == category_id]
+    if not filtered_tables:
+        return None, "指定されたカテゴリに検索可能なテーブルがありません"
+
+    return filtered_tables, None
+
+
 def _run_direct_llm_search(
     db_service: DatabaseService,
     *,
@@ -5302,33 +5334,15 @@ def natural_language_search():
     """自然言語検索（NL -> SQL -> 実行）"""
     try:
         data = request.get_json(silent=True) or {}
-        query = (data.get("query") or "").strip()
-        category_id = data.get("category_id")
-
-        if not query:
-            g.response.add_error_message("検索クエリを入力してください")
-            return jsonify(g.response.get_result()), 400
-        if category_id is None:
-            g.response.add_error_message("伝票分類を選択してください")
+        query, category_id, validation_error = _parse_nl_search_request_payload(data)
+        if validation_error:
+            g.response.add_error_message(validation_error)
             return jsonify(g.response.get_result()), 400
 
         db_service = DatabaseService()
-
-        # 許可テーブル一覧を取得
-        allowed_tables = db_service.get_allowed_table_names()
-        if not allowed_tables:
-            g.response.add_error_message("検索可能なテーブルがありません")
-            return jsonify(g.response.get_result()), 400
-
-        try:
-            category_id = int(category_id)
-        except (TypeError, ValueError):
-            g.response.add_error_message("category_id は整数で指定してください")
-            return jsonify(g.response.get_result()), 400
-
-        allowed_tables = [t for t in allowed_tables if t["category_id"] == category_id]
-        if not allowed_tables:
-            g.response.add_error_message("指定されたカテゴリに検索可能なテーブルがありません")
+        allowed_tables, allowed_tables_error = _get_allowed_search_tables_for_category(db_service, category_id)
+        if allowed_tables_error:
+            g.response.add_error_message(allowed_tables_error)
             return jsonify(g.response.get_result()), 400
 
         allowed_table_set = db_service._build_allowed_table_set_from_entries(allowed_tables)
@@ -5427,14 +5441,9 @@ def _nl_search_run_job(job_id: str, query: str, category_id: int) -> None:
         _update_job(status="running")
 
         db_service = DatabaseService()
-        allowed_tables = db_service.get_allowed_table_names()
-        if not allowed_tables:
-            _update_job(status="error", error_message="検索可能なテーブルがありません")
-            return
-
-        allowed_tables = [t for t in allowed_tables if t["category_id"] == category_id]
-        if not allowed_tables:
-            _update_job(status="error", error_message="指定されたカテゴリに検索可能なテーブルがありません")
+        allowed_tables, allowed_tables_error = _get_allowed_search_tables_for_category(db_service, category_id)
+        if allowed_tables_error:
+            _update_job(status="error", error_message=allowed_tables_error)
             return
 
         allowed_table_set = db_service._build_allowed_table_set_from_entries(allowed_tables)
@@ -5513,19 +5522,15 @@ def natural_language_search_async_start():
     """自然言語検索（非同期）: ジョブを開始して job_id を返す"""
     try:
         data = request.get_json(silent=True) or {}
-        query = (data.get("query") or "").strip()
-        category_id = data.get("category_id")
+        query, category_id, validation_error = _parse_nl_search_request_payload(data)
+        if validation_error:
+            g.response.add_error_message(validation_error)
+            return jsonify(g.response.get_result()), 400
 
-        if not query:
-            g.response.add_error_message("検索クエリを入力してください")
-            return jsonify(g.response.get_result()), 400
-        if category_id is None:
-            g.response.add_error_message("伝票分類を選択してください")
-            return jsonify(g.response.get_result()), 400
-        try:
-            category_id = int(category_id)
-        except (TypeError, ValueError):
-            g.response.add_error_message("category_id は整数で指定してください")
+        db_service = DatabaseService()
+        _allowed_tables, allowed_tables_error = _get_allowed_search_tables_for_category(db_service, category_id)
+        if allowed_tables_error:
+            g.response.add_error_message(allowed_tables_error)
             return jsonify(g.response.get_result()), 400
 
         _nl_search_job_cleanup()

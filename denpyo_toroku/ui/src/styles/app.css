@@ -8133,3 +8133,21 @@ html[dir="rtl"] .oracle-icon {
     display: flex;
     justify-content: flex-end;
 }
+
+.ics-form-labelRequired {
+    color: var(--aai-accent1-solid-1);
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-left: 0.4rem;
+}
+
+.ics-form-error {
+    margin: 6px 0 0;
+    color: var(--aai-accent1-dark-1);
+    font-size: 0.85rem;
+}
+
+.ics-form-input--invalid {
+    border-color: var(--aai-accent1-solid-1) !important;
+    box-shadow: 0 0 0 1px rgba(229, 72, 77, 0.12);
+}

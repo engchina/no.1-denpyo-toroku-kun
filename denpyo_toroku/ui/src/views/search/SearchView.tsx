@@ -151,12 +151,14 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
   const dispatch = useAppDispatch();
   const initialSearchParams = getCurrentSearchParams();
   const query = persistedQuery;
+  const trimmedQuery = query.trim();
   const categoryId = persistedCategoryId;
   const setQuery = (value: string) => dispatch(setNlSearchQuery(value));
   const setCategoryId = (value: number | undefined) => dispatch(setNlSearchCategoryId(value));
   const queryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [copied, setCopied] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [validationErrors, setValidationErrors] = useState<{ category?: string; query?: string }>({});
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [nlResultPageSize, setNlResultPageSize] = useState(() => {
     const next = readScopedNumber(initialSearchParams, SEARCH_NL_RESULT_QUERY_SCOPE, 'ps', 20);
@@ -187,8 +189,8 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
       return;
     }
     const hasCurrent = searchableTables.some((table) => table.category_id === categoryId);
-    if (!hasCurrent) {
-      setCategoryId(searchableTables[0].category_id);
+    if (categoryId !== undefined && !hasCurrent) {
+      setCategoryId(undefined);
     }
   }, [categoryId, searchableTables]);
 
@@ -283,10 +285,22 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
     };
   }, [isLoading, asyncJobId, asyncJobStartedAt]);
 
+  const validateSearchInputs = useCallback(() => {
+    const nextErrors: { category?: string; query?: string } = {};
+    if (!selectedCategory) {
+      nextErrors.category = t('search.error.noCategory');
+    }
+    if (!trimmedQuery) {
+      nextErrors.query = t('search.error.emptyQuery');
+    }
+    setValidationErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }, [trimmedQuery, selectedCategory]);
+
   const handleSearch = useCallback(() => {
-    if (!query.trim() || !selectedCategory) return;
-    dispatch(nlSearchStartAsync({ query: query.trim(), category_id: selectedCategory.category_id }));
-  }, [dispatch, query, selectedCategory]);
+    if (!validateSearchInputs() || !selectedCategory) return;
+    dispatch(nlSearchStartAsync({ query: trimmedQuery, category_id: selectedCategory.category_id }));
+  }, [dispatch, trimmedQuery, selectedCategory, validateSearchInputs]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && e.ctrlKey) {
@@ -321,6 +335,7 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
   }, [query, setQuery]);
 
   const noTables = !isTablesLoading && searchableTables.length === 0;
+  const isSearchActionDisabled = noTables || isLoading;
 
   const asyncStatusLabel = asyncJobStatus === 'running'
     ? t('search.nl.asyncStatus.running')
@@ -334,19 +349,38 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
             <div class="ics-search-controls-card">
               {/* Category filter */}
               <div class="ics-form-group">
-                <label class="ics-form-label">{t('search.common.categoryFilter')}</label>
+                <label class="ics-form-label">
+                  {t('search.common.categoryFilter')}
+                  <span class="ics-form-labelRequired">{t('common.required')}</span>
+                </label>
                 <select
-                  class="ics-form-input"
+                  class={`ics-form-input${validationErrors.category ? ' ics-form-input--invalid' : ''}`}
                   value={categoryId ?? ''}
-                  onChange={(e) => setCategoryId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined)}
-                  disabled={noTables || isLoading}
+                  onChange={(e) => {
+                    setCategoryId(e.currentTarget.value ? Number(e.currentTarget.value) : undefined);
+                    setValidationErrors((prev) => ({ ...prev, category: undefined }));
+                  }}
+                  onBlur={(e) => {
+                    setValidationErrors((prev) => ({
+                      ...prev,
+                      category: e.currentTarget.value ? undefined : t('search.error.noCategory'),
+                    }));
+                  }}
+                  disabled={isSearchActionDisabled}
+                  required
+                  aria-required="true"
+                  aria-invalid={validationErrors.category ? 'true' : 'false'}
                 >
+                  <option value="">{t('search.common.categoryPlaceholder')}</option>
                   {searchableTables.map(table => (
                     <option key={table.category_id} value={table.category_id}>
                       {table.category_name}
                     </option>
                   ))}
                 </select>
+                {validationErrors.category && (
+                  <p class="ics-form-error" role="alert">{validationErrors.category}</p>
+                )}
                 {selectedCategory && (
                   <div class="ics-search-profileMeta">
                     <span class="ics-search-profileMeta__label">{t('search.common.profileLabel')}</span>
@@ -377,17 +411,35 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
 
               {/* Query input */}
               <div class="ics-form-group">
-                <label class="ics-form-label">{t('search.nl.queryLabel')}</label>
+                <label class="ics-form-label">
+                  {t('search.nl.queryLabel')}
+                  <span class="ics-form-labelRequired">{t('common.required')}</span>
+                </label>
                 <textarea
                   ref={queryTextareaRef}
-                  class="ics-form-textarea ics-search-query"
+                  class={`ics-form-textarea ics-search-query${validationErrors.query ? ' ics-form-input--invalid' : ''}`}
                   placeholder={t('search.nl.queryPlaceholder')}
                   value={query}
-                  onInput={(e) => setQuery(e.currentTarget.value)}
+                  onInput={(e) => {
+                    setQuery(e.currentTarget.value);
+                    setValidationErrors((prev) => ({ ...prev, query: undefined }));
+                  }}
+                  onBlur={(e) => {
+                    setValidationErrors((prev) => ({
+                      ...prev,
+                      query: e.currentTarget.value.trim() ? undefined : t('search.error.emptyQuery'),
+                    }));
+                  }}
                   onKeyDown={handleKeyDown}
-                  disabled={noTables || isLoading}
+                  disabled={isSearchActionDisabled}
                   rows={3}
+                  required
+                  aria-required="true"
+                  aria-invalid={validationErrors.query ? 'true' : 'false'}
                 />
+                {validationErrors.query && (
+                  <p class="ics-form-error" role="alert">{validationErrors.query}</p>
+                )}
               </div>
 
               {/* Search button */}
@@ -396,7 +448,7 @@ function NLSearchTab({ searchableTables, isLoading, isTablesLoading, result, per
                   type="button"
                   class="ics-ops-btn ics-ops-btn--primary"
                   onClick={handleSearch}
-                  disabled={!query.trim() || !selectedCategory || noTables || isLoading}
+                  disabled={isSearchActionDisabled}
                 >
                   {isLoading ? (
                     <>
