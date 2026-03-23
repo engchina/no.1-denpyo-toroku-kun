@@ -817,6 +817,7 @@ END;"""
 
     def execute_ddl(self, ddl_statement: str) -> Dict[str, Any]:
         """動的DDLを実行（AI提案のテーブル作成用）"""
+        statement_to_execute = ddl_statement  # except ブロックからも参照できるよう try 外で初期化
         try:
             statement_to_execute = self._prepare_ddl_for_execution(ddl_statement)
             with self.get_connection() as conn:
@@ -828,18 +829,110 @@ END;"""
             error_str = str(e)
             if "ORA-00955" in error_str:
                 return {"success": True, "message": "テーブルは既に存在します"}
+            if "ORA-02264" in error_str:
+                # 変換後の DDL を渡す（制約名は _qualify_constraint_names で書き換え済み）
+                detail = self._describe_ora02264(statement_to_execute, e)
+                logger.error("DDL実行エラー: %s", detail, exc_info=True)
+                return {"success": False, "message": detail}
             logger.error("DDL実行エラー: %s", e, exc_info=True)
             return {"success": False, "message": str(e)}
 
+    def _describe_ora02264(self, ddl_statement: str, original_error: Exception) -> str:
+        """ORA-02264 発生時に、競合している制約名を特定して詳細メッセージを返す"""
+        constraint_names = re.findall(
+            r'\bCONSTRAINT\s+([A-Za-z0-9_$#"]+)',
+            ddl_statement,
+            re.IGNORECASE,
+        )
+        constraint_names = [n.strip('"') for n in constraint_names]
+        if not constraint_names:
+            return f"制約名がすでに存在します (ORA-02264)。DDL文を確認してください。元エラー: {original_error}"
+        try:
+            placeholders = ", ".join(f":n{i}" for i in range(len(constraint_names)))
+            bind = {f"n{i}": name.upper() for i, name in enumerate(constraint_names)}
+            query = (
+                f"SELECT constraint_name, table_name, constraint_type "
+                f"FROM user_constraints "
+                f"WHERE constraint_name IN ({placeholders})"
+            )
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, bind)
+                    rows = cursor.fetchall()
+            if rows:
+                conflicts = ", ".join(
+                    f"{r[0]}（テーブル: {r[1]}, 種別: {r[2]}）" for r in rows
+                )
+                return (
+                    f"制約名がすでに存在するため DDL を実行できません (ORA-02264)。"
+                    f"競合している制約: {conflicts}"
+                )
+            names_str = ", ".join(constraint_names)
+            return (
+                f"制約名がすでに存在します (ORA-02264)。"
+                f"DDL内の制約名: {names_str}。元エラー: {original_error}"
+            )
+        except Exception:
+            names_str = ", ".join(constraint_names)
+            return (
+                f"制約名がすでに存在します (ORA-02264)。"
+                f"DDL内の制約名: {names_str}。元エラー: {original_error}"
+            )
+
+    @staticmethod
+    def _qualify_constraint_names(ddl: str) -> str:
+        """CREATE TABLE DDL 内の CONSTRAINT 名をテーブル名でプレフィックスし、
+        スキーマ全体での名前衝突を防ぐ。
+
+        スキップ条件: 制約名がすでに「<TABLE_NAME>_」で始まっている場合。
+        128 字を超える場合は末尾 8 桁の MD5 ハッシュで一意性を保証。
+        CREATE TABLE が含まれない DDL（TRIGGER, COMMENT ON 等）はそのまま返す。
+        """
+        # CREATE TABLE が含まれない DDL はトリガーやコメントなので対象外
+        table_match = re.search(r'\bCREATE\s+TABLE\s+(\w+)', ddl, re.IGNORECASE)
+        if not table_match:
+            return ddl
+
+        table_name = table_match.group(1).upper()
+        prefix = table_name + "_"
+        _MAX_IDENT = 128  # Oracle 12.2+ の識別子最大長
+
+        def _make_name(constraint_name: str) -> str:
+            candidate = f"{table_name}_{constraint_name}"
+            if len(candidate) <= _MAX_IDENT:
+                return candidate
+            # 超過する場合はハッシュ末尾で一意性を保証（合計 128 字）
+            hash_sfx = hashlib.md5(candidate.encode()).hexdigest()[:8].upper()
+            return f"{candidate[:_MAX_IDENT - 9]}_{hash_sfx}"
+
+        def _replace(m: re.Match) -> str:
+            orig = m.group(1).strip('"')
+            # 既に「TABLE_NAME_」で始まっていれば二重プレフィックスを避けてスキップ
+            if orig.upper().startswith(prefix):
+                return m.group(0)
+            return f"CONSTRAINT {_make_name(orig)}"
+
+        return re.sub(
+            r'\bCONSTRAINT\s+([A-Za-z0-9_$#"]+)',
+            _replace,
+            ddl,
+            flags=re.IGNORECASE,
+        )
+
     @staticmethod
     def _prepare_ddl_for_execution(ddl_statement: str) -> str:
-        """必要に応じて DDL を EXECUTE IMMEDIATE で包み、疑似レコードを bind と誤解されないようにする"""
+        """必要に応じて DDL を EXECUTE IMMEDIATE で包み、疑似レコードを bind と誤解されないようにする。
+        CREATE TABLE DDL に対しては制約名をテーブル名でプレフィックスする。
+        トリガー DDL は先にラップ判定し、ラップ後に制約名正規化は行わない。
+        """
         normalized_statement = (ddl_statement or "").strip()
         if not normalized_statement:
             raise ValueError("DDL文が空です")
+        # トリガー等は EXECUTE IMMEDIATE でラップするだけ（制約名変換不要）
         if DatabaseService._requires_execute_immediate_wrapper(normalized_statement):
             return DatabaseService._build_execute_immediate_block(normalized_statement)
-        return normalized_statement
+        # CREATE TABLE DDL のみ制約名を正規化
+        return DatabaseService._qualify_constraint_names(normalized_statement)
 
     @staticmethod
     def _requires_execute_immediate_wrapper(ddl_statement: str) -> bool:
@@ -1943,7 +2036,7 @@ END;"""
                 pk_cols.append(col_name)
 
         if pk_cols:
-            pk_name = f"PK_{table_name[:20]}"
+            pk_name = f"PK_{table_name}"
             col_defs.append(f"    CONSTRAINT {pk_name} PRIMARY KEY ({', '.join(pk_cols)})")
 
         cols_sql = ",\n".join(col_defs)

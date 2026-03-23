@@ -180,6 +180,23 @@ _PROMPT_OCR_OUTPUT_RULES: str = """\
 You are an intelligent document parser. Extract all content from this document \
 image and output it in a structured, machine-readable format following the rules below.
 
+## Rule 0: Faithful Transcription (Overrides All Other Rules)
+CRITICAL — transcribe every character EXACTLY as it appears in the image. \
+Do NOT apply linguistic knowledge, spelling correction, word normalization, \
+or substitution of visually similar characters.
+- Each character must be read independently from its visual shape in the image. \
+Do not infer or replace a character based on what word would be more common, \
+more grammatically natural, or more familiar in the language.
+- Abbreviated, domain-specific, or unconventional terms that exist in the document \
+must be preserved verbatim. Do NOT replace them with standard or more common \
+equivalents (e.g., a field label that appears to be a domain-specific abbreviation \
+must be copied exactly — do not substitute a more common word that looks similar).
+- If two characters look visually similar but are distinct (e.g., different kanji \
+with similar strokes), transcribe the one actually present in the image, not the \
+more frequently occurring one.
+- When uncertain between two visually similar characters, choose the one whose \
+visual shape more closely matches the actual ink strokes in the image.
+
 ## Rule 1: Tables and Grid-Based Forms
 - Render every table or grid using GitHub-Flavored Markdown table syntax.
 - Each LOGICAL row must occupy exactly ONE Markdown table row, even if that row \
