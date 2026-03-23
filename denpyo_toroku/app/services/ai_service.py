@@ -229,12 +229,13 @@ or struck through (including options that are simultaneously circled and struck 
 - Do NOT add artificial line breaks that do not exist in the original.
 
 ## Rule 5: Special Visual Elements
-- Stamps or seals:     <STAMP: text>
+- Stamps or seals:     <STAMP: text>  (where text is the characters readable inside the stamp impression; use <STAMP: > if the text is illegible)
 - Handwritten notes:   <HANDWRITTEN: text>
 - Signatures:          <SIGNATURE>
 - Barcodes / QR codes: <BARCODE: value_if_readable>
 - Illegible text:      <ILLEGIBLE>
 - Redacted / masked:   <REDACTED>
+- CRITICAL — stamps inside table cells: When a stamp or seal image appears inside a table cell (Rule 1), embed the <STAMP: text> tag as the cell's content. NEVER leave a cell empty when a stamp image is visually present in that cell. The column header of that cell serves as the field label; the <STAMP: text> tag is its value.
 
 ## Rule 6: Document Sections
 When the document has clearly separated sections, prefix each with a Markdown \
@@ -303,6 +304,7 @@ _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
 - **Table name**: Romanized Katakana in UPPERCASE alphabet (e.g., RYOUSHUUSHO for 領収書, SEIKYUUSHO for 請求書, NOUHINNSHO for 納品書).
 - **Physical column names**: Romanized Katakana in UPPERCASE alphabet with underscores (e.g., HAKKOOBI for 発行日, GOUKEI_KINGAKU for 合計金額, ATESAKI_MEI for 宛先名).
 - **Logical column names**: Japanese (Kanji) via comment. CRITICAL — always derive the logical name from the **exact label text as it appears in the document**. For hierarchical tables where a parent row/section header applies to multiple sub-rows, form the logical name by concatenating the parent label and the sub-row label with a single space, exactly as written in the document. Never reinterpret, paraphrase, restructure, or infer new terminology that does not appear in the document.
+- **Strict verbatim rule for logical names**: The logical name MUST be an exact copy of the document label — do NOT append, prepend, or insert any qualifier or descriptor of any kind (e.g., do NOT add 印, 欄, コード, フラグ, 番号, or any similar suffix/prefix). The physical column name and Oracle data type already communicate the field's role; the logical name exists solely so that the value-extraction step can locate the correct label in the OCR output by exact string matching. Any deviation from the verbatim label will cause extraction to fail.
 - **Physical column names for hierarchical or parenthesized labels**: When deriving the romanized physical name from a concatenated hierarchical logical name, apply the following in order: (1) remove all parentheses and the text enclosed within them from the label before romanizing; (2) romanize the remaining words and join them with underscores; (3) if the resulting name would exceed 30 characters, abbreviate each component to its most meaningful prefix while keeping the name uniquely identifiable. The romanization itself must still follow Hepburn rules.
 - Use consistent Hepburn romanization rules (e.g., しょ→SHO, きゅう→KYUU, おう→OU).
 
