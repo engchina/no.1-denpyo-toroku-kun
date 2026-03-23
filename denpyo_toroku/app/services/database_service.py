@@ -45,6 +45,9 @@ _MANAGEMENT_TABLES_DDL = [
         STATUS VARCHAR2(50) DEFAULT 'UPLOADED',
         ANALYSIS_KIND VARCHAR2(30),
         ANALYSIS_RESULT BLOB,
+        ANALYSIS_RESULT_1 BLOB,
+        ANALYSIS_RESULT_2 BLOB,
+        ANALYSIS_RESULT_3 BLOB,
         ANALYZED_AT TIMESTAMP,
         UPLOADED_BY VARCHAR2(100),
         UPLOADED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -152,6 +155,9 @@ CREATE TABLE SLIPS_CATEGORY (
     CONTENT_TYPE VARCHAR2(100),
     STATUS VARCHAR2(20) DEFAULT 'UPLOADED',
     ANALYSIS_RESULT BLOB,
+    ANALYSIS_RESULT_1 BLOB,
+    ANALYSIS_RESULT_2 BLOB,
+    ANALYSIS_RESULT_3 BLOB,
     ANALYZED_AT TIMESTAMP,
     CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -162,6 +168,9 @@ CREATE TABLE SLIPS_CATEGORY (
 _SLIPS_CATEGORY_ALTER_DDLS = [
     "ALTER TABLE SLIPS_CATEGORY ADD (STATUS VARCHAR2(20) DEFAULT 'UPLOADED')",
     "ALTER TABLE SLIPS_CATEGORY ADD (ANALYSIS_RESULT BLOB)",
+    "ALTER TABLE SLIPS_CATEGORY ADD (ANALYSIS_RESULT_1 BLOB)",
+    "ALTER TABLE SLIPS_CATEGORY ADD (ANALYSIS_RESULT_2 BLOB)",
+    "ALTER TABLE SLIPS_CATEGORY ADD (ANALYSIS_RESULT_3 BLOB)",
     "ALTER TABLE SLIPS_CATEGORY ADD (ANALYZED_AT TIMESTAMP)",
     "ALTER TABLE SLIPS_CATEGORY ADD (UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
 ]
@@ -218,6 +227,11 @@ _CATEGORY_SELECT_AI_COLUMN_DEFINITIONS = [
     ("SELECT_AI_CONFIG_HASH", "SELECT_AI_CONFIG_HASH VARCHAR2(64)"),
     ("SELECT_AI_LAST_ERROR", "SELECT_AI_LAST_ERROR VARCHAR2(2000)"),
 ]
+_ANALYSIS_RESULT_ATTEMPT_COLUMNS = (
+    "ANALYSIS_RESULT_1",
+    "ANALYSIS_RESULT_2",
+    "ANALYSIS_RESULT_3",
+)
 
 
 class DatabaseService:
@@ -508,6 +522,9 @@ class DatabaseService:
                             [
                                 ("ANALYSIS_KIND", "ANALYSIS_KIND VARCHAR2(30)"),
                                 ("ANALYSIS_RESULT", "ANALYSIS_RESULT BLOB"),
+                                ("ANALYSIS_RESULT_1", "ANALYSIS_RESULT_1 BLOB"),
+                                ("ANALYSIS_RESULT_2", "ANALYSIS_RESULT_2 BLOB"),
+                                ("ANALYSIS_RESULT_3", "ANALYSIS_RESULT_3 BLOB"),
                                 ("ANALYZED_AT", "ANALYZED_AT TIMESTAMP"),
                             ],
                         )
@@ -517,6 +534,8 @@ class DatabaseService:
                             _CATEGORY_SELECT_AI_COLUMN_DEFINITIONS,
                         )
                         self._ensure_blob_column(cursor, "DENPYO_FILES", "ANALYSIS_RESULT")
+                        for column_name in _ANALYSIS_RESULT_ATTEMPT_COLUMNS:
+                            self._ensure_blob_column(cursor, "DENPYO_FILES", column_name)
                         self._backfill_registration_category_ids(cursor)
                     conn.commit()
                 cls._shared_management_tables_initialized = True
@@ -815,6 +834,58 @@ END;"""
         cursor.execute(f"ALTER TABLE {table_name} RENAME COLUMN {temp_column} TO {column_name}")
         logger.info("テーブル %s の %s を CLOB から BLOB に移行しました", table_name, column_name)
 
+    def _decode_json_blob(self, raw_value: Any) -> Optional[Dict[str, Any]]:
+        if raw_value is None:
+            return None
+        try:
+            raw_payload = raw_value.read() if hasattr(raw_value, "read") else raw_value
+            if isinstance(raw_payload, memoryview):
+                raw_payload = raw_payload.tobytes()
+            if isinstance(raw_payload, bytes):
+                raw_payload = raw_payload.decode("utf-8")
+            if not raw_payload:
+                return None
+            parsed = json.loads(raw_payload)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception as e:
+            logger.warning("分析結果BLOBのJSON解析に失敗しました: %s", e)
+            return None
+
+    def _build_attempt_blob_payloads(self, analysis_result: Dict[str, Any]) -> List[Optional[bytes]]:
+        raw_attempts = analysis_result.get("analysis_attempts") if isinstance(analysis_result, dict) else None
+        attempts = [attempt for attempt in raw_attempts if isinstance(attempt, dict)] if isinstance(raw_attempts, list) else []
+        if not attempts and isinstance(analysis_result, dict):
+            attempts = [analysis_result]
+
+        payloads: List[Optional[bytes]] = []
+        for index in range(len(_ANALYSIS_RESULT_ATTEMPT_COLUMNS)):
+            attempt = attempts[index] if index < len(attempts) else None
+            payloads.append(json.dumps(attempt, ensure_ascii=False).encode("utf-8") if attempt else None)
+        return payloads
+
+    def _merge_analysis_attempts_into_result(
+        self,
+        analysis_result: Optional[Dict[str, Any]],
+        attempt_rows: List[Any],
+    ) -> Optional[Dict[str, Any]]:
+        attempt_results = [
+            decoded
+            for decoded in (self._decode_json_blob(raw_value) for raw_value in attempt_rows)
+            if decoded is not None
+        ]
+        if analysis_result is None:
+            if not attempt_results:
+                return None
+            merged = dict(attempt_results[0])
+            merged["analysis_attempts"] = attempt_results
+            return merged
+
+        if attempt_results:
+            merged = dict(analysis_result)
+            merged["analysis_attempts"] = attempt_results
+            return merged
+        return analysis_result
+
     def execute_ddl(self, ddl_statement: str) -> Dict[str, Any]:
         """動的DDLを実行（AI提案のテーブル作成用）"""
         statement_to_execute = ddl_statement  # except ブロックからも参照できるよう try 外で初期化
@@ -996,6 +1067,8 @@ END;"""
                                 if "ORA-01430" not in str(e):
                                     logger.warning("SLIPS_CATEGORY ALTER エラー (無視可): %s", e)
                         self._ensure_blob_column(cursor, "SLIPS_CATEGORY", "ANALYSIS_RESULT")
+                        for column_name in _ANALYSIS_RESULT_ATTEMPT_COLUMNS:
+                            self._ensure_blob_column(cursor, "SLIPS_CATEGORY", column_name)
                     conn.commit()
                 cls._shared_slips_tables_initialized = True
                 self._slips_tables_initialized = True
@@ -1837,25 +1910,25 @@ END;"""
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
-                        """SELECT ANALYSIS_RESULT, ANALYZED_AT
+                        """SELECT ANALYSIS_RESULT, ANALYSIS_RESULT_1, ANALYSIS_RESULT_2, ANALYSIS_RESULT_3, ANALYZED_AT
                              FROM SLIPS_CATEGORY
                             WHERE ID = :1""",
                         [file_id],
                     )
                     row = cursor.fetchone()
-                    if not row or row[0] is None:
+                    if not row:
                         return None
 
-                    raw_payload = row[0].read() if hasattr(row[0], "read") else row[0]
-                    if isinstance(raw_payload, memoryview):
-                        raw_payload = raw_payload.tobytes()
-                    if isinstance(raw_payload, bytes):
-                        raw_payload = raw_payload.decode("utf-8")
-                    parsed_result = json.loads(raw_payload)
+                    parsed_result = self._merge_analysis_attempts_into_result(
+                        self._decode_json_blob(row[0]),
+                        list(row[1:4]),
+                    )
+                    if parsed_result is None:
+                        return None
                     return {
                         "analysis_kind": "category",
                         "result": parsed_result,
-                        "analyzed_at": str(row[1]) if row[1] else "",
+                        "analyzed_at": str(row[4]) if row[4] else "",
                     }
         except Exception as e:
             logger.error("SLIPS_CATEGORY 分析結果取得エラー (id=%s): %s", file_id, e, exc_info=True)
@@ -1874,25 +1947,25 @@ END;"""
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
-                        """SELECT ANALYSIS_RESULT, ANALYZED_AT
+                        """SELECT ANALYSIS_RESULT, ANALYSIS_RESULT_1, ANALYSIS_RESULT_2, ANALYSIS_RESULT_3, ANALYZED_AT
                              FROM SLIPS_CATEGORY
                             WHERE OBJECT_NAME = :1""",
                         [normalized_object_name],
                     )
                     row = cursor.fetchone()
-                    if not row or row[0] is None:
+                    if not row:
                         return None
 
-                    raw_payload = row[0].read() if hasattr(row[0], "read") else row[0]
-                    if isinstance(raw_payload, memoryview):
-                        raw_payload = raw_payload.tobytes()
-                    if isinstance(raw_payload, bytes):
-                        raw_payload = raw_payload.decode("utf-8")
-                    parsed_result = json.loads(raw_payload)
+                    parsed_result = self._merge_analysis_attempts_into_result(
+                        self._decode_json_blob(row[0]),
+                        list(row[1:4]),
+                    )
+                    if parsed_result is None:
+                        return None
                     return {
                         "analysis_kind": "category",
                         "result": parsed_result,
-                        "analyzed_at": str(row[1]) if row[1] else "",
+                        "analyzed_at": str(row[4]) if row[4] else "",
                     }
         except Exception as e:
             logger.error("SLIPS_CATEGORY 分析結果取得エラー (object_name=%s): %s", object_name, e, exc_info=True)
@@ -1921,16 +1994,20 @@ END;"""
             return False
         try:
             payload = json.dumps(analysis_result, ensure_ascii=False).encode("utf-8")
+            attempt_payloads = self._build_attempt_blob_payloads(analysis_result)
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
                         """UPDATE SLIPS_CATEGORY
                            SET ANALYSIS_RESULT = :1,
+                               ANALYSIS_RESULT_1 = :2,
+                               ANALYSIS_RESULT_2 = :3,
+                               ANALYSIS_RESULT_3 = :4,
                                ANALYZED_AT = CURRENT_TIMESTAMP,
                                STATUS = 'ANALYZED',
                                UPDATED_AT = CURRENT_TIMESTAMP
-                         WHERE ID = :2""",
-                        [payload, file_id],
+                         WHERE ID = :5""",
+                        [payload, *attempt_payloads, file_id],
                     )
                 conn.commit()
             return True
@@ -4335,16 +4412,20 @@ END;"""
 
         try:
             payload = json.dumps(analysis_result, ensure_ascii=False).encode("utf-8")
+            attempt_payloads = self._build_attempt_blob_payloads(analysis_result)
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
                         """UPDATE DENPYO_FILES
                            SET ANALYSIS_KIND = :1,
                                ANALYSIS_RESULT = :2,
+                               ANALYSIS_RESULT_1 = :3,
+                               ANALYSIS_RESULT_2 = :4,
+                               ANALYSIS_RESULT_3 = :5,
                                ANALYZED_AT = CURRENT_TIMESTAMP,
                                UPDATED_AT = CURRENT_TIMESTAMP
-                         WHERE ID = :3""",
-                        [analysis_kind, payload, file_id],
+                         WHERE ID = :6""",
+                        [analysis_kind, payload, *attempt_payloads, file_id],
                     )
                 conn.commit()
             return True
@@ -4361,25 +4442,25 @@ END;"""
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
-                        """SELECT ANALYSIS_KIND, ANALYSIS_RESULT, ANALYZED_AT
+                        """SELECT ANALYSIS_KIND, ANALYSIS_RESULT, ANALYSIS_RESULT_1, ANALYSIS_RESULT_2, ANALYSIS_RESULT_3, ANALYZED_AT
                              FROM DENPYO_FILES
                             WHERE ID = :1""",
                         [file_id],
                     )
                     row = cursor.fetchone()
-                    if not row or row[1] is None:
+                    if not row:
                         return None
 
-                    raw_payload = row[1].read() if hasattr(row[1], "read") else row[1]
-                    if isinstance(raw_payload, memoryview):
-                        raw_payload = raw_payload.tobytes()
-                    if isinstance(raw_payload, bytes):
-                        raw_payload = raw_payload.decode("utf-8")
-                    parsed_result = json.loads(raw_payload)
+                    parsed_result = self._merge_analysis_attempts_into_result(
+                        self._decode_json_blob(row[1]),
+                        list(row[2:5]),
+                    )
+                    if parsed_result is None:
+                        return None
                     return {
                         "analysis_kind": row[0] or "",
                         "result": parsed_result,
-                        "analyzed_at": str(row[2]) if row[2] else "",
+                        "analyzed_at": str(row[5]) if row[5] else "",
                     }
         except Exception as e:
             logger.error("分析結果取得エラー (id=%s): %s", file_id, e, exc_info=True)
