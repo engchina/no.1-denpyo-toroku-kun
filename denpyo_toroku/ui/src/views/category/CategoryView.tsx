@@ -838,21 +838,21 @@ type CategoryDesignerDraft = {
   activeDesignerTab: 'header' | 'line';
 };
 
-function normalizeCategoryAnalysisAttempts(analysisResult: CategoryAnalysisResult): CategoryAnalysisAttempt[] {
-  const baseAttempts = Array.isArray(analysisResult.analysis_attempts) && analysisResult.analysis_attempts.length > 0
-    ? analysisResult.analysis_attempts
-    : [{ ...analysisResult, attempt_number: analysisResult.attempt_number ?? 1 }];
+function normalizeCategoryAnalysisAttempt(analysisResult: CategoryAnalysisResult): CategoryAnalysisAttempt {
+  const baseAttempt = Array.isArray(analysisResult.analysis_attempts) && analysisResult.analysis_attempts.length > 0
+    ? analysisResult.analysis_attempts[0]
+    : analysisResult;
 
-  return baseAttempts.map((attempt, index) => ({
-    attempt_number: Number(attempt.attempt_number ?? (index + 1)),
-    category_guess: attempt.category_guess || '',
-    category_guess_en: attempt.category_guess_en || '',
-    analysis_mode: attempt.analysis_mode || analysisResult.analysis_mode || 'header_only',
-    header_columns: attempt.header_columns || [],
-    line_columns: attempt.line_columns || [],
-    analyzed_file_ids: attempt.analyzed_file_ids || analysisResult.analyzed_file_ids || [],
-    file_page_texts: attempt.file_page_texts || analysisResult.file_page_texts,
-  }));
+  return {
+    attempt_number: Number(baseAttempt?.attempt_number ?? analysisResult.attempt_number ?? 1),
+    category_guess: baseAttempt?.category_guess || '',
+    category_guess_en: baseAttempt?.category_guess_en || '',
+    analysis_mode: baseAttempt?.analysis_mode || analysisResult.analysis_mode || 'header_only',
+    header_columns: baseAttempt?.header_columns || [],
+    line_columns: baseAttempt?.line_columns || [],
+    analyzed_file_ids: baseAttempt?.analyzed_file_ids || analysisResult.analyzed_file_ids || [],
+    file_page_texts: baseAttempt?.file_page_texts || analysisResult.file_page_texts,
+  };
 }
 
 function createCategoryDesignerDraft(attempt: CategoryAnalysisAttempt): CategoryDesignerDraft {
@@ -868,12 +868,6 @@ function createCategoryDesignerDraft(attempt: CategoryAnalysisAttempt): Category
   };
 }
 
-function buildCategoryDesignerDraftMap(attempts: CategoryAnalysisAttempt[]): Record<number, CategoryDesignerDraft> {
-  return Object.fromEntries(
-    attempts.map((attempt) => [Number(attempt.attempt_number || 1), createCategoryDesignerDraft(attempt)])
-  ) as Record<number, CategoryDesignerDraft>;
-}
-
 function TableDesignerPanel({
   analysisResult,
   onConfirm,
@@ -885,29 +879,18 @@ function TableDesignerPanel({
   onClose: () => void;
   isCreating: boolean;
 }) {
-  const analysisAttempts = useMemo(
-    () => normalizeCategoryAnalysisAttempts(analysisResult),
+  const activeAttempt = useMemo(
+    () => normalizeCategoryAnalysisAttempt(analysisResult),
     [analysisResult]
   );
-  const [selectedAttemptNumber, setSelectedAttemptNumber] = useState<number>(() => Number(analysisAttempts[0]?.attempt_number || 1));
-  const [draftsByAttempt, setDraftsByAttempt] = useState<Record<number, CategoryDesignerDraft>>(() => (
-    buildCategoryDesignerDraftMap(analysisAttempts)
-  ));
+  const [activeDraft, setActiveDraft] = useState<CategoryDesignerDraft>(() => createCategoryDesignerDraft(activeAttempt));
   const [validationError, setValidationError] = useState('');
   const [isReviewCollapsed, setIsReviewCollapsed] = useState(false);
 
   useEffect(() => {
-    setSelectedAttemptNumber(Number(analysisAttempts[0]?.attempt_number || 1));
-    setDraftsByAttempt(buildCategoryDesignerDraftMap(analysisAttempts));
+    setActiveDraft(createCategoryDesignerDraft(activeAttempt));
     setValidationError('');
-  }, [analysisAttempts]);
-
-  const activeAttempt = useMemo<CategoryAnalysisAttempt>(
-    () => analysisAttempts.find((attempt) => Number(attempt.attempt_number || 1) === selectedAttemptNumber) || analysisAttempts[0]!,
-    [analysisAttempts, selectedAttemptNumber]
-  );
-  const activeAttemptNumber = Number(activeAttempt?.attempt_number || 1);
-  const activeDraft = draftsByAttempt[activeAttemptNumber] || createCategoryDesignerDraft(activeAttempt);
+  }, [activeAttempt]);
   const hasLine = activeAttempt.analysis_mode === 'header_line';
   const activeDesignerTab: 'header' | 'line' = hasLine && activeDraft.activeDesignerTab === 'line' ? 'line' : 'header';
   const fileIds = activeAttempt.analyzed_file_ids ?? [];
@@ -916,14 +899,8 @@ function TableDesignerPanel({
   const syncedPanelStyle = buildSyncedPanelMaxHeightStyle(reviewPanelHeight);
 
   const updateActiveDraft = useCallback((updater: (draft: CategoryDesignerDraft) => CategoryDesignerDraft) => {
-    setDraftsByAttempt((prev) => {
-      const currentDraft = prev[activeAttemptNumber] || createCategoryDesignerDraft(activeAttempt);
-      return {
-        ...prev,
-        [activeAttemptNumber]: updater(currentDraft),
-      };
-    });
-  }, [activeAttempt, activeAttemptNumber]);
+    setActiveDraft((prev) => updater(prev));
+  }, []);
 
   const handleConfirm = () => {
     const headerBusinessColumns = getBusinessColumns(activeDraft.headerColumns);
