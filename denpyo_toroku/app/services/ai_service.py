@@ -1048,10 +1048,22 @@ class AIService:
     def _get_text_from_chat_response(self, chat_response: Any) -> str:
         """ChatResponse からテキストを連結抽出"""
         if not hasattr(chat_response, "choices") or not chat_response.choices:
+            logger.warning(
+                "_get_text_from_chat_response: choices なし。chat_response_type=%s has_choices=%s choices_len=%s",
+                type(chat_response).__name__,
+                hasattr(chat_response, "choices"),
+                len(chat_response.choices) if hasattr(chat_response, "choices") and chat_response.choices is not None else "N/A",
+            )
             return ""
 
         message = chat_response.choices[0].message
         content = getattr(message, "content", None)
+        logger.debug(
+            "_get_text_from_chat_response: message_type=%s content_type=%s content_is_empty=%s",
+            type(message).__name__,
+            type(content).__name__,
+            not content,
+        )
         if isinstance(content, str) and content:
             return content
         if content:
@@ -1062,6 +1074,12 @@ class AIService:
         direct_text = getattr(message, "text", None)
         if isinstance(direct_text, str):
             return direct_text
+        logger.warning(
+            "_get_text_from_chat_response: テキスト抽出失敗。message_type=%s content=%r direct_text=%r",
+            type(message).__name__,
+            repr(content)[:300] if content is not None else None,
+            repr(direct_text)[:300] if direct_text is not None else None,
+        )
         return ""
 
     def _get_text_from_chat_content_part(self, part: Any) -> str:
@@ -1480,8 +1498,47 @@ class AIService:
                                 ocr_rotation_priority="primary" if rotation_index == 1 else "secondary",
                             ),
                         )
-                        chat_response = getattr(getattr(response, "data", None), "chat_response", None)
+                        _response_data = getattr(response, "data", None)
+                        chat_response = getattr(_response_data, "chat_response", None)
+                        logger.debug(
+                            "%s: VLM APIレスポンス構造: response_type=%s data_type=%s "
+                            "chat_response_type=%s status=%s",
+                            operation_name,
+                            type(response).__name__,
+                            type(_response_data).__name__,
+                            type(chat_response).__name__,
+                            getattr(response, "status", "N/A"),
+                            extra=self._build_log_extra(
+                                page_log_context,
+                                ocr_rotation_degrees=rotation_degrees,
+                                vlm_response_type=type(response).__name__,
+                                vlm_data_type=type(_response_data).__name__,
+                                vlm_chat_response_type=type(chat_response).__name__,
+                            ),
+                        )
+                        if chat_response is None:
+                            logger.warning(
+                                "%s: chat_response が None です。response.data=%r",
+                                operation_name,
+                                _response_data,
+                                extra=self._build_log_extra(
+                                    page_log_context,
+                                    ocr_rotation_degrees=rotation_degrees,
+                                    vlm_data_repr=repr(_response_data)[:500],
+                                ),
+                            )
                         extracted_text = self._get_text_from_chat_response(chat_response).strip()
+                        logger.debug(
+                            "%s: VLM テキスト抽出結果: length=%d preview=%r",
+                            operation_name,
+                            len(extracted_text),
+                            extracted_text[:200] if extracted_text else "",
+                            extra=self._build_log_extra(
+                                page_log_context,
+                                ocr_rotation_degrees=rotation_degrees,
+                                vlm_extracted_length=len(extracted_text),
+                            ),
+                        )
                         if extracted_text:
                             if total_request_attempts > 1:
                                 logger.info(
