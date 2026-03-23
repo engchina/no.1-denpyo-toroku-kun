@@ -229,13 +229,24 @@ or struck through (including options that are simultaneously circled and struck 
 - Do NOT add artificial line breaks that do not exist in the original.
 
 ## Rule 5: Special Visual Elements
-- Stamps or seals:     <STAMP: text>  (where text is the characters readable inside the stamp impression; use <STAMP: > if the text is illegible)
+- Stamps or seals: <STAMP: text>
+  Recognition guidance: ink stamps typically appear as circular or rectangular \
+  impressions in red, blue, or black ink, often containing characters (names, \
+  organization names, or dates) arranged in a linear or circular layout within \
+  the boundary. Read the characters by following the layout direction (left-to-right \
+  for linear; clockwise from the top for circular). If only partial characters are \
+  legible, record what can be read. If completely illegible, use <STAMP: >.
+  NEVER skip this tag when a stamp impression is visually present — always output \
+  <STAMP: text> or <STAMP: > regardless of legibility.
 - Handwritten notes:   <HANDWRITTEN: text>
 - Signatures:          <SIGNATURE>
 - Barcodes / QR codes: <BARCODE: value_if_readable>
 - Illegible text:      <ILLEGIBLE>
 - Redacted / masked:   <REDACTED>
-- CRITICAL — stamps inside table cells: When a stamp or seal image appears inside a table cell (Rule 1), embed the <STAMP: text> tag as the cell's content. NEVER leave a cell empty when a stamp image is visually present in that cell. The column header of that cell serves as the field label; the <STAMP: text> tag is its value.
+- CRITICAL — stamps inside table cells: When a stamp or seal image appears inside \
+a table cell (Rule 1), embed the <STAMP: text> tag as the cell's content. NEVER \
+leave a cell empty when a stamp image is visually present in that cell. The column \
+header of that cell serves as the field label; the <STAMP: text> tag is its value.
 
 ## Rule 6: Document Sections
 When the document has clearly separated sections, prefix each with a Markdown \
@@ -263,8 +274,14 @@ Record only the selected option's text as the field value, without any marker \
 (e.g., "Yes[SELECTED] / No" → "Yes").
 - Checkbox fields: Checked items (visually ticked in the image, or prefixed \
 [CHECKED] in the text) → "1". Unchecked items ([ ] prefix or no mark) → "0".
-- Special OCR tags: <STAMP: text> and <HANDWRITTEN: text> → use only the inner \
-text value. <SIGNATURE> → "1". <ILLEGIBLE> and <REDACTED> → empty string ""."""
+- Special OCR tags:
+  - <STAMP: text>: if inner text is non-empty, use it as the field value; \
+if the stamp is present but the text is illegible (inner text is empty, \
+i.e., <STAMP: >), use "1" to record stamp presence rather than leaving the \
+field empty.
+  - <HANDWRITTEN: text>: use only the inner text value.
+  - <SIGNATURE>: use "1".
+  - <ILLEGIBLE> and <REDACTED>: use empty string ""."""
 
 _PROMPT_SELECTION_SCHEMA_DESIGN: str = """\
 - Selection / choice fields (options visually marked in the image with ○/✓/underline \
