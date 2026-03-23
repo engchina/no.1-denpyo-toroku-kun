@@ -198,28 +198,53 @@ more frequently occurring one.
 visual shape more closely matches the actual ink strokes in the image.
 
 ## Rule 1: Tables and Grid-Based Forms
-- Render every table or grid using GitHub-Flavored Markdown table syntax.
-- Each LOGICAL row must occupy exactly ONE Markdown table row, even if that row \
-visually wraps across multiple lines in the image.
-- If a cell's content spans multiple visual lines within the same cell boundary, \
-join them with a single space.
+
+### Step A — Column structure (analyze BEFORE transcribing any row)
+1. Count how many header rows are stacked at the top of the table (there may be \
+multiple layers).
+2. Determine the total number of LEAF columns — the finest-grained columns that \
+actually hold data values.
+3. Build a fully-qualified name for each leaf column by concatenating the texts of \
+all ancestor header cells from outermost (top) to innermost (bottom), joined with \
+a single space. A header cell that visually spans N leaf columns contributes its \
+text as a prefix to all N leaf-column names beneath it. If a header cell is \
+visually empty (blank or contains only whitespace), skip it — do not insert a \
+space segment for it; use only the non-empty ancestor and leaf texts.
+4. Fix this leaf-column count and the fully-qualified names for the entire table. \
+They must not change for any data row.
+
+### Step B — Row label hierarchy (analyze BEFORE transcribing any row)
+1. Row labels may span two or more levels of nesting occupying the leftmost \
+column(s).
+2. A cell in the row-label area that visually spans multiple rows (merged cell, \
+bold/indented section title, or a cell with no data value in the same row) is a \
+group-header. Propagate its exact text to every data row it covers.
+3. Build the fully-qualified row label for each data row by concatenating ALL \
+ancestor group-header texts and the row's own label, separated by a single space, \
+from outermost to innermost. Use the EXACT text as printed — do NOT rephrase, \
+abbreviate, or reorder any segment.
+
+### Step C — Output
+- Render every table using GitHub-Flavored Markdown table syntax.
+- The Markdown header row must use the fully-qualified column names from Step A.
+- If the table has row labels (Step B applies): the first (leftmost) Markdown \
+column must contain the fully-qualified row label. For tables with NO row-label \
+column (all columns are data columns), omit this rule — the first column is simply \
+the first data column.
+- Each LOGICAL data row occupies exactly ONE Markdown table row.
+- CRITICAL — column integrity: every row must have exactly the number of leaf \
+columns fixed in Step A. Never merge values from adjacent columns into one cell.
+- Merged data cells (colspan): repeat the cell's value in each column it spans.
+- Merged data cells (rowspan): repeat the cell's value in each row it spans.
+- To locate column boundaries when grid lines are faint or absent, align each \
+value with its fully-qualified header. If a cell appears to contain text belonging \
+to the next column, split at the header-alignment boundary.
+- If a cell's content wraps across multiple visual lines within the same cell \
+boundary, join them with a single space.
+- If a single cell contains multiple sub-values separated by "/" or a line break \
+that are NOT divided by separate grid columns, preserve them as-is in one cell value.
 - Always include a header row; if no headers are printed, infer short descriptive \
-ones (Column1, Column2, ...).
-- CRITICAL — column integrity: First identify ALL column headers and fix the total \
-column count for the entire table. Every data row MUST have exactly that many \
-columns. Never merge values from adjacent columns into one cell.
-- To detect column boundaries when grid lines are faint or absent, align each \
-value with the header directly above it. If a data cell appears to contain text \
-that belongs to the next column (e.g., a part number immediately following an item \
-name), split them at the boundary implied by the header alignment.
-- Hierarchical row labels: If a cell in the row-label column acts as a group \
-header that applies to the rows below it (e.g., a merged cell, a bold/indented \
-section title, or a label with no corresponding data value in the same row), \
-represent each sub-row by concatenating the parent label and the sub-row label \
-with a single space, using the EXACT text as printed in the document. Do NOT \
-reinterpret, paraphrase, or restructure the labels (e.g., if the document shows \
-a parent row labelled "A" and sub-rows "(B) X" and "(B) Y", output "A (B) X" \
-and "A (B) Y" — never rewrite them as "B X under A" or any other form).
+names (Column1, Column2, …).
 
 ## Rule 2: Key-Value / Label-Value Fields
 Applies ONLY to standalone label-value fields that are NOT part of a formal table or grid structure (Rule 1 takes precedence inside tables).
@@ -278,10 +303,22 @@ Markdown table row with | separators in the text — must map to exactly one rec
 Do not split a single logical row into multiple records even if it wraps across \
 visual lines.
 - Hierarchical row labels: When the OCR text contains row labels that were formed \
-by concatenating a parent label and a sub-row label (e.g., "Parent SubLabel"), \
-treat the full concatenated string as the unique field identifier. Map the \
-corresponding value to the column whose logical name matches that exact \
-concatenated label. Do not attempt to re-split or re-interpret the concatenated label.
+by concatenating multiple ancestor group-header labels and a leaf label \
+(e.g., "GrandParent Parent LeafLabel"), treat the full concatenated string as the \
+unique field identifier. Map the corresponding value to the column whose logical \
+name matches that exact concatenated label. Do not attempt to re-split or \
+re-interpret any part of the concatenated label, regardless of nesting depth.
+- Hierarchical column names: When the OCR text uses fully-qualified column names \
+formed by concatenating ancestor header labels (e.g., "OuterHeader InnerHeader"), \
+treat the full concatenated string as the column identifier. Do not re-split it.
+- Cell lookup in two-dimensional tables: When a logical name combines a \
+fully-qualified row label AND a column header (e.g., "RowPath ColumnHeader"), \
+locate the value by (1) finding the Markdown table row whose first cell equals \
+the row-label portion, and (2) reading the value from the column whose header \
+equals the column-header portion. To identify the split point, cross-reference \
+the actual column headers of the Markdown table: the longest trailing segment of \
+the logical name that matches a column header is the column-header portion; the \
+remaining leading segment is the row-label portion.
 - Selection fields: The selected option is identified either by visual marking in \
 the image (circled ○, filled ●, checked ✓, underlined, boxed — but WITHOUT a \
 simultaneous strikethrough) or by the [SELECTED] marker in the text. An option \
@@ -321,7 +358,7 @@ NUMBER(1)."""
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PROMPT_EXTRACT_TEXT_VALUE_RULES_DEFAULT: str = """\
-1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する。ラベルは文書に記載された原文テキストをそのまま使用しており、意味解釈や言い換えを行っていない。階層的な行ラベルの場合は親ラベルと子ラベルをスペースで連結した形（例: "親 子"）で表現されているため、その連結表記のまま対応する値を検索すること
+1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する。ラベルは文書に記載された原文テキストをそのまま使用しており、意味解釈や言い換えを行っていない。階層的な行ラベルの場合は全ての祖先ラベルと末端ラベルを外側から内側の順にスペースで連結した形（例: "祖父 親 子"）で表現されているため、その連結表記のまま（どの階層も分割・再解釈せずに）対応する値を検索すること
 2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
 3. 日付: ISO 8601形式 YYYY-MM-DD（例: "令和6年1月15日" → "2024-01-15"）
 4. テキスト: OCRテキストの文字をそのまま転記。
@@ -337,7 +374,7 @@ _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
 ### 2. Naming Conventions
 - **Table name**: Romanized Katakana in UPPERCASE alphabet (e.g., RYOUSHUUSHO for 領収書, SEIKYUUSHO for 請求書, NOUHINNSHO for 納品書).
 - **Physical column names**: Romanized Katakana in UPPERCASE alphabet with underscores (e.g., HAKKOOBI for 発行日, GOUKEI_KINGAKU for 合計金額, ATESAKI_MEI for 宛先名).
-- **Logical column names**: Japanese (Kanji) via comment. CRITICAL — always derive the logical name from the **exact label text as it appears in the document**. For hierarchical tables where a parent row/section header applies to multiple sub-rows, form the logical name by concatenating the parent label and the sub-row label with a single space, exactly as written in the document. Never reinterpret, paraphrase, restructure, or infer new terminology that does not appear in the document.
+- **Logical column names**: Japanese (Kanji) via comment. CRITICAL — always derive the logical name from the **exact label text as it appears in the document**. For hierarchical tables where ancestor group-headers (two or more levels) apply to sub-rows, form the logical name by concatenating ALL ancestor labels and the leaf label with single spaces, in order from outermost to innermost, exactly as written in the document (e.g., grandparent label + " " + parent label + " " + leaf label). Never reinterpret, paraphrase, restructure, or infer new terminology that does not appear in the document.
 - **Strict verbatim rule for logical names**: The logical name MUST be an exact copy of the document label — do NOT append, prepend, or insert any qualifier or descriptor of any kind (e.g., do NOT add 印, 欄, コード, フラグ, 番号, or any similar suffix/prefix). The physical column name and Oracle data type already communicate the field's role; the logical name exists solely so that the value-extraction step can locate the correct label in the OCR output by exact string matching. Any deviation from the verbatim label will cause extraction to fail.
 - **Physical column names for hierarchical or parenthesized labels**: When deriving the romanized physical name from a concatenated hierarchical logical name, apply the following in order: (1) remove all parentheses and the text enclosed within them from the label before romanizing; (2) romanize the remaining words and join them with underscores; (3) if the resulting name would exceed 30 characters, abbreviate each component to its most meaningful prefix while keeping the name uniquely identifiable. The romanization itself must still follow Hepburn rules.
 - Use consistent Hepburn romanization rules (e.g., しょ→SHO, きゅう→KYUU, おう→OU).
@@ -359,7 +396,7 @@ Categories of information to capture (applicable categories depend on document t
 - **Party information**: names, addresses, phone numbers, registration/license numbers, organization codes
 - **Subject / target information**: item name, model number, serial number, capacity, rating, classification
 - **Specifications and configurations**: all labeled specification fields, settings, modes, options
-- **Measurement and test data**: all numeric readings, measured values, ratings, tolerances — including every cell in measurement tables. For hierarchical measurement tables (e.g., a table where rows are grouped under section headers), generate one column per unique leaf-level combination (section + sub-row + column header).
+- **Measurement and test data**: all numeric readings, measured values, ratings, tolerances — including every cell in measurement tables. For hierarchical measurement tables where rows are grouped under two or more levels of section headers, generate one column per unique leaf-level combination formed by concatenating ALL ancestor row labels and the column header, from outermost to innermost, with single spaces.
 - **Financial data** (if present): subtotal, tax, total amount, unit price, quantity, tax rate
 - **Inspection and compliance data**: test results, pass/fail judgments, inspection dates, inspector information
 - **Free-text sections**: remarks, special notes, conditions, payment terms — each distinct labeled free-text area gets its own column
@@ -451,13 +488,16 @@ class _GenAIRequestGate:
         if GENAI_PROGRESS_LOG_INTERVAL_SECONDS > 0:
             while not self._semaphore.acquire(timeout=GENAI_PROGRESS_LOG_INTERVAL_SECONDS):
                 if semaphore_wait_started_at is None:
-                    semaphore_wait_started_at = time.monotonic()
+                    # Record start time on the FIRST failed attempt so subsequent
+                    # logs show accurate elapsed time (not always 0.0s).
+                    semaphore_wait_started_at = time.monotonic() - GENAI_PROGRESS_LOG_INTERVAL_SECONDS
                 logger.info(
                     "%s: GenAI 実行枠の空きを待機中です (elapsed=%.1fs)",
                     operation_name,
                     time.monotonic() - semaphore_wait_started_at,
                 )
         else:
+            semaphore_wait_started_at = time.monotonic()
             self._semaphore.acquire()
 
         if semaphore_wait_started_at is not None:
@@ -486,11 +526,16 @@ class _GenAIRequestGate:
             raise
 
     def call(self, operation_name: str, func, *args, **kwargs):
-        self._reserve_slot(operation_name)
+        # _reserve_slot acquires the semaphore and releases it itself on exception,
+        # so only release in finally when _reserve_slot succeeded.
+        acquired = False
         try:
+            self._reserve_slot(operation_name)
+            acquired = True
             return func(*args, **kwargs)
         finally:
-            self._semaphore.release()
+            if acquired:
+                self._semaphore.release()
 
     def note_rate_limit(self, retry_after_seconds: float) -> None:
         cooldown = max(GENAI_RATE_LIMIT_COOLDOWN_SECONDS, float(retry_after_seconds))
@@ -819,6 +864,7 @@ class AIService:
                         elapsed_seconds=round(elapsed, 3),
                     ),
                 )
+                break  # 非リトライエラーは残りの試行を行わず即終了
             finally:
                 self._stop_request_progress_logger(stop_event, progress_thread)
         raise last_error
@@ -1043,6 +1089,7 @@ class AIService:
                             json_regen_max_attempts=max_attempts,
                         ),
                     )
+                    raise
         raise last_error if last_error else json.JSONDecodeError("empty response", last_text, 0)
 
     def _get_text_from_chat_response(self, chat_response: Any) -> str:
@@ -1072,7 +1119,7 @@ class AIService:
             return self._get_text_from_chat_content_part(content)
 
         direct_text = getattr(message, "text", None)
-        if isinstance(direct_text, str):
+        if isinstance(direct_text, str) and direct_text:
             return direct_text
         logger.warning(
             "_get_text_from_chat_response: テキスト抽出失敗。message_type=%s content=%r direct_text=%r",
@@ -1308,6 +1355,8 @@ class AIService:
                 resized_width, resized_height = resized_image.size
 
                 fd, temp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+                # Append before writing so that cleanup catches this path even if save() raises.
+                temp_paths.append(temp_path)
                 with os.fdopen(fd, "wb") as temp_file:
                     if output_type == "image/jpeg":
                         resized_image.convert("RGB").save(
@@ -1322,7 +1371,6 @@ class AIService:
                         if save_image.mode not in ("1", "L", "LA", "P", "RGB", "RGBA"):
                             save_image = save_image.convert("RGBA" if "A" in save_image.mode else "RGB")
                         save_image.save(temp_file, format="PNG", optimize=True, compress_level=9)
-                temp_paths.append(temp_path)
                 try:
                     optimized_bytes = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
                 except OSError:
@@ -1622,9 +1670,9 @@ class AIService:
                         break
                 finally:
                     self._cleanup_tempfiles(cleanup_paths)
-
-                if extracted_text:
-                    break
+                # Note: no redundant `if extracted_text: break` here —
+                # the break above is inside try and already exits the rotation
+                # loop (Python executes finally then applies the break).
 
             if not extracted_text:
                 raise ValueError(
@@ -1834,7 +1882,8 @@ class AIService:
                     chat_detail,
                     log_context=self._build_log_extra(log_context),
                 )
-                return self._get_text_from_chat_response(response.data.chat_response)
+                _data = getattr(response, "data", None)
+                return self._get_text_from_chat_response(getattr(_data, "chat_response", None))
 
             parsed = self._parse_json_with_regeneration(
                 "extract_data_from_text",
@@ -2152,7 +2201,8 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
                     chat_detail,
                     log_context=self._build_log_extra(log_context),
                 )
-                return self._get_text_from_chat_response(response.data.chat_response)
+                _data = getattr(response, "data", None)
+                return self._get_text_from_chat_response(getattr(_data, "chat_response", None))
 
             parsed = self._parse_json_with_regeneration(
                 "generate_sql_schema_from_text",
@@ -2273,11 +2323,16 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
             table_name = table.get("table_name", "")
             columns = table.get("columns", [])
             if table_name and columns:
-                cols_str = ", ".join([
-                    f"{c.get('column_name', '')} ({c.get('data_type', '')})"
-                    for c in columns
-                ])
-                schema_text += f"- {table_name}: {cols_str}\n"
+                col_parts = []
+                for c in columns:
+                    col_name = c.get("column_name", "")
+                    data_type = c.get("data_type", "")
+                    comment = c.get("comment", "")
+                    part = f"{col_name} ({data_type})"
+                    if comment:
+                        part += f" -- {comment}"
+                    col_parts.append(part)
+                schema_text += f"- {table_name}: {', '.join(col_parts)}\n"
 
         prompt = f"""以下のOracleデータベーステーブルに対して、ユーザーの質問に答えるSELECT文を生成してください。
 
@@ -2321,22 +2376,22 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
                 chat_request=chat_request,
             )
 
-            response = self._retry_api_call("text_to_sql", client.chat, chat_detail)
-
-            result_text = ""
-            chat_response = response.data.chat_response
-            if hasattr(chat_response, "choices") and chat_response.choices:
-                message = chat_response.choices[0].message
-                if hasattr(message, "content"):
-                    for part in message.content:
-                        if hasattr(part, "text"):
-                            result_text += part.text
+            def generate_text() -> str:
+                response = self._retry_api_call("text_to_sql", client.chat, chat_detail)
+                _data = getattr(response, "data", None)
+                return self._get_text_from_chat_response(getattr(_data, "chat_response", None))
 
             try:
-                parsed = self._extract_json(result_text)
+                parsed = self._parse_json_with_regeneration(
+                    "text_to_sql",
+                    generate_text,
+                    GENAI_JSON_PARSE_RETRIES,
+                )
             except json.JSONDecodeError as e:
-                logger.error("AI応答のJSONパースエラー: %s (response=%s)", e, result_text[:600])
+                logger.error("AI応答のJSONパースエラー: %s", e)
                 return {"success": False, "message": f"AI応答の解析に失敗しました: {str(e)}"}
+            if not isinstance(parsed, dict):
+                return {"success": False, "message": "AI応答形式が不正です"}
             parsed["success"] = True
             return parsed
 
