@@ -361,6 +361,21 @@ function canAnalyzeFile(file: Pick<DenpyoFile, 'status' | 'can_retry_analysis'>)
   return Boolean(file.can_retry_analysis) || ['UPLOADED', 'ERROR'].includes(file.status);
 }
 
+function retainAvailableIds(currentIds: Set<string>, availableIds: Set<string>): Set<string> {
+  let changed = false;
+  const next = new Set<string>();
+
+  currentIds.forEach((id) => {
+    if (availableIds.has(id)) {
+      next.add(id);
+      return;
+    }
+    changed = true;
+  });
+
+  return changed ? next : currentIds;
+}
+
 // ─── Category Edit Modal (existing CRUD) ─────────────────────────────────────
 
 function EditModal({
@@ -1197,6 +1212,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
 
   // Local state
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  const [analysisTargetFileIds, setAnalysisTargetFileIds] = useState<Set<string>>(new Set());
   const [editTarget, setEditTarget] = useState<DenpyoCategory | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [creatingProfileCategoryId, setCreatingProfileCategoryId] = useState<number | null>(null);
@@ -1293,6 +1309,11 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
       return factor * (aTime - bTime);
     });
   }, [categories, categorySortDirection, categorySortKey]);
+
+  const slipsCategoryFileIdSet = useMemo(
+    () => new Set(slipsCategoryFiles.map((file) => String(file.file_id))),
+    [slipsCategoryFiles]
+  );
 
   const selectedCategory = useMemo(
     () => categories.find((cat) => cat.id === selectedCategoryId) || null,
@@ -1491,6 +1512,11 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
     setSelectedFileIds(new Set());
   }, [slipsCategoryPage]);
 
+  useEffect(() => {
+    setSelectedFileIds((prev) => retainAvailableIds(prev, slipsCategoryFileIdSet));
+    setAnalysisTargetFileIds((prev) => retainAvailableIds(prev, slipsCategoryFileIdSet));
+  }, [slipsCategoryFileIdSet]);
+
   // Client-side category list: reset page on page size change
   useEffect(() => {
     if (isCategoryPageSizeInitRef.current) {
@@ -1573,8 +1599,13 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   // ── AI Analysis flow ────────────────────────────────────────────────────────
 
   const handleAnalyzeSingleFile = useCallback((fileId: string) => {
-    setSelectedFileIds(new Set([fileId]));
+    setAnalysisTargetFileIds(new Set([fileId]));
     setShowAnalysisModeModal(true);
+  }, []);
+
+  const handleAnalysisModeModalClose = useCallback(() => {
+    setShowAnalysisModeModal(false);
+    setAnalysisTargetFileIds(new Set());
   }, []);
 
   const handleDeleteSlipFile = useCallback((fileId: string, fileName: string) => {
@@ -1627,10 +1658,15 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
   const handleAnalysisModeConfirm = async (mode: 'header_only' | 'header_line') => {
     setShowAnalysisModeModal(false);
     dispatch(clearCategoryAnalysis());
+    const targetFileIds = Array.from(analysisTargetFileIds);
+    if (targetFileIds.length === 0) {
+      setAnalysisTargetFileIds(new Set());
+      return;
+    }
     try {
       await dispatch(
         analyzeSlipsForCategory({
-          fileIds: Array.from(selectedFileIds).map(id => parseInt(id, 10)),
+          fileIds: targetFileIds.map(id => parseInt(id, 10)),
           analysisMode: mode,
         })
       ).unwrap();
@@ -1650,12 +1686,16 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
           autoClose: true,
         })
       );
+    } finally {
+      setAnalysisTargetFileIds(new Set());
     }
   };
 
   const handleDesignerClose = () => {
     dispatch(clearCategoryAnalysis());
+    setShowAnalysisModeModal(false);
     setSelectedFileIds(new Set());
+    setAnalysisTargetFileIds(new Set());
     if (mode === 'samples' && resultFileId) {
       navigate(APP_ROUTES.categorySamples, { replace: true });
     }
@@ -1687,7 +1727,9 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
         })
       );
       dispatch(clearCategoryAnalysis());
+      setShowAnalysisModeModal(false);
       setSelectedFileIds(new Set());
+      setAnalysisTargetFileIds(new Set());
       if (mode === 'samples' && resultFileId) {
         navigate(APP_ROUTES.categorySamples, { replace: true });
       }
@@ -2241,7 +2283,7 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
                                   disabled={isCategoryAnalyzing || !canAnalyzeFile(file)}
                                   title={file.is_analysis_stalled ? t('fileList.analyze.retry') : t('fileList.analyzeFile')}
                                 >
-                                  {isCategoryAnalyzing && selectedFileIds.has(fileId)
+                                  {isCategoryAnalyzing && analysisTargetFileIds.has(fileId)
                                     ? <Loader2 size={14} class="ics-spin" />
                                     : <Sparkles size={14} />
                                   }
@@ -2582,9 +2624,9 @@ export function CategoryView({ mode = 'samples' }: { mode?: CategoryViewMode }) 
 
       {mode === 'samples' && showAnalysisModeModal && (
         <AnalysisModeModal
-          selectedCount={selectedFileIds.size}
+          selectedCount={analysisTargetFileIds.size}
           onConfirm={handleAnalysisModeConfirm}
-          onClose={() => setShowAnalysisModeModal(false)}
+          onClose={handleAnalysisModeModalClose}
         />
       )}
 

@@ -74,6 +74,10 @@ _DEFAULT_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES = 0
 _ANALYSIS_STALL_DETAIL = "ANALYSIS_TIMEOUT"
 _DEFAULT_ANALYSIS_STALL_MINUTES = 30
 _CATEGORY_ANALYSIS_ATTEMPT_COUNT = 3
+_CATEGORY_ANALYSIS_MAX_TOTAL_ATTEMPTS = max(
+    _CATEGORY_ANALYSIS_ATTEMPT_COUNT,
+    int(os.environ.get("CATEGORY_ANALYSIS_MAX_TOTAL_ATTEMPTS", "6")),
+)
 _GENAI_REQUEUE_MAX_ATTEMPTS = max(0, int(os.environ.get("GENAI_REQUEUE_MAX_ATTEMPTS", "4")))
 _GENAI_REQUEUE_BASE_DELAY_SECONDS = max(
     1.0,
@@ -409,7 +413,7 @@ def _build_category_analysis_result_payload(
 ) -> Dict[str, Any]:
     header_fields = schema_result.get("header_fields", [])
     if not header_fields:
-        raise ValueError("分析できるファイルがありませんでした")
+        raise ValueError("AIスキーマ設計結果に header_fields がありませんでした")
 
     line_fields = schema_result.get("line_fields", []) if analysis_mode == "header_line" else []
     header_columns = _merge_category_analysis_fields(header_fields)
@@ -536,33 +540,68 @@ def _run_category_analysis_attempts(
     source_file_page_ranges: Dict[int, Dict[str, int]],
     base_log_context: Dict[str, Any],
     attempt_count: int = _CATEGORY_ANALYSIS_ATTEMPT_COUNT,
+    max_total_attempts: int = _CATEGORY_ANALYSIS_MAX_TOTAL_ATTEMPTS,
 ) -> Dict[str, Any]:
     if attempt_count <= 0:
         raise ValueError("分析試行回数が不正です")
 
-    attempts = [
-        _run_category_analysis_attempt(
-            ai_service=ai_service,
-            tmp_filepaths=tmp_filepaths,
-            analysis_mode=analysis_mode,
-            processed_file_ids=processed_file_ids,
-            sample_page_range=sample_page_range,
-            source_file_page_ranges=source_file_page_ranges,
-            base_log_context=base_log_context,
-            attempt_number=attempt_number,
-            attempt_count=attempt_count,
-        )
-        for attempt_number in range(1, attempt_count + 1)
-    ]
+    total_attempt_limit = max(attempt_count, max_total_attempts)
+    successful_attempts: List[Dict[str, Any]] = []
+    failed_attempt_messages: List[str] = []
 
-    primary_result = dict(attempts[0])
+    for raw_attempt_number in range(1, total_attempt_limit + 1):
+        try:
+            attempt_result = _run_category_analysis_attempt(
+                ai_service=ai_service,
+                tmp_filepaths=tmp_filepaths,
+                analysis_mode=analysis_mode,
+                processed_file_ids=processed_file_ids,
+                sample_page_range=sample_page_range,
+                source_file_page_ranges=source_file_page_ranges,
+                base_log_context=base_log_context,
+                attempt_number=raw_attempt_number,
+                attempt_count=total_attempt_limit,
+            )
+        except AIRateLimitError:
+            raise
+        except Exception as exc:
+            failed_attempt_messages.append(f"{raw_attempt_number}回目: {exc}")
+            logging.warning(
+                "分類用サンプル伝票の分析試行が失敗しました (%d/%d): %s",
+                raw_attempt_number,
+                total_attempt_limit,
+                exc,
+                extra={
+                    **base_log_context,
+                    "attempt_number": raw_attempt_number,
+                    "attempt_count": total_attempt_limit,
+                    "action": "CATEGORY_ANALYZE_ATTEMPT_FAILED",
+                },
+            )
+            continue
+
+        success_attempt_number = len(successful_attempts) + 1
+        attempt_result["attempt_number"] = success_attempt_number
+        attempt_result["source_attempt_number"] = raw_attempt_number
+        successful_attempts.append(attempt_result)
+        if len(successful_attempts) >= attempt_count:
+            break
+
+    if len(successful_attempts) < attempt_count:
+        failure_summary = " / ".join(failed_attempt_messages[:3]) if failed_attempt_messages else "詳細不明"
+        raise ValueError(
+            f"有効な分析結果を{attempt_count}件確保できませんでした "
+            f"(成功 {len(successful_attempts)}/{attempt_count}, 上限 {total_attempt_limit}回, 失敗例: {failure_summary})"
+        )
+
+    primary_result = dict(successful_attempts[0])
     primary_result["analysis_attempts"] = [
         {
             key: value
             for key, value in attempt.items()
             if key != "analyzed_file_ids"
         }
-        for attempt in attempts
+        for attempt in successful_attempts
     ]
     return primary_result
 
