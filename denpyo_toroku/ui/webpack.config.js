@@ -140,15 +140,30 @@ module.exports = {
   optimization: {
     splitChunks: {
       chunks: 'all',
+      maxSize: 512 * 1024,
       cacheGroups: {
+        oracle: {
+          test: /[\\/]node_modules[\\/]@oracle[\\/]/,
+          name: 'oracle',
+          chunks: 'all',
+          priority: 20,
+          reuseExistingChunk: true,
+        },
         vendor: {
           test: /[\\/]node_modules[\\/]/,
           name: 'vendor',
-          chunks: 'all'
+          chunks: 'all',
+          priority: 10,
+          reuseExistingChunk: true,
         }
       }
     },
     runtimeChunk: 'single'
+  },
+  performance: {
+    hints: isProduction ? 'warning' : false,
+    maxEntrypointSize: 5 * 1024 * 1024,
+    maxAssetSize: 1 * 1024 * 1024,
   },
   devtool: isProduction ? 'source-map' : 'eval-source-map'
 };
