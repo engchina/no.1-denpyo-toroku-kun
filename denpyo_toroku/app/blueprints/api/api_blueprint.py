@@ -3605,6 +3605,11 @@ def _queue_raw_file_analysis(
                 "header_columns": table_schema.get("header_columns", []),
                 "line_columns": table_schema.get("line_columns", []),
             },
+            "page_texts": [
+                {"page_index": pt.get("page_index", 0), "text": pt.get("text", "")}
+                for pt in ocr_result.get("page_texts", [])
+                if isinstance(pt, dict)
+            ],
         }
 
         if not db_service.save_analysis_result(file_id, "raw", result):
@@ -3731,6 +3736,7 @@ def _queue_category_slip_analysis(
         ai_service = AIService()
         processed_file_ids: List[int] = []
         sample_page_range: Optional[Dict[str, int]] = None
+        source_file_page_ranges: Dict[int, Dict[str, int]] = {}
         for rec in file_records:
             object_name = rec.get("object_name", "")
             file_data = storage_service.download_file(object_name)
@@ -3753,6 +3759,7 @@ def _queue_category_slip_analysis(
             end_page_index = len(tmp_filepaths)
             if rec.get("id"):
                 processed_file_ids.append(rec.get("id"))
+                source_file_page_ranges[rec.get("id")] = {"start": start_page_index, "end": end_page_index}
                 if sample_page_range is None and end_page_index > start_page_index:
                     sample_page_range = {"start": start_page_index, "end": end_page_index}
                 logging.info("ファイルの前処理(ダウンロード・画像変換)完了", extra={"file_id": rec.get("id"), "action": "PREPROCESS_COMPLETE"})
@@ -3766,7 +3773,16 @@ def _queue_category_slip_analysis(
             raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
 
         extracted_text = ocr_result.get("extracted_text", "")
-        sample_ocr_text = _build_sample_ocr_text(ocr_result.get("page_texts"), sample_page_range)
+        all_page_texts = ocr_result.get("page_texts", [])
+        sample_ocr_text = _build_sample_ocr_text(all_page_texts, sample_page_range)
+        file_page_texts: Dict[str, List[Dict[str, Any]]] = {
+            str(source_id): [
+                {"page_index": i, "text": all_page_texts[page_range["start"] + i].get("text", "")}
+                for i in range(page_range["end"] - page_range["start"])
+                if page_range["start"] + i < len(all_page_texts)
+            ]
+            for source_id, page_range in source_file_page_ranges.items()
+        }
         logging.info(
             "OCRテキスト抽出完了",
             extra={
@@ -3801,6 +3817,7 @@ def _queue_category_slip_analysis(
             sample_ocr_text=sample_ocr_text,
             log_context={**ocr_log_context, "action": "CATEGORY_SAMPLE_VALUE_EXTRACT"},
         )
+        result["file_page_texts"] = file_page_texts
 
         for target in linked_targets:
             management_file_id = target.get("management_file_id")
@@ -4170,6 +4187,11 @@ def analyze_file(file_id: int):
                 "header_columns": table_schema.get("header_columns", []),
                 "line_columns": table_schema.get("line_columns", []),
             },
+            "page_texts": [
+                {"page_index": pt.get("page_index", 0), "text": pt.get("text", "")}
+                for pt in ocr_result.get("page_texts", [])
+                if isinstance(pt, dict)
+            ],
         }
 
         if not db_service.save_analysis_result(file_id, "raw", result):
@@ -4621,6 +4643,7 @@ def analyze_slips_for_category():
     processed_file_ids: List[int] = []
     schema_result: Dict[str, Any] = {}
     sample_page_range: Optional[Dict[str, int]] = None
+    source_file_page_ranges: Dict[int, Dict[str, int]] = {}
 
     try:
         # 1. すべてのファイルをダウンロードし、OCR用に画像化して /tmp に保存
@@ -4647,6 +4670,7 @@ def analyze_slips_for_category():
                 end_page_index = len(tmp_filepaths)
                 if rec.get("id"):
                     processed_file_ids.append(rec.get("id"))
+                    source_file_page_ranges[rec.get("id")] = {"start": start_page_index, "end": end_page_index}
                     if sample_page_range is None and end_page_index > start_page_index:
                         sample_page_range = {"start": start_page_index, "end": end_page_index}
             except Exception as e:
@@ -4700,7 +4724,16 @@ def analyze_slips_for_category():
             return jsonify(g.response.get_result()), 500
 
         extracted_text = ocr_result.get("extracted_text", "")
-        sample_ocr_text = _build_sample_ocr_text(ocr_result.get("page_texts"), sample_page_range)
+        all_page_texts = ocr_result.get("page_texts", [])
+        sample_ocr_text = _build_sample_ocr_text(all_page_texts, sample_page_range)
+        file_page_texts: Dict[str, List[Dict[str, Any]]] = {
+            str(source_id): [
+                {"page_index": i, "text": all_page_texts[page_range["start"] + i].get("text", "")}
+                for i in range(page_range["end"] - page_range["start"])
+                if page_range["start"] + i < len(all_page_texts)
+            ]
+            for source_id, page_range in source_file_page_ranges.items()
+        }
         logging.info(
             "OCRテキスト抽出完了 (文字数=%d)",
             len(extracted_text),
@@ -4790,6 +4823,7 @@ def analyze_slips_for_category():
             sample_ocr_text=sample_ocr_text,
             log_context={**ocr_log_context, "action": "CATEGORY_SAMPLE_VALUE_EXTRACT"},
         )
+        result["file_page_texts"] = file_page_texts
     except Exception as e:
         logging.error("分類用サンプル伝票の結果組み立てエラー: %s", e, exc_info=True)
         for target in linked_targets:

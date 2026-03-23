@@ -445,6 +445,10 @@ export const ja = {
   'fileList.notify.registerFailed': 'DB登録に失敗しました',
   'documentPreview.noPages': '表示できる画像がありません',
   'documentPreview.loadFailed': '画像プレビューの取得に失敗しました',
+  'documentPreview.vlmOutput': 'VLM出力テキスト',
+  'documentPreview.vlmOutputEmpty': 'このページのVLM出力テキストはありません',
+  'documentPreview.vlmOutputShow': 'VLM出力を表示',
+  'documentPreview.vlmOutputHide': 'VLM出力を非表示',
 
   // 伝票分類管理画面 (SCR-005)
   'nav.categorySamples': '分類用サンプル伝票',

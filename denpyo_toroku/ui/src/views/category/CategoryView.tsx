@@ -934,6 +934,7 @@ function TableDesignerPanel({
                 collapsible
                 isCollapsed={isReviewCollapsed}
                 onToggleCollapsed={setIsReviewCollapsed}
+                pageTextsByFileId={analysisResult.file_page_texts}
               />
             </div>
           )}

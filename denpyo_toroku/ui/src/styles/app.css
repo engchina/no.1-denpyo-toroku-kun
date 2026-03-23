@@ -7748,6 +7748,69 @@ html[dir="rtl"] .oracle-icon {
     min-width: 100px;
 }
 
+/* VLM出力パネル */
+.ics-vlm-panel {
+    margin-top: 8px;
+    border: 1px solid var(--oj-border-color, #d6e1ee);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.ics-vlm-panel__toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--oj-palette-neutral-10, #f5f7fa);
+    border: none;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--oj-text-color-secondary, #5a6a7e);
+    text-align: left;
+    transition: background 0.15s ease;
+}
+
+.ics-vlm-panel__toggle:hover {
+    background: var(--oj-palette-neutral-20, #e8edf3);
+}
+
+.ics-vlm-panel__body {
+    padding: 10px 12px;
+    background: #fff;
+}
+
+.ics-vlm-panel__label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--oj-text-color-secondary, #5a6a7e);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.ics-vlm-panel__text {
+    font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
+    font-size: 0.78rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--oj-text-color-primary, #1a2333);
+    background: var(--oj-palette-neutral-10, #f5f7fa);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin: 0;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.ics-vlm-panel__empty {
+    font-size: 0.82rem;
+    color: var(--oj-text-color-secondary, #5a6a7e);
+    font-style: italic;
+}
+
 @media (max-width: 1100px) {
     .ics-card-body--designer {
         min-height: 0;

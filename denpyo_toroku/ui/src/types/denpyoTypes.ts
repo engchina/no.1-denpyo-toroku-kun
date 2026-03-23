@@ -179,6 +179,11 @@ export interface CategoryTableSchema {
   line_columns: TableColumnInfo[];
 }
 
+export interface PageOcrText {
+  page_index: number;
+  text: string;
+}
+
 export interface AnalysisResult {
   file_id: string;
   file_name: string;
@@ -188,6 +193,7 @@ export interface AnalysisResult {
   extraction: FieldExtraction;
   ddl_suggestion: DDLSuggestion;
   table_schema?: CategoryTableSchema;
+  page_texts?: PageOcrText[];
 }
 
 export interface AnalysisQueuedResponse {
@@ -292,6 +298,7 @@ export interface CategoryAnalysisResult {
   header_columns: TableColumnDef[];
   line_columns: TableColumnDef[];
   analyzed_file_ids?: number[];
+  file_page_texts?: Record<string, PageOcrText[]>;
 }
 
 export interface CategoryCreateRequest {

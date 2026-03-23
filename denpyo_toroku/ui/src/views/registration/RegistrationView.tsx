@@ -398,6 +398,9 @@ export function RegistrationView() {
               collapsible
               isCollapsed={isReviewCollapsed}
               onToggleCollapsed={setIsReviewCollapsed}
+              pageTextsByFileId={currentAnalysisResult.page_texts
+                ? { [String(currentAnalysisResult.file_id)]: currentAnalysisResult.page_texts }
+                : undefined}
             />
           </div>
 

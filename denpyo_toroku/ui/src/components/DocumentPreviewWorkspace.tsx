@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { AlertTriangle, ChevronLeft, ChevronRight, ImageIcon, Loader2, RotateCcw, RotateCw } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, ImageIcon, Loader2, RotateCcw, RotateCw } from 'lucide-react';
 import { apiGet } from '../utils/apiUtils';
 import { t } from '../i18n';
-import type { DocumentPreviewPage, DocumentPreviewResponse } from '../types/denpyoTypes';
+import type { DocumentPreviewPage, DocumentPreviewResponse, PageOcrText } from '../types/denpyoTypes';
 
 type ViewerMode = 'fit-width' | 'fit-page' | 'zoom';
 type PageImageMetrics = {
@@ -34,6 +34,7 @@ export function DocumentPreviewWorkspace({
   collapsible = false,
   isCollapsed = false,
   onToggleCollapsed,
+  pageTextsByFileId,
 }: {
   fileIds: Array<string | number>;
   title?: string;
@@ -41,6 +42,7 @@ export function DocumentPreviewWorkspace({
   collapsible?: boolean;
   isCollapsed?: boolean;
   onToggleCollapsed?: (nextCollapsed: boolean) => void;
+  pageTextsByFileId?: Record<string, PageOcrText[]>;
 }) {
   const normalizedFileIds = useMemo(
     () => Array.from(new Set((fileIds || []).map((fileId) => String(fileId || '')).filter(Boolean))),
@@ -55,6 +57,7 @@ export function DocumentPreviewWorkspace({
   const [zoomPercent, setZoomPercent] = useState<number>(ZOOM_STEPS[1]);
   const [pageMetrics, setPageMetrics] = useState<Record<string, PageImageMetrics>>({});
   const [pageRotations, setPageRotations] = useState<Record<string, number>>({});
+  const [showVlmPanel, setShowVlmPanel] = useState(false);
   const viewerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -110,6 +113,7 @@ export function DocumentPreviewWorkspace({
     setPageRotations({});
     setViewerMode('fit-width');
     setZoomPercent(ZOOM_STEPS[1]);
+    setShowVlmPanel(false);
     void loadPages();
 
     return () => {
@@ -119,6 +123,14 @@ export function DocumentPreviewWorkspace({
 
   const activePage = pages.find((page) => page.key === activePageKey) || pages[0] || null;
   const currentIndex = activePage ? pages.findIndex((page) => page.key === activePage.key) : -1;
+  const activePageVlmText = useMemo(() => {
+    if (!activePage || !pageTextsByFileId) return '';
+    return (pageTextsByFileId[activePage.fileId] ?? []).find((pt) => pt.page_index === activePage.page_index)?.text ?? '';
+  }, [activePage?.fileId, activePage?.page_index, pageTextsByFileId]);
+  const hasAnyPageTexts = useMemo(
+    () => pageTextsByFileId != null && Object.values(pageTextsByFileId).some((arr) => arr.length > 0),
+    [pageTextsByFileId]
+  );
   const currentLabel = activePage
     ? t('category.designer.imagePosition', { current: currentIndex + 1, total: pages.length })
     : '';
@@ -474,6 +486,30 @@ export function DocumentPreviewWorkspace({
                         </button>
                       );
                     })}
+                  </div>
+                )}
+
+                {hasAnyPageTexts && (
+                  <div class="ics-vlm-panel">
+                    <button
+                      type="button"
+                      class="ics-vlm-panel__toggle"
+                      onClick={() => setShowVlmPanel((prev) => !prev)}
+                      aria-expanded={showVlmPanel}
+                    >
+                      {showVlmPanel ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      <span>{showVlmPanel ? t('documentPreview.vlmOutputHide') : t('documentPreview.vlmOutputShow')}</span>
+                    </button>
+                    {showVlmPanel && (
+                      <div class="ics-vlm-panel__body">
+                        <div class="ics-vlm-panel__label">{t('documentPreview.vlmOutput')}</div>
+                        {activePageVlmText ? (
+                          <pre class="ics-vlm-panel__text">{activePageVlmText}</pre>
+                        ) : (
+                          <div class="ics-vlm-panel__empty">{t('documentPreview.vlmOutputEmpty')}</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </>
