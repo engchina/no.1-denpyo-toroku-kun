@@ -514,7 +514,6 @@ class AIService:
         self._llm_model_id = os.environ.get("LLM_MODEL_ID", "xai.grok-4-1-fast-reasoning")
         self._vlm_model_id = os.environ.get("VLM_MODEL_ID", "google.gemini-2.5-pro")
         self._max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "65536"))
-        self._vlm_max_tokens = int(os.environ.get("VLM_MAX_TOKENS", "8192"))
         self._temperature = float(os.environ.get("LLM_TEMPERATURE", "0.0"))
         self._service_endpoint = os.environ.get(
             "OCI_SERVICE_ENDPOINT",
@@ -1405,13 +1404,14 @@ class AIService:
                     encoded = base64.b64encode(image_data).decode("ascii")
 
                     logger.info(
-                        "VLM OCR ページ送信を開始します: variant=%s page=%d/%d rotation=%d bytes=%d content_type=%s",
+                        "VLM OCR ページ送信を開始します: variant=%s page=%d/%d rotation=%d bytes=%d content_type=%s max_tokens=%d",
                         variant_label,
                         page_no,
                         len(image_filepaths),
                         rotation_degrees,
                         len(image_data),
                         content_type,
+                        self._max_tokens,
                         extra=self._build_log_extra(
                             page_log_context,
                             ocr_rotation_degrees=rotation_degrees,
@@ -1420,6 +1420,7 @@ class AIService:
                             ocr_rotation_priority="primary" if rotation_index == 1 else "secondary",
                             page_bytes=len(image_data),
                             page_content_type=content_type,
+                            ocr_max_tokens=self._max_tokens,
                         ),
                     )
 
@@ -1438,8 +1439,8 @@ class AIService:
                                 ]
                             )
                         ],
-                        max_tokens=self._vlm_max_tokens,
-                        temperature=self._temperature,
+                        max_tokens=self._max_tokens,
+                        temperature=0.0,
                         is_stream=False,
                     )
 
