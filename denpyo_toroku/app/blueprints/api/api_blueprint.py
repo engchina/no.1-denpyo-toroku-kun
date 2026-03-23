@@ -536,20 +536,7 @@ def _run_category_analysis_attempts(
     sample_page_range: Optional[Dict[str, int]],
     source_file_page_ranges: Dict[int, Dict[str, int]],
     base_log_context: Dict[str, Any],
-    attempt_count: int = _CATEGORY_ANALYSIS_ATTEMPT_COUNT,
 ) -> Dict[str, Any]:
-    if attempt_count <= 0:
-        raise ValueError("分析試行回数が不正です")
-
-    # 分類用サンプル分析は単発実行のみをサポートする。
-    if attempt_count != 1:
-        logging.warning(
-            "分類用サンプル分析の試行回数は 1 に固定されます: requested=%s",
-            attempt_count,
-            extra={**base_log_context, "attempt_count": attempt_count, "action": "CATEGORY_ANALYZE_ATTEMPT_COUNT_NORMALIZED"},
-        )
-    effective_attempt_count = 1
-
     try:
         attempt_result = _run_category_analysis_attempt(
             ai_service=ai_service,
@@ -560,7 +547,7 @@ def _run_category_analysis_attempts(
             source_file_page_ranges=source_file_page_ranges,
             base_log_context=base_log_context,
             attempt_number=1,
-            attempt_count=effective_attempt_count,
+            attempt_count=_CATEGORY_ANALYSIS_ATTEMPT_COUNT,
         )
     except AIRateLimitError:
         raise
@@ -571,22 +558,23 @@ def _run_category_analysis_attempts(
             extra={
                 **base_log_context,
                 "attempt_number": 1,
-                "attempt_count": effective_attempt_count,
+                "attempt_count": _CATEGORY_ANALYSIS_ATTEMPT_COUNT,
                 "action": "CATEGORY_ANALYZE_ATTEMPT_FAILED",
             },
         )
         raise ValueError(f"有効な分析結果を1件確保できませんでした (失敗例: 1回目: {exc})") from exc
 
-    attempt_result["attempt_number"] = 1
-    attempt_result["source_attempt_number"] = 1
-    attempt_result["analysis_attempts"] = [
+    primary_result = dict(attempt_result)
+    primary_result["attempt_number"] = 1
+    primary_result["source_attempt_number"] = 1
+    primary_result["analysis_attempts"] = [
         {
             key: value
-            for key, value in attempt_result.items()
+            for key, value in primary_result.items()
             if key not in ("analyzed_file_ids", "analysis_attempts")
         }
     ]
-    return attempt_result
+    return primary_result
 
 
 def _prepare_category_analysis_inputs(
