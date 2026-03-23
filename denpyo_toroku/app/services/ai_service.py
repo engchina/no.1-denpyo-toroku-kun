@@ -368,7 +368,7 @@ _PROMPT_EXTRACT_TEXT_VALUE_RULES_DEFAULT: str = """\
 
 _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
 ### 1. Document Type Detection
-- First, identify the document type. Documents may be business documents (e.g., 領収書, 請求書, 納品書, 見積書, 注文書, 発注書) or non-business documents (e.g., 検査証明書, 検査記録, 試験成績書, 点検表, 仕様書, 許可証, 届出書, 申請書, 報告書, etc.).
+- First, identify the document type. Documents may be business documents (e.g., 領収書, 請求書, 納品書, 見積書, 注文書, 発注書) or non-business documents (e.g., 検査証明書, 検査記録, 試験成績書, 点検表, 定期自主検査表, 性能検査記録, 仕様書, 許可証, 届出書, 申請書, 報告書, etc.).
 - Design the table name and structure accordingly.
 
 ### 2. Naming Conventions
@@ -391,12 +391,35 @@ _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
 ### 4. Capture ALL information present in the document
 CRITICAL — every labeled field, cell, and value visible in the OCR text MUST be mapped to a column. Do NOT omit any field because it looks technical, unusual, or hard to name.
 
+**Column count**: For dense inspection forms, equipment test records, specification tables, or multi-table documents, the schema may legitimately contain 50, 100, or more columns. This is expected and correct — never consolidate, merge, or drop columns to simplify the schema. Completeness is mandatory.
+
 Categories of information to capture (applicable categories depend on document type):
 - **Document metadata**: document number, issue date, validity period, document type, reference numbers
 - **Party information**: names, addresses, phone numbers, registration/license numbers, organization codes
 - **Subject / target information**: item name, model number, serial number, capacity, rating, classification
-- **Specifications and configurations**: all labeled specification fields, settings, modes, options
-- **Measurement and test data**: all numeric readings, measured values, ratings, tolerances — including every cell in measurement tables. For hierarchical measurement tables where rows are grouped under two or more levels of section headers, generate one column per unique leaf-level combination formed by concatenating ALL ancestor row labels and the column header, from outermost to innermost, with single spaces.
+- **Specifications and configurations**: all labeled specification fields, settings, modes, options. \
+For specification tables where BOTH the row axis and the column axis carry meaningful labels \
+(cross-indexed tables — e.g., rows list equipment components and columns list specification aspects \
+such as type, capacity, model number, serial number), generate one column per unique \
+(row-label × column-header) combination by concatenating the fully-qualified row label and the \
+fully-qualified column header with a single space as the logical name. \
+Even if the OCR output uses generic column names (e.g., "Value", "Specification", "Column1", \
+"Column2"), infer the intended column meaning from the surrounding row and positional context, \
+and create individually named columns for each distinct data cell.
+- **Measurement and test data**: all numeric readings, measured values, ratings, tolerances — \
+including every cell in measurement tables.
+  - **Row-hierarchical tables** (rows grouped under two or more levels of section headers, \
+single or simple column headers): generate one column per unique leaf-row-path × column-header \
+combination, naming it by concatenating ALL ancestor row labels, the leaf row label, and the \
+column header with single spaces, from outermost to innermost.
+  - **Cross-indexed measurement tables** (BOTH rows AND columns carry hierarchical labels — \
+e.g., rows: equipment category > sub-category > direction, columns: measurement type > unit variant): \
+generate one column per unique (fully-qualified row path, fully-qualified column path) pair. \
+Name the column by concatenating the full row path and the full column path with a single space.
+  - When the OCR output uses generic or positional column headers for a measurement table, \
+derive the intended column meaning from document context (surrounding labels, units, measurement \
+section title) and still create individually named columns — do NOT collapse multiple distinct \
+measured values into one column.
 - **Financial data** (if present): subtotal, tax, total amount, unit price, quantity, tax rate
 - **Inspection and compliance data**: test results, pass/fail judgments, inspection dates, inspector information
 - **Free-text sections**: remarks, special notes, conditions, payment terms — each distinct labeled free-text area gets its own column
