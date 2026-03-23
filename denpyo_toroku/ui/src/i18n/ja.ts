@@ -191,7 +191,6 @@ export const ja = {
   'settings.model.selectAi.engine.agent': 'Oracle Select AI Agent',
   'settings.model.selectAi.engine.direct': 'Direct GenAI SQL',
   'settings.hint': '保存した設定は、AI分析やObject Storage接続に反映されます。',
-  'settings.testResult.title': 'OCI 接続テスト結果',
   'settings.db.title': 'データベース設定',
   'settings.db.subtitle': 'データベース接続に必要な設定を管理します。',
   'settings.db.field.username': 'データベースユーザー',
@@ -215,7 +214,6 @@ export const ja = {
   'settings.db.action.save': 'DB設定を保存',
   'settings.db.action.test': 'DB接続テスト',
   'settings.db.hint': 'DB設定は `.env` の接続文字列に保存されます。Wallet と DSN が一致しているか確認してください。',
-  'settings.db.testResult.title': 'DB 接続テスト結果',
 
   'notify.settings.loadFailed': 'OCI 設定の読み込みに失敗しました',
   'notify.settings.saveFailed': 'OCI 設定の保存に失敗しました',

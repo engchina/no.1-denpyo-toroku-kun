@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
-import { Upload, KeyRound, CheckCircle, XCircle } from 'lucide-react';
+import { Upload, KeyRound, CheckCircle } from 'lucide-react';
 import { apiGet, apiPost } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -65,7 +65,6 @@ export function ApplicationSettings() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isTesting, setIsTesting] = useState<boolean>(false);
-  const [testResult, setTestResult] = useState<OciConnectionTestResult | null>(null);
   const [privateKeyPreview, setPrivateKeyPreview] = useState<string>('');
 
   const applySnapshot = useCallback((snapshot: OciSettingsSnapshot) => {
@@ -119,7 +118,6 @@ export function ApplicationSettings() {
       }
       setSettings(prev => ({ ...prev, key_content: content }));
       setPrivateKeyPreview(content.slice(0, 240));
-      setTestResult(null);
       dispatch(addNotification({ type: 'success', message: t('notify.privateKey.loadedOk'), autoClose: true }));
     } catch (err: any) {
       dispatch(addNotification({ type: 'error', message: err.message || t('notify.privateKey.loadFailed') }));
@@ -164,7 +162,6 @@ export function ApplicationSettings() {
   const handleSave = useCallback(async () => {
     if (!validateBeforeAction()) return;
     setIsSaving(true);
-    setTestResult(null);
     try {
       const snapshot = await apiPost<OciSettingsSnapshot>('/api/v1/oci/settings', settings);
       applySnapshot(snapshot);
@@ -188,7 +185,6 @@ export function ApplicationSettings() {
     setIsTesting(true);
     try {
       const result = await apiPost<OciConnectionTestResult>('/api/v1/oci/test', { settings });
-      setTestResult(result);
       if (result.success) {
         dispatch(addNotification({
           type: 'success',
@@ -352,30 +348,6 @@ export function ApplicationSettings() {
           </p>
         </div>
       </section>
-
-      {testResult && (
-        <section class={`ics-card ${testResult.success ? 'ics-card-success' : 'ics-card-error'}`}>
-          <div class="ics-card-header applicationSettingsView__titleWrap">
-            {testResult.success ? <CheckCircle size={16} /> : <XCircle size={16} />}
-            <span class="oj-typography-heading-xs">{t('settings.testResult.title')}</span>
-          </div>
-          <div class="ics-card-body">
-            <p class={testResult.success ? 'applicationSettingsView__successText' : 'ics-error-text'}>
-              {testResult.message}
-            </p>
-            {testResult.details && (
-              <div class="applicationSettingsView__detailsGrid">
-                {Object.entries(testResult.details).map(([key, value]) => (
-                  <div class="applicationSettingsView__detailItem" key={key}>
-                    <span class="applicationSettingsView__detailKey">{key}</span>
-                    <span class="applicationSettingsView__detailValue">{value || '-'}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
     </div>
   );
 }

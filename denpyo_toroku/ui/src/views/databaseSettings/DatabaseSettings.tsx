@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
-import { Upload, CheckCircle, XCircle, Database, RefreshCw } from 'lucide-react';
+import { Upload, Database, RefreshCw } from 'lucide-react';
 import { apiGet, apiPost, apiPostWithTimeout, apiUpload } from '../../utils/apiUtils';
 import { useAppDispatch } from '../../redux/store';
 import { addNotification } from '../../redux/slices/notificationsSlice';
@@ -89,7 +89,6 @@ export function DatabaseSettings() {
   const [dbIsSaving, setDbIsSaving] = useState<boolean>(false);
   const [dbIsTesting, setDbIsTesting] = useState<boolean>(false);
   const [dbIsUploadingWallet, setDbIsUploadingWallet] = useState<boolean>(false);
-  const [dbTestResult, setDbTestResult] = useState<DatabaseConnectionTestResult | null>(null);
   const [walletFileName, setWalletFileName] = useState<string>('');
 
   // ADB Management State
@@ -168,7 +167,6 @@ export function DatabaseSettings() {
   const handleDbSave = useCallback(async () => {
     if (!validateDbBeforeAction(true)) return;
     setDbIsSaving(true);
-    setDbTestResult(null);
     try {
       const snapshot = await apiPost<DatabaseSettingsSnapshot>('/api/v1/database/settings', dbSettings);
       applyDbSnapshot(snapshot);
@@ -193,7 +191,6 @@ export function DatabaseSettings() {
     try {
       // タイムアウト付きでDB接続テストを実行（非ブロッキング）
       const result = await apiPostWithTimeout<DatabaseConnectionTestResult>('/api/v1/database/settings/test', { settings: dbSettings });
-      setDbTestResult(result);
       if (result.success) {
         dispatch(addNotification({
           type: 'success',
@@ -511,28 +508,6 @@ export function DatabaseSettings() {
           <p class="applicationSettingsView__hint">{t('settings.db.hint')}</p>
         </div>
       </section>
-
-      {dbTestResult && (
-        <section class={`ics-card ${dbTestResult.success ? 'ics-card-success' : 'ics-card-error'}`}>
-          <div class="ics-card-header applicationSettingsView__titleWrap">
-            {dbTestResult.success ? <CheckCircle size={16} /> : <XCircle size={16} />}
-            <span class="oj-typography-heading-xs">{t('settings.db.testResult.title')}</span>
-          </div>
-          <div class="ics-card-body">
-            <p class={dbTestResult.success ? 'applicationSettingsView__successText' : 'ics-error-text'}>{dbTestResult.message}</p>
-            {dbTestResult.details && (
-              <div class="applicationSettingsView__detailsGrid">
-                {Object.entries(dbTestResult.details).map(([key, value]) => (
-                  <div class="applicationSettingsView__detailItem" key={key}>
-                    <span class="applicationSettingsView__detailKey">{key}</span>
-                    <span class="applicationSettingsView__detailValue">{value || '-'}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
     </div>
   );
 }
