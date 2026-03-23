@@ -3145,8 +3145,21 @@ END;"""
         allowed.update(self._TABLE_BROWSER_TARGETS)
         return allowed
 
-    def get_table_columns(self, table_name: str) -> List[Dict[str, str]]:
-        """テーブルのカラム情報を取得（許可テーブルのみ）"""
+    def get_table_columns(
+        self,
+        table_name: str,
+        use_comments: bool = False,
+        use_constraints: bool = False,
+        use_annotations: bool = False,
+    ) -> List[Dict[str, str]]:
+        """テーブルのカラム情報を取得（許可テーブルのみ）
+
+        Args:
+            table_name: テーブル名
+            use_comments: True の場合、USER_COL_COMMENTS から列コメントも取得する
+            use_constraints: True の場合、主キー・外部キー・ユニーク制約情報も取得する
+            use_annotations: True の場合、Oracle アノテーション (USER_ANNOTATIONS_USAGE) も取得する
+        """
         if not table_name:
             return []
 
@@ -3173,7 +3186,93 @@ END;"""
                             "data_type": row[1],
                             "data_length": row[2],
                             "nullable": row[3],
+                            "comment": "",
+                            "constraints": [],
+                            "annotations": [],
                         })
+
+                    if not columns:
+                        return columns
+
+                    # 列コメントを取得
+                    if use_comments:
+                        try:
+                            cursor.execute(
+                                """SELECT COLUMN_NAME, COMMENTS
+                                FROM USER_COL_COMMENTS
+                                WHERE TABLE_NAME = :1""",
+                                [table_name.upper()]
+                            )
+                            comments_map = {row[0]: (row[1] or "") for row in cursor.fetchall()}
+                            for col in columns:
+                                col["comment"] = comments_map.get(col["column_name"], "")
+                        except Exception as e:
+                            logger.warning("列コメント取得エラー (%s): %s", table_name, e)
+
+                    # 制約情報を取得（PK / UNIQUE / FK）
+                    if use_constraints:
+                        try:
+                            cursor.execute(
+                                """SELECT cols.COLUMN_NAME, cons.CONSTRAINT_TYPE,
+                                          r_cons.TABLE_NAME AS REF_TABLE,
+                                          r_cols.COLUMN_NAME AS REF_COLUMN
+                                   FROM USER_CONSTRAINTS cons
+                                   JOIN USER_CONS_COLUMNS cols
+                                     ON cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME
+                                    AND cols.TABLE_NAME = cons.TABLE_NAME
+                                   LEFT JOIN USER_CONSTRAINTS r_cons
+                                     ON r_cons.CONSTRAINT_NAME = cons.R_CONSTRAINT_NAME
+                                   LEFT JOIN USER_CONS_COLUMNS r_cols
+                                     ON r_cols.CONSTRAINT_NAME = cons.R_CONSTRAINT_NAME
+                                    AND r_cols.POSITION = cols.POSITION
+                                  WHERE cons.TABLE_NAME = :1
+                                    AND cons.CONSTRAINT_TYPE IN ('P', 'U', 'R')
+                                  ORDER BY cons.CONSTRAINT_TYPE, cols.POSITION""",
+                                [table_name.upper()]
+                            )
+                            constraints_map: Dict[str, List[str]] = {}
+                            for row in cursor.fetchall():
+                                col_name = row[0]
+                                c_type = row[1]
+                                ref_table = row[2] or ""
+                                ref_col = row[3] or ""
+                                if c_type == "P":
+                                    label = "PK"
+                                elif c_type == "U":
+                                    label = "UNIQUE"
+                                elif c_type == "R" and ref_table:
+                                    label = f"FK->{ref_table}.{ref_col}" if ref_col else f"FK->{ref_table}"
+                                else:
+                                    label = c_type
+                                constraints_map.setdefault(col_name, []).append(label)
+                            for col in columns:
+                                col["constraints"] = constraints_map.get(col["column_name"], [])
+                        except Exception as e:
+                            logger.warning("制約情報取得エラー (%s): %s", table_name, e)
+
+                    # アノテーション情報を取得（Oracle 23ai: USER_ANNOTATIONS_USAGE）
+                    if use_annotations:
+                        try:
+                            cursor.execute(
+                                """SELECT COLUMN_NAME, ANNOTATION_NAME, ANNOTATION_VALUE
+                                   FROM USER_ANNOTATIONS_USAGE
+                                  WHERE OBJECT_TYPE = 'COLUMN'
+                                    AND OBJECT_NAME = :1""",
+                                [table_name.upper()]
+                            )
+                            annotations_map: Dict[str, List[Dict[str, str]]] = {}
+                            for row in cursor.fetchall():
+                                col_name = row[0] or ""
+                                if col_name:
+                                    annotations_map.setdefault(col_name, []).append({
+                                        "name": row[1] or "",
+                                        "value": row[2] or "",
+                                    })
+                            for col in columns:
+                                col["annotations"] = annotations_map.get(col["column_name"], [])
+                        except Exception as e:
+                            logger.warning("アノテーション取得エラー (%s): %s", table_name, e)
+
                     return columns
         except Exception as e:
             logger.error("カラム情報取得エラー (%s): %s", table_name, e, exc_info=True)

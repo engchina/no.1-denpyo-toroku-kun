@@ -5213,20 +5213,37 @@ def get_table_browser_tables():
         return jsonify(g.response.get_result()), 500
 
 
-def _build_search_table_schemas(db_service: DatabaseService, allowed_tables: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _build_search_table_schemas(
+    db_service: DatabaseService,
+    allowed_tables: List[Dict[str, Any]],
+    *,
+    use_comments: bool = False,
+    use_constraints: bool = False,
+    use_annotations: bool = False,
+) -> List[Dict[str, Any]]:
     table_schemas: List[Dict[str, Any]] = []
     for entry in allowed_tables:
         header_table_name = (entry.get("header_table_name") or "").strip()
         line_table_name = (entry.get("line_table_name") or "").strip()
         if header_table_name:
-            cols = db_service.get_table_columns(header_table_name)
+            cols = db_service.get_table_columns(
+                header_table_name,
+                use_comments=use_comments,
+                use_constraints=use_constraints,
+                use_annotations=use_annotations,
+            )
             if cols:
                 table_schemas.append({
                     "table_name": header_table_name,
                     "columns": cols,
                 })
         if line_table_name:
-            cols = db_service.get_table_columns(line_table_name)
+            cols = db_service.get_table_columns(
+                line_table_name,
+                use_comments=use_comments,
+                use_constraints=use_constraints,
+                use_annotations=use_annotations,
+            )
             if cols:
                 table_schemas.append({
                     "table_name": line_table_name,
@@ -5294,8 +5311,26 @@ def _run_direct_llm_search(
     allowed_table_set: set,
 ) -> Dict[str, Any]:
     from denpyo_toroku.app.services.ai_service import AIService
+    from denpyo_toroku.config import AppConfig
 
-    table_schemas = _build_search_table_schemas(db_service, allowed_tables)
+    enforce_object_list = AppConfig.SELECT_AI_ENFORCE_OBJECT_LIST
+    use_comments = AppConfig.SELECT_AI_USE_COMMENTS
+    use_constraints = AppConfig.SELECT_AI_USE_CONSTRAINTS
+    use_annotations = AppConfig.SELECT_AI_USE_ANNOTATIONS
+
+    # enforce_object_list=False の場合は全許可テーブルを対象にする
+    if enforce_object_list:
+        tables_for_schema = allowed_tables
+    else:
+        tables_for_schema = db_service.get_allowed_table_names()
+
+    table_schemas = _build_search_table_schemas(
+        db_service,
+        tables_for_schema,
+        use_comments=use_comments,
+        use_constraints=use_constraints,
+        use_annotations=use_annotations,
+    )
     if not table_schemas:
         return {
             "success": False,

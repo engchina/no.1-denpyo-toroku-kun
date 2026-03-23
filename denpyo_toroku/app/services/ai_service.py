@@ -2481,9 +2481,21 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
                     col_name = c.get("column_name", "")
                     data_type = c.get("data_type", "")
                     comment = c.get("comment", "")
+                    constraints = c.get("constraints", [])
+                    annotations = c.get("annotations", [])
                     part = f"{col_name} ({data_type})"
+                    if constraints:
+                        part += f" [{', '.join(constraints)}]"
                     if comment:
                         part += f" -- {comment}"
+                    if annotations:
+                        annot_str = ", ".join(
+                            f"{a['name']}={a['value']}" if a.get("value") else a["name"]
+                            for a in annotations
+                            if a.get("name")
+                        )
+                        if annot_str:
+                            part += f" <annotation: {annot_str}>"
                     col_parts.append(part)
                 schema_text += f"- {table_name}: {', '.join(col_parts)}\n"
 
