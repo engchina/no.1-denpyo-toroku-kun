@@ -556,8 +556,72 @@ def _run_category_analysis_attempts(
     ]
 
     primary_result = dict(attempts[0])
-    primary_result["analysis_attempts"] = attempts
+    primary_result["analysis_attempts"] = [
+        {
+            key: value
+            for key, value in attempt.items()
+            if key != "analyzed_file_ids"
+        }
+        for attempt in attempts
+    ]
     return primary_result
+
+
+def _prepare_category_analysis_inputs(
+    file_records: List[Dict[str, Any]],
+    storage_service: Any,
+    doc_processor: Any,
+    log_preprocess_completion: bool = False,
+) -> Dict[str, Any]:
+    tmp_filepaths: List[str] = []
+    processed_file_ids: List[int] = []
+    sample_page_range: Optional[Dict[str, int]] = None
+    source_file_page_ranges: Dict[int, Dict[str, int]] = {}
+
+    for rec in file_records:
+        object_name = rec.get("object_name", "")
+        try:
+            file_data = storage_service.download_file(object_name)
+            if not file_data:
+                logging.warning("ファイルダウンロード失敗: %s", object_name)
+                continue
+
+            images = doc_processor.prepare_for_ai(file_data, rec.get("original_file_name", ""))
+            if not images:
+                logging.warning("AI分析用画像の生成に失敗: %s", object_name)
+                continue
+
+            start_page_index = len(tmp_filepaths)
+            for image_data, img_content_type in images:
+                suffix = ".jpg" if img_content_type in ("image/jpeg", "image/jpg") else ".png"
+                fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
+                with os.fdopen(fd, "wb") as f:
+                    f.write(image_data)
+                tmp_filepaths.append(tmp_path)
+            end_page_index = len(tmp_filepaths)
+            if rec.get("id"):
+                processed_file_ids.append(rec.get("id"))
+                source_file_page_ranges[rec.get("id")] = {"start": start_page_index, "end": end_page_index}
+                if sample_page_range is None and end_page_index > start_page_index:
+                    sample_page_range = {"start": start_page_index, "end": end_page_index}
+                if log_preprocess_completion:
+                    logging.info(
+                        "ファイルの前処理(ダウンロード・画像変換)完了",
+                        extra={"file_id": rec.get("id"), "action": "PREPROCESS_COMPLETE"},
+                    )
+        except Exception as e:
+            logging.error("ファイルダウンロード/OCR前処理エラー (id=%s): %s", rec.get("id"), e, exc_info=True)
+            continue
+
+    if not tmp_filepaths:
+        raise ValueError("処理できる画像ファイルがありませんでした")
+
+    return {
+        "tmp_filepaths": tmp_filepaths,
+        "processed_file_ids": processed_file_ids,
+        "sample_page_range": sample_page_range,
+        "source_file_page_ranges": source_file_page_ranges,
+    }
 
 
 def _parse_login_credentials_from_db_connection(connection_string: str) -> Dict[str, str]:
@@ -3850,38 +3914,16 @@ def _queue_category_slip_analysis(
         storage_service = OCIStorageService()
         doc_processor = DocumentProcessor()
         ai_service = AIService()
-        processed_file_ids: List[int] = []
-        sample_page_range: Optional[Dict[str, int]] = None
-        source_file_page_ranges: Dict[int, Dict[str, int]] = {}
-        for rec in file_records:
-            object_name = rec.get("object_name", "")
-            file_data = storage_service.download_file(object_name)
-            if not file_data:
-                logging.warning("ファイルダウンロード失敗", extra={"object_name": object_name, "action": "DOWNLOAD_FAILED"})
-                continue
-
-            images = doc_processor.prepare_for_ai(file_data, rec.get("original_file_name", ""))
-            if not images:
-                logging.warning("AI分析用画像の生成に失敗", extra={"object_name": object_name, "action": "IMAGE_CONVERSION_FAILED"})
-                continue
-
-            start_page_index = len(tmp_filepaths)
-            for image_data, img_content_type in images:
-                suffix = ".jpg" if img_content_type in ("image/jpeg", "image/jpg") else ".png"
-                fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
-                with os.fdopen(fd, "wb") as f:
-                    f.write(image_data)
-                tmp_filepaths.append(tmp_path)
-            end_page_index = len(tmp_filepaths)
-            if rec.get("id"):
-                processed_file_ids.append(rec.get("id"))
-                source_file_page_ranges[rec.get("id")] = {"start": start_page_index, "end": end_page_index}
-                if sample_page_range is None and end_page_index > start_page_index:
-                    sample_page_range = {"start": start_page_index, "end": end_page_index}
-                logging.info("ファイルの前処理(ダウンロード・画像変換)完了", extra={"file_id": rec.get("id"), "action": "PREPROCESS_COMPLETE"})
-
-        if not tmp_filepaths:
-            raise ValueError("処理できる画像ファイルがありませんでした")
+        prepared_inputs = _prepare_category_analysis_inputs(
+            file_records=file_records,
+            storage_service=storage_service,
+            doc_processor=doc_processor,
+            log_preprocess_completion=True,
+        )
+        tmp_filepaths = prepared_inputs["tmp_filepaths"]
+        processed_file_ids = prepared_inputs["processed_file_ids"]
+        sample_page_range = prepared_inputs["sample_page_range"]
+        source_file_page_ranges = prepared_inputs["source_file_page_ranges"]
 
         result = _run_category_analysis_attempts(
             ai_service=ai_service,
@@ -4711,51 +4753,17 @@ def analyze_slips_for_category():
     ai_service = AIService()
 
     tmp_filepaths: List[str] = []
-    processed_file_ids: List[int] = []
-    sample_page_range: Optional[Dict[str, int]] = None
-    source_file_page_ranges: Dict[int, Dict[str, int]] = {}
 
     try:
-        for rec in file_records:
-            try:
-                object_name = rec.get("object_name", "")
-                file_data = storage_service.download_file(object_name)
-                if not file_data:
-                    logging.warning("ファイルダウンロード失敗: %s", object_name)
-                    continue
-
-                images = doc_processor.prepare_for_ai(file_data, rec.get("original_file_name", ""))
-                if not images:
-                    logging.warning("AI分析用画像の生成に失敗: %s", object_name)
-                    continue
-
-                start_page_index = len(tmp_filepaths)
-                for image_data, img_content_type in images:
-                    suffix = ".jpg" if img_content_type in ("image/jpeg", "image/jpg") else ".png"
-                    fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir="/tmp")
-                    with os.fdopen(fd, "wb") as f:
-                        f.write(image_data)
-                    tmp_filepaths.append(tmp_path)
-                end_page_index = len(tmp_filepaths)
-                if rec.get("id"):
-                    processed_file_ids.append(rec.get("id"))
-                    source_file_page_ranges[rec.get("id")] = {"start": start_page_index, "end": end_page_index}
-                    if sample_page_range is None and end_page_index > start_page_index:
-                        sample_page_range = {"start": start_page_index, "end": end_page_index}
-            except Exception as e:
-                logging.error("ファイルダウンロード/OCR前処理エラー (id=%s): %s", rec.get("id"), e, exc_info=True)
-                continue
-
-        if not tmp_filepaths:
-            for target in linked_targets:
-                management_file_id = target.get("management_file_id")
-                category_file_id = target.get("category_file_id")
-                if management_file_id is not None:
-                    db_service.update_file_status(int(management_file_id), "ERROR")
-                if category_file_id is not None:
-                    db_service.update_category_file_status(int(category_file_id), "ERROR")
-            g.response.add_error_message("処理できる画像ファイルがありませんでした")
-            return jsonify(g.response.get_result()), 500
+        prepared_inputs = _prepare_category_analysis_inputs(
+            file_records=file_records,
+            storage_service=storage_service,
+            doc_processor=doc_processor,
+        )
+        tmp_filepaths = prepared_inputs["tmp_filepaths"]
+        processed_file_ids = prepared_inputs["processed_file_ids"]
+        sample_page_range = prepared_inputs["sample_page_range"]
+        source_file_page_ranges = prepared_inputs["source_file_page_ranges"]
 
         ocr_log_context = {
             "file_ids": normalized_file_ids,

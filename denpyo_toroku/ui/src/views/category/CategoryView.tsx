@@ -863,6 +863,12 @@ function createCategoryDesignerDraft(attempt: CategoryAnalysisAttempt): Category
   };
 }
 
+function buildCategoryDesignerDraftMap(attempts: CategoryAnalysisAttempt[]): Record<number, CategoryDesignerDraft> {
+  return Object.fromEntries(
+    attempts.map((attempt) => [Number(attempt.attempt_number || 1), createCategoryDesignerDraft(attempt)])
+  ) as Record<number, CategoryDesignerDraft>;
+}
+
 function TableDesignerPanel({
   analysisResult,
   onConfirm,
@@ -880,20 +886,14 @@ function TableDesignerPanel({
   );
   const [selectedAttemptNumber, setSelectedAttemptNumber] = useState<number>(() => Number(analysisAttempts[0]?.attempt_number || 1));
   const [draftsByAttempt, setDraftsByAttempt] = useState<Record<number, CategoryDesignerDraft>>(() => (
-    Object.fromEntries(
-      analysisAttempts.map((attempt) => [Number(attempt.attempt_number || 1), createCategoryDesignerDraft(attempt)])
-    ) as Record<number, CategoryDesignerDraft>
+    buildCategoryDesignerDraftMap(analysisAttempts)
   ));
   const [validationError, setValidationError] = useState('');
   const [isReviewCollapsed, setIsReviewCollapsed] = useState(false);
 
   useEffect(() => {
     setSelectedAttemptNumber(Number(analysisAttempts[0]?.attempt_number || 1));
-    setDraftsByAttempt(
-      Object.fromEntries(
-        analysisAttempts.map((attempt) => [Number(attempt.attempt_number || 1), createCategoryDesignerDraft(attempt)])
-      ) as Record<number, CategoryDesignerDraft>
-    );
+    setDraftsByAttempt(buildCategoryDesignerDraftMap(analysisAttempts));
     setValidationError('');
   }, [analysisAttempts]);
 
