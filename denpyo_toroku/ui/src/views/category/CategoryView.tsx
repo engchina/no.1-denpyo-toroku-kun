@@ -838,31 +838,21 @@ type CategoryDesignerDraft = {
   activeDesignerTab: 'header' | 'line';
 };
 
-const CATEGORY_ANALYSIS_ATTEMPT_SLOTS = [1, 2, 3] as const;
-
 function normalizeCategoryAnalysisAttempts(analysisResult: CategoryAnalysisResult): CategoryAnalysisAttempt[] {
   const baseAttempts = Array.isArray(analysisResult.analysis_attempts) && analysisResult.analysis_attempts.length > 0
     ? analysisResult.analysis_attempts
     : [{ ...analysisResult, attempt_number: analysisResult.attempt_number ?? 1 }];
 
-  return CATEGORY_ANALYSIS_ATTEMPT_SLOTS.map((slotNumber, index) => {
-    const matchedAttempt = baseAttempts.find((attempt, attemptIndex) => {
-      const attemptNumber = Number(attempt.attempt_number ?? (attemptIndex + 1));
-      return attemptNumber === slotNumber;
-    });
-    const fallbackAttempt = matchedAttempt || baseAttempts[index] || baseAttempts[0];
-
-    return {
-      attempt_number: slotNumber,
-      category_guess: fallbackAttempt?.category_guess || '',
-      category_guess_en: fallbackAttempt?.category_guess_en || '',
-      analysis_mode: fallbackAttempt?.analysis_mode || analysisResult.analysis_mode || 'header_only',
-      header_columns: fallbackAttempt?.header_columns || [],
-      line_columns: fallbackAttempt?.line_columns || [],
-      analyzed_file_ids: fallbackAttempt?.analyzed_file_ids || analysisResult.analyzed_file_ids || [],
-      file_page_texts: fallbackAttempt?.file_page_texts || analysisResult.file_page_texts,
-    };
-  });
+  return baseAttempts.map((attempt, index) => ({
+    attempt_number: Number(attempt.attempt_number ?? (index + 1)),
+    category_guess: attempt.category_guess || '',
+    category_guess_en: attempt.category_guess_en || '',
+    analysis_mode: attempt.analysis_mode || analysisResult.analysis_mode || 'header_only',
+    header_columns: attempt.header_columns || [],
+    line_columns: attempt.line_columns || [],
+    analyzed_file_ids: attempt.analyzed_file_ids || analysisResult.analyzed_file_ids || [],
+    file_page_texts: attempt.file_page_texts || analysisResult.file_page_texts,
+  }));
 }
 
 function createCategoryDesignerDraft(attempt: CategoryAnalysisAttempt): CategoryDesignerDraft {
@@ -1000,31 +990,6 @@ function TableDesignerPanel({
 
   return (
     <>
-      <section class="ics-ops-grid ics-ops-grid--one">
-        <div class="ics-card ics-card--flat">
-          <div class="ics-card-body" style={{ paddingBottom: '0' }}>
-            <div class="ics-tabs" style={{ marginBottom: '0' }}>
-              {analysisAttempts.map((attempt) => {
-                const attemptNumber = Number(attempt.attempt_number || 1);
-                return (
-                  <button
-                    key={attemptNumber}
-                    type="button"
-                    class={`ics-tab ${activeAttemptNumber === attemptNumber ? 'ics-tab--active' : ''}`}
-                    onClick={() => {
-                      setSelectedAttemptNumber(attemptNumber);
-                      setValidationError('');
-                    }}
-                  >
-                    {`${attemptNumber}回目`}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section class="ics-ops-grid ics-ops-grid--one">
         <div
           class={`ics-category-designer-layout ${isReviewCollapsed ? 'is-review-collapsed' : ''}`}
