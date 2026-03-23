@@ -291,7 +291,8 @@ export interface TableColumnDef {
   is_primary_key: boolean;
 }
 
-export interface CategoryAnalysisResult {
+export interface CategoryAnalysisAttempt {
+  attempt_number?: number;
   category_guess: string;
   category_guess_en: string;
   analysis_mode: 'header_only' | 'header_line';
@@ -299,6 +300,10 @@ export interface CategoryAnalysisResult {
   line_columns: TableColumnDef[];
   analyzed_file_ids?: number[];
   file_page_texts?: Record<string, PageOcrText[]>;
+}
+
+export interface CategoryAnalysisResult extends CategoryAnalysisAttempt {
+  analysis_attempts?: CategoryAnalysisAttempt[];
 }
 
 export interface CategoryCreateRequest {

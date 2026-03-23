@@ -73,6 +73,7 @@ _DEFAULT_OCR_EMPTY_RESPONSE_PRIMARY_MAX_RETRIES = 1
 _DEFAULT_OCR_EMPTY_RESPONSE_SECONDARY_MAX_RETRIES = 0
 _ANALYSIS_STALL_DETAIL = "ANALYSIS_TIMEOUT"
 _DEFAULT_ANALYSIS_STALL_MINUTES = 30
+_CATEGORY_ANALYSIS_ATTEMPT_COUNT = 3
 _GENAI_REQUEUE_MAX_ATTEMPTS = max(0, int(os.environ.get("GENAI_REQUEUE_MAX_ATTEMPTS", "4")))
 _GENAI_REQUEUE_BASE_DELAY_SECONDS = max(
     1.0,
@@ -442,6 +443,121 @@ def _build_category_analysis_result_payload(
         "line_columns": line_columns,
         "analyzed_file_ids": list(dict.fromkeys(processed_file_ids)),
     }
+
+
+def _run_category_analysis_attempt(
+    ai_service: Any,
+    tmp_filepaths: List[str],
+    analysis_mode: str,
+    processed_file_ids: List[int],
+    sample_page_range: Optional[Dict[str, int]],
+    source_file_page_ranges: Dict[int, Dict[str, int]],
+    base_log_context: Dict[str, Any],
+    attempt_number: int,
+    attempt_count: int = _CATEGORY_ANALYSIS_ATTEMPT_COUNT,
+) -> Dict[str, Any]:
+    attempt_log_context = {
+        **base_log_context,
+        "attempt_number": attempt_number,
+        "attempt_count": attempt_count,
+    }
+    logging.info(
+        "VLM OCR を開始します (%d/%d)",
+        attempt_number,
+        attempt_count,
+        extra={**attempt_log_context, "action": "OCR_START"},
+    )
+    ocr_result = ai_service.extract_text_from_images(tmp_filepaths, log_context=attempt_log_context)
+    if not ocr_result.get("success"):
+        raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
+
+    extracted_text = ocr_result.get("extracted_text", "")
+    all_page_texts = ocr_result.get("page_texts", [])
+    sample_ocr_text = _build_sample_ocr_text(all_page_texts, sample_page_range)
+    file_page_texts: Dict[str, List[Dict[str, Any]]] = {
+        str(source_id): [
+            {"page_index": i, "text": all_page_texts[page_range["start"] + i].get("text", "")}
+            for i in range(page_range["end"] - page_range["start"])
+            if page_range["start"] + i < len(all_page_texts)
+        ]
+        for source_id, page_range in source_file_page_ranges.items()
+    }
+    logging.info(
+        "VLM OCR 完了 (%d/%d)",
+        attempt_number,
+        attempt_count,
+        extra={
+            **attempt_log_context,
+            "text_length": len(extracted_text),
+            "sample_text_length": len(sample_ocr_text),
+            "action": "OCR_COMPLETE",
+        },
+    )
+
+    logging.info(
+        "LLM スキーマ設計を開始します (%d/%d)",
+        attempt_number,
+        attempt_count,
+        extra={**attempt_log_context, "action": "SCHEMA_DESIGN_START"},
+    )
+    schema_result = ai_service.generate_sql_schema_from_text(
+        extracted_text,
+        analysis_mode,
+        log_context=attempt_log_context,
+    )
+    if not schema_result.get("success"):
+        raise ValueError(f"AIによるスキーマ設計に失敗しました: {schema_result.get('message')}")
+    logging.info(
+        "LLM スキーマ設計完了 (%d/%d)",
+        attempt_number,
+        attempt_count,
+        extra={**attempt_log_context, "action": "SCHEMA_DESIGN_COMPLETE"},
+    )
+
+    result = _build_category_analysis_result_payload(
+        ai_service=ai_service,
+        schema_result=schema_result,
+        analysis_mode=analysis_mode,
+        processed_file_ids=processed_file_ids,
+        sample_ocr_text=sample_ocr_text,
+        log_context={**attempt_log_context, "action": "CATEGORY_SAMPLE_VALUE_EXTRACT"},
+    )
+    result["file_page_texts"] = file_page_texts
+    result["attempt_number"] = attempt_number
+    return result
+
+
+def _run_category_analysis_attempts(
+    ai_service: Any,
+    tmp_filepaths: List[str],
+    analysis_mode: str,
+    processed_file_ids: List[int],
+    sample_page_range: Optional[Dict[str, int]],
+    source_file_page_ranges: Dict[int, Dict[str, int]],
+    base_log_context: Dict[str, Any],
+    attempt_count: int = _CATEGORY_ANALYSIS_ATTEMPT_COUNT,
+) -> Dict[str, Any]:
+    if attempt_count <= 0:
+        raise ValueError("分析試行回数が不正です")
+
+    attempts = [
+        _run_category_analysis_attempt(
+            ai_service=ai_service,
+            tmp_filepaths=tmp_filepaths,
+            analysis_mode=analysis_mode,
+            processed_file_ids=processed_file_ids,
+            sample_page_range=sample_page_range,
+            source_file_page_ranges=source_file_page_ranges,
+            base_log_context=base_log_context,
+            attempt_number=attempt_number,
+            attempt_count=attempt_count,
+        )
+        for attempt_number in range(1, attempt_count + 1)
+    ]
+
+    primary_result = dict(attempts[0])
+    primary_result["analysis_attempts"] = attempts
+    return primary_result
 
 
 def _parse_login_credentials_from_db_connection(connection_string: str) -> Dict[str, str]:
@@ -3767,57 +3883,15 @@ def _queue_category_slip_analysis(
         if not tmp_filepaths:
             raise ValueError("処理できる画像ファイルがありませんでした")
 
-        logging.info("OCRテキスト抽出を開始します", extra={**ocr_log_context, "action": "OCR_START"})
-        ocr_result = ai_service.extract_text_from_images(tmp_filepaths, log_context=ocr_log_context)
-        if not ocr_result.get("success"):
-            raise ValueError(f"テキスト抽出に失敗しました: {ocr_result.get('message')}")
-
-        extracted_text = ocr_result.get("extracted_text", "")
-        all_page_texts = ocr_result.get("page_texts", [])
-        sample_ocr_text = _build_sample_ocr_text(all_page_texts, sample_page_range)
-        file_page_texts: Dict[str, List[Dict[str, Any]]] = {
-            str(source_id): [
-                {"page_index": i, "text": all_page_texts[page_range["start"] + i].get("text", "")}
-                for i in range(page_range["end"] - page_range["start"])
-                if page_range["start"] + i < len(all_page_texts)
-            ]
-            for source_id, page_range in source_file_page_ranges.items()
-        }
-        logging.info(
-            "OCRテキスト抽出完了",
-            extra={
-                **ocr_log_context,
-                "text_length": len(extracted_text),
-                "sample_text_length": len(sample_ocr_text),
-                "action": "OCR_COMPLETE",
-            },
-        )
-
-        logging.info(
-            "LLMによるスキーマ設計を開始します",
-            extra={**ocr_log_context, "action": "SCHEMA_DESIGN_START"},
-        )
-        schema_result = ai_service.generate_sql_schema_from_text(
-            extracted_text,
-            analysis_mode,
-            log_context=ocr_log_context,
-        )
-        if not schema_result.get("success"):
-            raise ValueError(f"AIによるスキーマ設計に失敗しました: {schema_result.get('message')}")
-        logging.info(
-            "AIスキーマ設計完了",
-            extra={**ocr_log_context, "action": "SCHEMA_DESIGN_COMPLETE"},
-        )
-
-        result = _build_category_analysis_result_payload(
+        result = _run_category_analysis_attempts(
             ai_service=ai_service,
-            schema_result=schema_result,
+            tmp_filepaths=tmp_filepaths,
             analysis_mode=analysis_mode,
             processed_file_ids=processed_file_ids,
-            sample_ocr_text=sample_ocr_text,
-            log_context={**ocr_log_context, "action": "CATEGORY_SAMPLE_VALUE_EXTRACT"},
+            sample_page_range=sample_page_range,
+            source_file_page_ranges=source_file_page_ranges,
+            base_log_context=ocr_log_context,
         )
-        result["file_page_texts"] = file_page_texts
 
         for target in linked_targets:
             management_file_id = target.get("management_file_id")
@@ -4636,17 +4710,12 @@ def analyze_slips_for_category():
     doc_processor = DocumentProcessor()
     ai_service = AIService()
 
-    # 全ファイルを分析してフィールドを収集
-    all_header_fields: List[Dict[str, Any]] = []
-    all_line_fields: List[Dict[str, Any]] = []
-    tmp_filepaths = []
+    tmp_filepaths: List[str] = []
     processed_file_ids: List[int] = []
-    schema_result: Dict[str, Any] = {}
     sample_page_range: Optional[Dict[str, int]] = None
     source_file_page_ranges: Dict[int, Dict[str, int]] = {}
 
     try:
-        # 1. すべてのファイルをダウンロードし、OCR用に画像化して /tmp に保存
         for rec in file_records:
             try:
                 object_name = rec.get("object_name", "")
@@ -4693,87 +4762,15 @@ def analyze_slips_for_category():
             "analysis_mode": analysis_mode,
             "request_id": _get_request_id(),
         }
-        # 2. VLMで画像からテキストを抽出（OCRの代替）
-        logging.info(
-            "ファイルダウンロード及び画像変換完了、OCRテキスト抽出を開始します (対象ファイル数: %d)",
-            len(tmp_filepaths),
-            extra={**ocr_log_context, "action": "OCR_START"},
+        result = _run_category_analysis_attempts(
+            ai_service=ai_service,
+            tmp_filepaths=tmp_filepaths,
+            analysis_mode=analysis_mode,
+            processed_file_ids=processed_file_ids,
+            sample_page_range=sample_page_range,
+            source_file_page_ranges=source_file_page_ranges,
+            base_log_context=ocr_log_context,
         )
-        ocr_result = ai_service.extract_text_from_images(tmp_filepaths, log_context=ocr_log_context)
-        if not ocr_result.get("success"):
-            error_message = f"テキスト抽出に失敗しました: {ocr_result.get('message')}"
-            for target in linked_targets:
-                management_file_id = target.get("management_file_id")
-                category_file_id = target.get("category_file_id")
-                source_file_id = target.get("source_file_id")
-                if management_file_id is not None:
-                    db_service.update_file_status(int(management_file_id), "ERROR")
-                if category_file_id is not None:
-                    db_service.update_category_file_status(int(category_file_id), "ERROR")
-                db_service.log_activity(
-                    activity_type="CATEGORY_ANALYZE_ERROR",
-                    description=_build_analysis_error_activity_description(
-                        "分類用サンプル伝票の分析エラー",
-                        error_message,
-                        request_id=ocr_log_context.get("request_id", ""),
-                    ),
-                    file_id=management_file_id or source_file_id,
-                    user_name=session.get("user", ""),
-                )
-            g.response.add_error_message(error_message)
-            return jsonify(g.response.get_result()), 500
-
-        extracted_text = ocr_result.get("extracted_text", "")
-        all_page_texts = ocr_result.get("page_texts", [])
-        sample_ocr_text = _build_sample_ocr_text(all_page_texts, sample_page_range)
-        file_page_texts: Dict[str, List[Dict[str, Any]]] = {
-            str(source_id): [
-                {"page_index": i, "text": all_page_texts[page_range["start"] + i].get("text", "")}
-                for i in range(page_range["end"] - page_range["start"])
-                if page_range["start"] + i < len(all_page_texts)
-            ]
-            for source_id, page_range in source_file_page_ranges.items()
-        }
-        logging.info(
-            "OCRテキスト抽出完了 (文字数=%d)",
-            len(extracted_text),
-            extra={
-                **ocr_log_context,
-                "text_length": len(extracted_text),
-                "sample_text_length": len(sample_ocr_text),
-                "action": "OCR_COMPLETE",
-            },
-        )
-
-        # 3. LLMで抽出テキストからスキーマ（JSON）を生成
-        logging.info(
-            "LLMによるフィールドデータ抽出(スキーマ推論)を開始します",
-            extra={**ocr_log_context, "action": "SCHEMA_DESIGN_START"},
-        )
-        schema_result = ai_service.generate_sql_schema_from_text(
-            extracted_text,
-            analysis_mode,
-            log_context=ocr_log_context,
-        )
-        logging.info(
-            "LLM推論完了: %s",
-            json.dumps(schema_result),
-            extra={**ocr_log_context, "action": "SCHEMA_DESIGN_COMPLETE"},
-        )
-        if not schema_result.get("success"):
-            for target in linked_targets:
-                management_file_id = target.get("management_file_id")
-                category_file_id = target.get("category_file_id")
-                if management_file_id is not None:
-                    db_service.update_file_status(int(management_file_id), "ERROR")
-                if category_file_id is not None:
-                    db_service.update_category_file_status(int(category_file_id), "ERROR")
-            g.response.add_error_message(f"AIによるスキーマ設計に失敗しました: {schema_result.get('message')}")
-            return jsonify(g.response.get_result()), 500
-            
-        # 4. JSONから header_columns, line_columns を取得する
-        all_header_fields = schema_result.get("header_fields", [])
-        all_line_fields = schema_result.get("line_fields", [])
     except AIRateLimitError as e:
         logging.warning(
             "分類用サンプル伝票の同期分析が OCI GenAI のレート制限により中断されました: file_ids=%s retry_after=%.1fs",
@@ -4791,41 +4788,8 @@ def analyze_slips_for_category():
             "OCI GenAI が混み合っているため分類用サンプル分析を一時中断しました。しばらく待ってから再実行してください。",
             e.retry_after_seconds,
         )
-    finally:
-        # クリーンアップ: 一時ファイルを削除
-        for path in tmp_filepaths:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except Exception as e:
-                logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", path, e)
-
-
-
-
-    if not all_header_fields:
-        for target in linked_targets:
-            management_file_id = target.get("management_file_id")
-            category_file_id = target.get("category_file_id")
-            if management_file_id is not None:
-                db_service.update_file_status(int(management_file_id), "ERROR")
-            if category_file_id is not None:
-                db_service.update_category_file_status(int(category_file_id), "ERROR")
-        g.response.add_error_message("分析できるファイルがありませんでした")
-        return jsonify(g.response.get_result()), 500
-
-    try:
-        result = _build_category_analysis_result_payload(
-            ai_service=ai_service,
-            schema_result=schema_result,
-            analysis_mode=analysis_mode,
-            processed_file_ids=processed_file_ids,
-            sample_ocr_text=sample_ocr_text,
-            log_context={**ocr_log_context, "action": "CATEGORY_SAMPLE_VALUE_EXTRACT"},
-        )
-        result["file_page_texts"] = file_page_texts
     except Exception as e:
-        logging.error("分類用サンプル伝票の結果組み立てエラー: %s", e, exc_info=True)
+        logging.error("分類用サンプル伝票の分析結果作成に失敗しました: %s", e, exc_info=True)
         for target in linked_targets:
             management_file_id = target.get("management_file_id")
             category_file_id = target.get("category_file_id")
@@ -4839,13 +4803,21 @@ def analyze_slips_for_category():
                 description=_build_analysis_error_activity_description(
                     "分類用サンプル伝票の分析エラー",
                     e,
-                    request_id=ocr_log_context.get("request_id", ""),
+                    request_id=ocr_log_context.get("request_id", "") if "ocr_log_context" in locals() else "",
                 ),
                 file_id=management_file_id or source_file_id,
                 user_name=session.get("user", ""),
             )
         g.response.add_error_message(f"分類用サンプル伝票の分析結果作成に失敗しました: {str(e)}")
         return jsonify(g.response.get_result()), 500
+    finally:
+        for path_value in tmp_filepaths:
+            try:
+                if os.path.exists(path_value):
+                    os.remove(path_value)
+            except Exception as e:
+                logging.warning("一時ファイルの削除に失敗しました: %s, error=%s", path_value, e)
+
     for target in linked_targets:
         management_file_id = target.get("management_file_id")
         category_file_id = target.get("category_file_id")
@@ -4870,7 +4842,7 @@ def analyze_slips_for_category():
             db_service.update_file_status(int(management_file_id), "ANALYZED")
         if category_file_id is not None:
             db_service.update_category_file_status(int(category_file_id), "ANALYZED")
-            
+
     logging.info("AI分析(分類用サンプル)が正常終了しました")
     g.response.set_data(result)
     return jsonify(g.response.get_result())

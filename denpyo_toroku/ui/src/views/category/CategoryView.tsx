@@ -42,6 +42,7 @@ import type {
   DenpyoFile,
   CategoryUpdateRequest,
   TableColumnDef,
+  CategoryAnalysisAttempt,
   CategoryAnalysisResult,
   CategoryCreateRequest,
 } from '../../types/denpyoTypes';
@@ -812,6 +813,56 @@ function TableDesigner({
 
 // ─── Table Designer Inline Panel ─────────────────────────────────────────────
 
+type CategoryDesignerDraft = {
+  categoryName: string;
+  categoryNameEn: string;
+  headerTableName: string;
+  headerColumns: TableDesignerColumn[];
+  lineTableName: string;
+  lineColumns: TableDesignerColumn[];
+  activeDesignerTab: 'header' | 'line';
+};
+
+const CATEGORY_ANALYSIS_ATTEMPT_SLOTS = [1, 2, 3] as const;
+
+function normalizeCategoryAnalysisAttempts(analysisResult: CategoryAnalysisResult): CategoryAnalysisAttempt[] {
+  const baseAttempts = Array.isArray(analysisResult.analysis_attempts) && analysisResult.analysis_attempts.length > 0
+    ? analysisResult.analysis_attempts
+    : [{ ...analysisResult, attempt_number: analysisResult.attempt_number ?? 1 }];
+
+  return CATEGORY_ANALYSIS_ATTEMPT_SLOTS.map((slotNumber, index) => {
+    const matchedAttempt = baseAttempts.find((attempt, attemptIndex) => {
+      const attemptNumber = Number(attempt.attempt_number ?? (attemptIndex + 1));
+      return attemptNumber === slotNumber;
+    });
+    const fallbackAttempt = matchedAttempt || baseAttempts[index] || baseAttempts[0];
+
+    return {
+      attempt_number: slotNumber,
+      category_guess: fallbackAttempt?.category_guess || '',
+      category_guess_en: fallbackAttempt?.category_guess_en || '',
+      analysis_mode: fallbackAttempt?.analysis_mode || analysisResult.analysis_mode || 'header_only',
+      header_columns: fallbackAttempt?.header_columns || [],
+      line_columns: fallbackAttempt?.line_columns || [],
+      analyzed_file_ids: fallbackAttempt?.analyzed_file_ids || analysisResult.analyzed_file_ids || [],
+      file_page_texts: fallbackAttempt?.file_page_texts || analysisResult.file_page_texts,
+    };
+  });
+}
+
+function createCategoryDesignerDraft(attempt: CategoryAnalysisAttempt): CategoryDesignerDraft {
+  const categoryNameEn = (attempt.category_guess_en || 'slip').trim();
+  return {
+    categoryName: attempt.category_guess || '',
+    categoryNameEn,
+    headerTableName: `${categoryNameEn.toUpperCase()}_H`,
+    headerColumns: normalizeColumns(attempt.header_columns, 'HEADER_ID'),
+    lineTableName: attempt.analysis_mode === 'header_line' ? `${categoryNameEn.toUpperCase()}_L` : '',
+    lineColumns: normalizeColumns(attempt.line_columns, 'LINE_ID', 'HEADER_ID'),
+    activeDesignerTab: 'header',
+  };
+}
+
 function TableDesignerPanel({
   analysisResult,
   onConfirm,
@@ -823,41 +874,65 @@ function TableDesignerPanel({
   onClose: () => void;
   isCreating: boolean;
 }) {
-  const [categoryName, setCategoryName] = useState(analysisResult.category_guess || '');
-  const [categoryNameEn, setCategoryNameEn] = useState(analysisResult.category_guess_en || '');
-  const [headerTableName, setHeaderTableName] = useState(
-    (analysisResult.category_guess_en || 'slip').toUpperCase() + '_H'
+  const analysisAttempts = useMemo(
+    () => normalizeCategoryAnalysisAttempts(analysisResult),
+    [analysisResult]
   );
-  const [headerColumns, setHeaderColumns] = useState<TableDesignerColumn[]>(() => normalizeColumns(analysisResult.header_columns, 'HEADER_ID'));
-  const [lineTableName, setLineTableName] = useState(
-    analysisResult.analysis_mode === 'header_line'
-      ? (analysisResult.category_guess_en || 'slip').toUpperCase() + '_L'
-      : ''
-  );
-  const [lineColumns, setLineColumns] = useState<TableDesignerColumn[]>(() => normalizeColumns(analysisResult.line_columns, 'LINE_ID', 'HEADER_ID'));
-  const [activeTab, setActiveTab] = useState<'header' | 'line'>('header');
+  const [selectedAttemptNumber, setSelectedAttemptNumber] = useState<number>(() => Number(analysisAttempts[0]?.attempt_number || 1));
+  const [draftsByAttempt, setDraftsByAttempt] = useState<Record<number, CategoryDesignerDraft>>(() => (
+    Object.fromEntries(
+      analysisAttempts.map((attempt) => [Number(attempt.attempt_number || 1), createCategoryDesignerDraft(attempt)])
+    ) as Record<number, CategoryDesignerDraft>
+  ));
   const [validationError, setValidationError] = useState('');
   const [isReviewCollapsed, setIsReviewCollapsed] = useState(false);
 
-  const hasLine = analysisResult.analysis_mode === 'header_line';
-  const fileIds = analysisResult.analyzed_file_ids ?? [];
+  useEffect(() => {
+    setSelectedAttemptNumber(Number(analysisAttempts[0]?.attempt_number || 1));
+    setDraftsByAttempt(
+      Object.fromEntries(
+        analysisAttempts.map((attempt) => [Number(attempt.attempt_number || 1), createCategoryDesignerDraft(attempt)])
+      ) as Record<number, CategoryDesignerDraft>
+    );
+    setValidationError('');
+  }, [analysisAttempts]);
+
+  const activeAttempt = useMemo<CategoryAnalysisAttempt>(
+    () => analysisAttempts.find((attempt) => Number(attempt.attempt_number || 1) === selectedAttemptNumber) || analysisAttempts[0]!,
+    [analysisAttempts, selectedAttemptNumber]
+  );
+  const activeAttemptNumber = Number(activeAttempt?.attempt_number || 1);
+  const activeDraft = draftsByAttempt[activeAttemptNumber] || createCategoryDesignerDraft(activeAttempt);
+  const hasLine = activeAttempt.analysis_mode === 'header_line';
+  const activeDesignerTab: 'header' | 'line' = hasLine && activeDraft.activeDesignerTab === 'line' ? 'line' : 'header';
+  const fileIds = activeAttempt.analyzed_file_ids ?? [];
   const isReviewHeightSyncEnabled = fileIds.length > 0 && !isReviewCollapsed;
   const { elementRef: reviewPanelRef, height: reviewPanelHeight } = useObservedElementHeight<HTMLDivElement>(isReviewHeightSyncEnabled);
   const syncedPanelStyle = buildSyncedPanelMaxHeightStyle(reviewPanelHeight);
 
+  const updateActiveDraft = useCallback((updater: (draft: CategoryDesignerDraft) => CategoryDesignerDraft) => {
+    setDraftsByAttempt((prev) => {
+      const currentDraft = prev[activeAttemptNumber] || createCategoryDesignerDraft(activeAttempt);
+      return {
+        ...prev,
+        [activeAttemptNumber]: updater(currentDraft),
+      };
+    });
+  }, [activeAttempt, activeAttemptNumber]);
+
   const handleConfirm = () => {
-    const headerBusinessColumns = getBusinessColumns(headerColumns);
-    const lineBusinessColumns = getBusinessColumns(lineColumns);
+    const headerBusinessColumns = getBusinessColumns(activeDraft.headerColumns);
+    const lineBusinessColumns = getBusinessColumns(activeDraft.lineColumns);
     setValidationError('');
-    if (!categoryName.trim()) {
+    if (!activeDraft.categoryName.trim()) {
       setValidationError(t('category.designer.errorNoCategoryName'));
       return;
     }
-    if (!categoryNameEn.trim()) {
+    if (!activeDraft.categoryNameEn.trim()) {
       setValidationError(t('category.designer.errorNoCategoryNameEn'));
       return;
     }
-    if (!headerTableName.trim()) {
+    if (!activeDraft.headerTableName.trim()) {
       setValidationError(t('category.designer.errorNoHeaderTable'));
       return;
     }
@@ -865,7 +940,7 @@ function TableDesignerPanel({
       setValidationError(t('category.designer.errorNoHeaderCols'));
       return;
     }
-    for (const col of headerColumns) {
+    for (const col of activeDraft.headerColumns) {
       if (col.is_system) continue;
       if (!col.column_name.trim()) {
         setValidationError(t('category.designer.errorEmptyColName'));
@@ -876,12 +951,12 @@ function TableDesignerPanel({
         return;
       }
     }
-    if (hasLine && lineBusinessColumns.length > 0 && !lineTableName.trim()) {
+    if (hasLine && lineBusinessColumns.length > 0 && !activeDraft.lineTableName.trim()) {
       setValidationError(t('category.designer.errorNoLineTable'));
       return;
     }
-    if (hasLine && lineTableName.trim() && lineBusinessColumns.length > 0) {
-      for (const col of lineColumns) {
+    if (hasLine && activeDraft.lineTableName.trim() && lineBusinessColumns.length > 0) {
+      for (const col of activeDraft.lineColumns) {
         if (col.is_system) continue;
         if (!col.column_name.trim()) {
           setValidationError(t('category.designer.errorEmptyColName'));
@@ -895,21 +970,46 @@ function TableDesignerPanel({
     }
 
     const req: CategoryCreateRequest = {
-      category_name: categoryName.trim(),
-      category_name_en: categoryNameEn.trim(),
+      category_name: activeDraft.categoryName.trim(),
+      category_name_en: activeDraft.categoryNameEn.trim(),
       description: '',
-      header_table_name: headerTableName.trim().toUpperCase(),
-      header_columns: serializeColumns(headerColumns, 'HEADER_ID'),
+      header_table_name: activeDraft.headerTableName.trim().toUpperCase(),
+      header_columns: serializeColumns(activeDraft.headerColumns, 'HEADER_ID'),
     };
-    if (hasLine && lineTableName.trim() && lineBusinessColumns.length > 0) {
-      req.line_table_name = lineTableName.trim().toUpperCase();
-      req.line_columns = serializeColumns(lineColumns, 'LINE_ID', 'HEADER_ID');
+    if (hasLine && activeDraft.lineTableName.trim() && lineBusinessColumns.length > 0) {
+      req.line_table_name = activeDraft.lineTableName.trim().toUpperCase();
+      req.line_columns = serializeColumns(activeDraft.lineColumns, 'LINE_ID', 'HEADER_ID');
     }
     onConfirm(req);
   };
 
   return (
     <>
+      <section class="ics-ops-grid ics-ops-grid--one">
+        <div class="ics-card ics-card--flat">
+          <div class="ics-card-body" style={{ paddingBottom: '0' }}>
+            <div class="ics-tabs" style={{ marginBottom: '0' }}>
+              {analysisAttempts.map((attempt) => {
+                const attemptNumber = Number(attempt.attempt_number || 1);
+                return (
+                  <button
+                    key={attemptNumber}
+                    type="button"
+                    class={`ics-tab ${activeAttemptNumber === attemptNumber ? 'ics-tab--active' : ''}`}
+                    onClick={() => {
+                      setSelectedAttemptNumber(attemptNumber);
+                      setValidationError('');
+                    }}
+                  >
+                    {`${attemptNumber}回目`}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="ics-ops-grid ics-ops-grid--one">
         <div
           class={`ics-category-designer-layout ${isReviewCollapsed ? 'is-review-collapsed' : ''}`}
@@ -921,7 +1021,6 @@ function TableDesignerPanel({
               : '1fr'
           }}
         >
-          {/* 左カラム: 画像レビュー */}
           {fileIds.length > 0 && (
             <div
               ref={reviewPanelRef}
@@ -934,15 +1033,13 @@ function TableDesignerPanel({
                 collapsible
                 isCollapsed={isReviewCollapsed}
                 onToggleCollapsed={setIsReviewCollapsed}
-                pageTextsByFileId={analysisResult.file_page_texts}
+                pageTextsByFileId={activeAttempt.file_page_texts}
               />
             </div>
           )}
 
-          {/* 右カラム: フォーム */}
           <div class="ics-category-designer-right">
             <div class="ics-category-designer-right__scroll ics-synced-panel-height ics-synced-panel-scroll" style={syncedPanelStyle}>
-              {/* 伝票分類基本情報 */}
               <div class="ics-card ics-card--flat">
                 <div class="ics-card-header">
                   <span class="oj-typography-heading-xs">{t('category.designer.categoryInfo')}</span>
@@ -954,8 +1051,11 @@ function TableDesignerPanel({
                       <input
                         type="text"
                         class="ics-form-input"
-                        value={categoryName}
-                        onInput={(e: Event) => setCategoryName((e.target as HTMLInputElement).value)}
+                        value={activeDraft.categoryName}
+                        onInput={(e: Event) => updateActiveDraft((draft) => ({
+                          ...draft,
+                          categoryName: (e.target as HTMLInputElement).value,
+                        }))}
                         placeholder={t('category.designer.categoryNamePlaceholder')}
                       />
                     </div>
@@ -964,8 +1064,11 @@ function TableDesignerPanel({
                       <input
                         type="text"
                         class="ics-form-input"
-                        value={categoryNameEn}
-                        onInput={(e: Event) => setCategoryNameEn((e.target as HTMLInputElement).value)}
+                        value={activeDraft.categoryNameEn}
+                        onInput={(e: Event) => updateActiveDraft((draft) => ({
+                          ...draft,
+                          categoryNameEn: (e.target as HTMLInputElement).value,
+                        }))}
                         placeholder="invoice"
                       />
                     </div>
@@ -982,22 +1085,21 @@ function TableDesignerPanel({
                 </div>
 
                 <div class="ics-card-body ics-card-body--designer">
-                  {/* テーブルデザイナー タブ */}
                   {hasLine && (
                     <div class="ics-category-designer-right__tabs">
                       <div class="ics-tabs" style={{ marginBottom: '8px' }}>
                         <button
                           type="button"
-                          class={`ics-tab ${activeTab === 'header' ? 'ics-tab--active' : ''}`}
-                          onClick={() => setActiveTab('header')}
+                          class={`ics-tab ${activeDesignerTab === 'header' ? 'ics-tab--active' : ''}`}
+                          onClick={() => updateActiveDraft((draft) => ({ ...draft, activeDesignerTab: 'header' }))}
                         >
                           <FileText size={14} />
                           {t('category.designer.tabHeader')}
                         </button>
                         <button
                           type="button"
-                          class={`ics-tab ${activeTab === 'line' ? 'ics-tab--active' : ''}`}
-                          onClick={() => setActiveTab('line')}
+                          class={`ics-tab ${activeDesignerTab === 'line' ? 'ics-tab--active' : ''}`}
+                          onClick={() => updateActiveDraft((draft) => ({ ...draft, activeDesignerTab: 'line' }))}
                         >
                           <Table2 size={14} />
                           {t('category.designer.tabLine')}
@@ -1006,23 +1108,23 @@ function TableDesignerPanel({
                     </div>
                   )}
 
-                  {(!hasLine || activeTab === 'header') && (
+                  {(!hasLine || activeDesignerTab === 'header') && (
                     <TableDesigner
                       label={t('category.designer.headerTable')}
-                      tableName={headerTableName}
-                      columns={headerColumns}
-                      onTableNameChange={setHeaderTableName}
-                      onColumnsChange={setHeaderColumns}
+                      tableName={activeDraft.headerTableName}
+                      columns={activeDraft.headerColumns}
+                      onTableNameChange={(name) => updateActiveDraft((draft) => ({ ...draft, headerTableName: name }))}
+                      onColumnsChange={(cols) => updateActiveDraft((draft) => ({ ...draft, headerColumns: cols }))}
                     />
                   )}
 
-                  {hasLine && activeTab === 'line' && (
+                  {hasLine && activeDesignerTab === 'line' && (
                     <TableDesigner
                       label={t('category.designer.lineTable')}
-                      tableName={lineTableName}
-                      columns={lineColumns}
-                      onTableNameChange={setLineTableName}
-                      onColumnsChange={setLineColumns}
+                      tableName={activeDraft.lineTableName}
+                      columns={activeDraft.lineColumns}
+                      onTableNameChange={(name) => updateActiveDraft((draft) => ({ ...draft, lineTableName: name }))}
+                      onColumnsChange={(cols) => updateActiveDraft((draft) => ({ ...draft, lineColumns: cols }))}
                     />
                   )}
                 </div>
