@@ -60,7 +60,11 @@ class AppConfig:
     )
     LLM_MAX_TOKENS = int(os.environ.get(
         "LLM_MAX_TOKENS",
-        config.get("ai", "llm_max_tokens", fallback="65536")
+        config.get("ai", "llm_max_tokens", fallback="128000")
+    ))
+    VLM_MAX_TOKENS = int(os.environ.get(
+        "VLM_MAX_TOKENS",
+        config.get("ai", "vlm_max_tokens", fallback="63356")
     ))
     LLM_TEMPERATURE = float(os.environ.get(
         "LLM_TEMPERATURE",

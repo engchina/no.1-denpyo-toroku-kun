@@ -1170,10 +1170,10 @@ def _runtime_oci_defaults() -> Dict[str, str]:
             default=True,
         ),
         "llm_max_tokens": int(
-            os.environ.get("LLM_MAX_TOKENS", getattr(AppConfig, "LLM_MAX_TOKENS", 65536))
+            os.environ.get("LLM_MAX_TOKENS", getattr(AppConfig, "LLM_MAX_TOKENS", 128000))
         ),
-        "llm_temperature": float(
-            os.environ.get("LLM_TEMPERATURE", getattr(AppConfig, "LLM_TEMPERATURE", 0.0))
+        "vlm_max_tokens": int(
+            os.environ.get("VLM_MAX_TOKENS", getattr(AppConfig, "VLM_MAX_TOKENS", 63356))
         ),
         "namespace": _normalize_text(
             os.environ.get("OCI_NAMESPACE"),
@@ -1309,7 +1309,7 @@ def _load_oci_settings_snapshot() -> Dict[str, Any]:
             "select_ai_use_comments": defaults["select_ai_use_comments"],
             "select_ai_use_constraints": defaults["select_ai_use_constraints"],
             "llm_max_tokens": defaults["llm_max_tokens"],
-            "llm_temperature": defaults["llm_temperature"],
+            "vlm_max_tokens": defaults["vlm_max_tokens"],
             "namespace": defaults["namespace"],
             "bucket": defaults["bucket"],
         },
@@ -1384,7 +1384,7 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     os.environ["SELECT_AI_USE_COMMENTS"] = "true" if settings["select_ai_use_comments"] else "false"
     os.environ["SELECT_AI_USE_CONSTRAINTS"] = "true" if settings["select_ai_use_constraints"] else "false"
     os.environ["LLM_MAX_TOKENS"] = str(settings["llm_max_tokens"])
-    os.environ["LLM_TEMPERATURE"] = str(settings["llm_temperature"])
+    os.environ["VLM_MAX_TOKENS"] = str(settings["vlm_max_tokens"])
     os.environ["OCI_NAMESPACE"] = settings["namespace"]
     os.environ["OCI_BUCKET"] = settings["bucket"]
 
@@ -1413,7 +1413,7 @@ def _apply_runtime_oci_values(settings: Dict[str, str]) -> None:
     AppConfig.SELECT_AI_USE_COMMENTS = bool(settings["select_ai_use_comments"])
     AppConfig.SELECT_AI_USE_CONSTRAINTS = bool(settings["select_ai_use_constraints"])
     AppConfig.LLM_MAX_TOKENS = int(settings["llm_max_tokens"])
-    AppConfig.LLM_TEMPERATURE = float(settings["llm_temperature"])
+    AppConfig.VLM_MAX_TOKENS = int(settings["vlm_max_tokens"])
     AppConfig.OCI_NAMESPACE = settings["namespace"]
     AppConfig.OCI_BUCKET = settings["bucket"]
     _refresh_ai_service_ocr_runtime_settings()
@@ -1604,10 +1604,10 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             default=bool(current_settings.get("select_ai_use_constraints", True)),
         ),
         "llm_max_tokens": int(
-            settings_payload.get("llm_max_tokens", current_settings.get("llm_max_tokens", 65536))
+            settings_payload.get("llm_max_tokens", current_settings.get("llm_max_tokens", 128000))
         ),
-        "llm_temperature": float(
-            settings_payload.get("llm_temperature", current_settings.get("llm_temperature", 0.0))
+        "vlm_max_tokens": int(
+            settings_payload.get("vlm_max_tokens", current_settings.get("vlm_max_tokens", 63356))
         ),
         "namespace": _normalize_text(
             settings_payload.get("namespace"),
@@ -1647,7 +1647,7 @@ def _save_oci_settings(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
             "SELECT_AI_USE_COMMENTS": "true" if settings_for_env["select_ai_use_comments"] else "false",
             "SELECT_AI_USE_CONSTRAINTS": "true" if settings_for_env["select_ai_use_constraints"] else "false",
             "LLM_MAX_TOKENS": str(settings_for_env["llm_max_tokens"]),
-            "LLM_TEMPERATURE": str(settings_for_env["llm_temperature"]),
+            "VLM_MAX_TOKENS": str(settings_for_env["vlm_max_tokens"]),
             "OCI_NAMESPACE": settings_for_env["namespace"],
             "OCI_BUCKET": settings_for_env["bucket"],
         },
@@ -1727,10 +1727,10 @@ def _build_oci_model_test_settings(request_settings: Dict[str, Any]) -> Dict[str
         snapshot_settings.get("embedding_model_id", defaults.get("embedding_model_id", "cohere.embed-v4.0")),
     ) or "cohere.embed-v4.0"
     llm_max_tokens = int(
-        request_settings.get("llm_max_tokens", snapshot_settings.get("llm_max_tokens", defaults.get("llm_max_tokens", 65536)))
+        request_settings.get("llm_max_tokens", snapshot_settings.get("llm_max_tokens", defaults.get("llm_max_tokens", 128000)))
     )
-    llm_temperature = float(
-        request_settings.get("llm_temperature", snapshot_settings.get("llm_temperature", defaults.get("llm_temperature", 0.0)))
+    vlm_max_tokens = int(
+        request_settings.get("vlm_max_tokens", snapshot_settings.get("vlm_max_tokens", defaults.get("vlm_max_tokens", 63356)))
     )
 
     return {
@@ -1740,7 +1740,7 @@ def _build_oci_model_test_settings(request_settings: Dict[str, Any]) -> Dict[str
         "vlm_model_id": vlm_model_id,
         "embedding_model_id": embedding_model_id,
         "llm_max_tokens": llm_max_tokens,
-        "llm_temperature": llm_temperature,
+        "vlm_max_tokens": vlm_max_tokens,
     }
 
 
@@ -2387,7 +2387,7 @@ def test_oci_model_connection():
                     )
                 ],
                 max_tokens=model_settings.get("llm_max_tokens", AppConfig.LLM_MAX_TOKENS),
-                temperature=model_settings.get("llm_temperature", AppConfig.LLM_TEMPERATURE),
+                temperature=0.0,
                 is_stream=False,
             )
             chat_detail = oci.generative_ai_inference.models.ChatDetails(
@@ -2432,8 +2432,8 @@ def test_oci_model_connection():
                         content=[{"type": "TEXT", "text": "画像解析モデルの接続テストです。'OK' とだけ返答してください。"}]
                     )
                 ],
-                max_tokens=model_settings.get("llm_max_tokens", AppConfig.LLM_MAX_TOKENS),
-                temperature=model_settings.get("llm_temperature", AppConfig.LLM_TEMPERATURE),
+                max_tokens=model_settings.get("vlm_max_tokens", AppConfig.VLM_MAX_TOKENS),
+                temperature=0.0,
                 is_stream=False,
             )
             chat_detail = oci.generative_ai_inference.models.ChatDetails(

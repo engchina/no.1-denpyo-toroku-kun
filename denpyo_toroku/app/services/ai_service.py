@@ -414,10 +414,50 @@ _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
 - For short-looking codes / IDs / numbers, still keep enough room instead of matching the sample exactly.
 - {header_only_hint}
 
-### 4. Capture ALL information present in the document
-CRITICAL — every labeled field, cell, and value visible in the OCR text MUST be mapped to a column. Do NOT omit any field because it looks technical, unusual, or hard to name.
+### 4. Capture ALL information present in the document — Best Effort Completeness
+CRITICAL — This is the single most important requirement. Every piece of information present \
+in the OCR text MUST be mapped to at least one column. Do NOT omit ANY content — labeled or \
+unlabeled — because it looks technical, unusual, ambiguous, redundant, or hard to name. \
+When in doubt, INCLUDE it. A spurious extra column is always preferable to a missing one.
 
-**Column count**: For dense inspection forms, equipment test records, specification tables, or multi-table documents, the schema may legitimately contain 50, 100, or more columns. This is expected and correct — never consolidate, merge, or drop columns to simplify the schema. Completeness is mandatory.
+**Step 4-A: Pre-generation scan (mandatory)**
+Before writing any column definitions, read the ENTIRE OCR text from top to bottom and \
+mentally enumerate every distinct data element: labeled fields, table cells, key-value pairs, \
+free-text areas, and special marker tags (<STAMP:…>, <HANDWRITTEN:…>, <SIGNATURE>, \
+<BARCODE:…>, <ILLEGIBLE>, <REDACTED>). Use this enumeration as a checklist when generating \
+the column list, and again when verifying it.
+
+**Step 4-B: Column count**
+For dense inspection forms, equipment test records, specification tables, or multi-table \
+documents, the schema may legitimately contain 50, 100, or more columns. This is expected \
+and correct — never consolidate, merge, or drop columns to simplify the schema. \
+Completeness is mandatory.
+
+**Step 4-C: Best-effort naming for unlabeled or ambiguous content**
+When a value appears without a clear document label (e.g., a standalone number, a value in \
+an unlabeled cell, content inside a special marker), infer a descriptive name from its \
+position, surrounding context, or document section title. Never silently drop unlabeled data. \
+If no better descriptor exists, use a positional name (e.g., 備考欄1, 未ラベル値_第2行) — \
+but always include the column.
+
+**Step 4-D: Special OCR markers — each occurrence MUST have a dedicated column**
+- `<STAMP: text>` : one VARCHAR2(200) column per stamp location; name by surrounding label or position.
+- `<HANDWRITTEN: text>` : one VARCHAR2(500) column per handwritten area.
+- `<SIGNATURE>` : one VARCHAR2(1) or NUMBER(1) column per signature area.
+- `<BARCODE: value>` : one VARCHAR2(200) column per barcode.
+- `<ILLEGIBLE>` / `<REDACTED>` : one column per occurrence (records that the field existed, \
+  even though its value is unreadable; use VARCHAR2(200)).
+
+**Step 4-E: Multi-table and multi-section documents**
+When the OCR text contains multiple distinct tables or document sections (separated by ## \
+headings or other clear boundaries), ALL tables and ALL sections must contribute columns. \
+No table, section, or region may be partially or wholly omitted.
+
+**Step 4-F: Post-generation verification (mandatory)**
+After generating the full column list, re-scan the OCR text section by section and confirm \
+that every data element identified in Step 4-A has a corresponding column. Add any missed \
+columns before finalizing the output. If a section was skipped or partially covered, \
+correct it now.
 
 Categories of information to capture (applicable categories depend on document type):
 - **Document metadata**: document number, issue date, validity period, document type, reference numbers
@@ -474,7 +514,7 @@ measured values into one column.
 - **Financial data** (if present): subtotal, tax, total amount, unit price, quantity, tax rate
 - **Inspection and compliance data**: test results, pass/fail judgments, inspection dates, inspector information
 - **Free-text sections**: remarks, special notes, conditions, payment terms — each distinct labeled free-text area gets its own column
-- **Stamps and signatures**: each stamp or signature field gets its own column"""
+- **Stamps and signatures**: each stamp or signature field gets its own column (see Step 4-D above)"""
 
 _PROMPT_TEXT_TO_SQL_CONSTRAINTS_DEFAULT: str = """\
 - SELECT 文のみ生成（INSERT, UPDATE, DELETE, DROP などは絶対に禁止）
@@ -638,8 +678,8 @@ class AIService:
         self._compartment_id = os.environ.get("OCI_CONFIG_COMPARTMENT", "")
         self._llm_model_id = os.environ.get("LLM_MODEL_ID", "xai.grok-4-1-fast-reasoning")
         self._vlm_model_id = os.environ.get("VLM_MODEL_ID", "google.gemini-2.5-pro")
-        self._max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "65536"))
-        self._temperature = float(os.environ.get("LLM_TEMPERATURE", "0.0"))
+        self._max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "128000"))
+        self._vlm_max_tokens = int(os.environ.get("VLM_MAX_TOKENS", "63356"))
         self._service_endpoint = os.environ.get(
             "OCI_SERVICE_ENDPOINT",
             f"https://inference.generativeai.{self._region}.oci.oraclecloud.com"
@@ -1557,7 +1597,7 @@ class AIService:
                         rotation_degrees,
                         len(image_data),
                         content_type,
-                        self._max_tokens,
+                        self._vlm_max_tokens,
                         extra=self._build_log_extra(
                             page_log_context,
                             ocr_rotation_degrees=rotation_degrees,
@@ -1566,7 +1606,7 @@ class AIService:
                             ocr_rotation_priority="primary" if rotation_index == 1 else "secondary",
                             page_bytes=len(image_data),
                             page_content_type=content_type,
-                            ocr_max_tokens=self._max_tokens,
+                            ocr_max_tokens=self._vlm_max_tokens,
                         ),
                     )
 
@@ -1585,7 +1625,7 @@ class AIService:
                                 ]
                             )
                         ],
-                        max_tokens=self._max_tokens,
+                        max_tokens=self._vlm_max_tokens,
                         temperature=0.0,
                         is_stream=False,
                     )
@@ -1937,7 +1977,7 @@ class AIService:
                     )
                 ],
                 max_tokens=self._max_tokens,
-                temperature=self._temperature,
+                temperature=0.0,
                 is_stream=False,
             )
 
@@ -2208,7 +2248,7 @@ class AIService:
 {_get_prompt("selection_schema_design")}
 
 ### 5. Output Format
-Output ONLY a valid JSON object with this exact structure. The header_columns array MUST contain one entry for EVERY labeled field, cell, and data value present in the OCR content — for dense inspection or measurement documents this may be 50 to 100 or more entries. Do not truncate or omit columns. No explanation or markdown code fences.
+Output ONLY a valid JSON object with this exact structure. The header_columns array MUST contain one entry for EVERY piece of information present in the OCR content — every labeled field, unlabeled value, table cell (including blank cells that define a column position), special marker tag (<STAMP:…>, <HANDWRITTEN:…>, <SIGNATURE>, <BARCODE:…>, <ILLEGIBLE>, <REDACTED>), and free-text area, across ALL sections and tables in the document. For dense inspection or measurement documents this may be 50 to 100 or more entries. Do not truncate, consolidate, or omit columns for any reason. No explanation or markdown code fences.
 {{
   "document_type_ja": "<日本語文書種別>",
   "document_type_en": "<document_type_in_english>",
@@ -2256,7 +2296,7 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
                     )
                 ],
                 max_tokens=self._max_tokens,
-                temperature=self._temperature,
+                temperature=0.0,
                 is_stream=False,
             )
 
@@ -2507,7 +2547,7 @@ If no line table is needed, set "line_table_name" to "" and "line_columns" to []
                     )
                 ],
                 max_tokens=self._max_tokens,
-                temperature=self._temperature,
+                temperature=0.0,
                 is_stream=False,
             )
 

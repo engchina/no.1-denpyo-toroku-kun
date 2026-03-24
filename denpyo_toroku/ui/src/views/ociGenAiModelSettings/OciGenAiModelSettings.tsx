@@ -39,7 +39,7 @@ interface OciModelSettingsForm {
   select_ai_use_comments: boolean;
   select_ai_use_constraints: boolean;
   llm_max_tokens: number;
-  llm_temperature: number;
+  vlm_max_tokens: number;
 }
 
 interface OciSettingsSnapshot {
@@ -79,8 +79,8 @@ const EMPTY_SETTINGS: OciModelSettingsForm = {
   select_ai_use_annotations: true,
   select_ai_use_comments: true,
   select_ai_use_constraints: true,
-  llm_max_tokens: 65536,
-  llm_temperature: 0.0
+  llm_max_tokens: 128000,
+  vlm_max_tokens: 63356
 };
 
 export function OciGenAiModelSettings() {
@@ -128,7 +128,7 @@ export function OciGenAiModelSettings() {
         let val: string | number | boolean = target.value;
         if (
           field === 'llm_max_tokens'
-          || field === 'llm_temperature'
+          || field === 'vlm_max_tokens'
           || field === 'select_ai_max_tokens'
           || field === 'ocr_empty_response_primary_max_retries'
           || field === 'ocr_empty_response_secondary_max_retries'
@@ -301,36 +301,26 @@ export function OciGenAiModelSettings() {
                 placeholder={DEFAULT_VLM_MODEL}
               />
             </label>
-            <label class="applicationSettingsView__field applicationSettingsView__field--wide">
-              <span class="applicationSettingsView__fieldLabel">{t('settings.field.embeddingModelId')}</span>
-              <input
-                class="ics-input applicationSettingsView__modelInput"
-                value={settings.embedding_model_id}
-                onInput={updateField('embedding_model_id')}
-                placeholder={DEFAULT_EMBEDDING_MODEL}
-              />
-            </label>
             <label class="applicationSettingsView__field">
               <span class="applicationSettingsView__fieldLabel">{t('settings.field.llmMaxTokens')}</span>
               <input
                 class="ics-input applicationSettingsView__modelInput"
                 type="number"
                 min="4096"
-                max="98304"
+                max="200000"
                 value={settings.llm_max_tokens}
                 onInput={updateField('llm_max_tokens')}
               />
             </label>
             <label class="applicationSettingsView__field">
-              <span class="applicationSettingsView__fieldLabel">{t('settings.field.llmTemperature')}</span>
+              <span class="applicationSettingsView__fieldLabel">{t('settings.field.vlmMaxTokens')}</span>
               <input
                 class="ics-input applicationSettingsView__modelInput"
                 type="number"
-                step="0.1"
-                min="0.0"
-                max="1.0"
-                value={settings.llm_temperature}
-                onInput={updateField('llm_temperature')}
+                min="4096"
+                max="200000"
+                value={settings.vlm_max_tokens}
+                onInput={updateField('vlm_max_tokens')}
               />
             </label>
 
@@ -452,16 +442,6 @@ export function OciGenAiModelSettings() {
             </label>
 
             <label class="applicationSettingsView__field">
-              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.embeddingModelId')}</span>
-              <input
-                class="ics-input applicationSettingsView__modelInput"
-                value={settings.select_ai_embedding_model_id}
-                onInput={updateField('select_ai_embedding_model_id')}
-                placeholder={DEFAULT_EMBEDDING_MODEL}
-              />
-            </label>
-
-            <label class="applicationSettingsView__field">
               <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.maxTokens')}</span>
               <input
                 class="ics-input applicationSettingsView__modelInput"
@@ -473,30 +453,6 @@ export function OciGenAiModelSettings() {
               />
             </label>
 
-            <label class="applicationSettingsView__field applicationSettingsView__field--wide">
-              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.endpointId')}</span>
-              <input
-                class="ics-input applicationSettingsView__modelInput"
-                value={settings.select_ai_endpoint_id}
-                onInput={updateField('select_ai_endpoint_id')}
-                placeholder="ocid1.generativeaiendpoint.oc1..aaaa..."
-              />
-              <span class="applicationSettingsView__hint applicationSettingsView__hint--flush">{t('settings.model.selectAi.endpointHint')}</span>
-            </label>
-
-            <label class="applicationSettingsView__field">
-              <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.apiFormat')}</span>
-              <select
-                class="ics-input applicationSettingsView__modelInput"
-                value={settings.select_ai_oci_apiformat}
-                onChange={updateField('select_ai_oci_apiformat')}
-              >
-                <option value="GENERIC">GENERIC</option>
-                <option value="COHERE">COHERE</option>
-              </select>
-            </label>
-
-            <div class="applicationSettingsView__field" />
 
             <label class="applicationSettingsView__field applicationSettingsView__toggleField">
               <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.enforceObjectList')}</span>
