@@ -3971,6 +3971,11 @@ END;"""
                         "offset": offset,
                     }
         except Exception as e:
+            # ORA-00942: テーブルが存在しない（USER_TABLES確認後に削除されたレースコンディション含む）
+            if "ORA-00942" in str(e):
+                logger.warning("テーブルが存在しません (%s): %s", table_name_upper, e)
+                return {"success": False, "message": "テーブルが存在しません",
+                        "table_name": table_name_upper, "columns": [], "rows": [], "total": 0}
             logger.error("テーブルデータ取得エラー (%s): %s", table_name, e, exc_info=True)
             return {"success": False, "message": f"データ取得エラー: {str(e)}",
                     "table_name": table_name, "columns": [], "rows": [], "total": 0}
@@ -4044,6 +4049,9 @@ END;"""
                 }
             return {"success": False, "message": "対象レコードが見つかりません"}
         except Exception as e:
+            if "ORA-00942" in str(e):
+                logger.warning("テーブルが存在しません (%s): %s", table_name_upper, e)
+                return {"success": False, "message": "テーブルが存在しません"}
             logger.error("ROWID削除エラー (%s, %s): %s", table_name_upper, rowid, e, exc_info=True)
             return {"success": False, "message": f"削除エラー: {str(e)}"}
 
