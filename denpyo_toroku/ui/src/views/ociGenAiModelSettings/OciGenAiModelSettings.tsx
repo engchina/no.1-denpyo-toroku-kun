@@ -441,7 +441,7 @@ export function OciGenAiModelSettings() {
               <span class="applicationSettingsView__hint applicationSettingsView__hint--flush">{t('settings.model.selectAi.modelHint')}</span>
             </label>
 
-            <label class="applicationSettingsView__field">
+            <label class="applicationSettingsView__field applicationSettingsView__field--wide">
               <span class="applicationSettingsView__fieldLabel">{t('settings.model.selectAi.maxTokens')}</span>
               <input
                 class="ics-input applicationSettingsView__modelInput"
