@@ -1466,7 +1466,21 @@ END;"""
                         })
 
                     row_counts: Dict[str, int] = {}
-                    for table_name in sorted(set(header_table_names)):
+                    unique_header_tables = sorted(set(header_table_names))
+                    if unique_header_tables:
+                        bind_map = {f"tn{i}": name for i, name in enumerate(unique_header_tables)}
+                        in_clause = ", ".join([f":tn{i}" for i in range(len(unique_header_tables))])
+                        cursor.execute(
+                            f"SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME IN ({in_clause})",
+                            bind_map
+                        )
+                        existing_tables = {str(r[0]).upper() for r in cursor.fetchall()}
+                    else:
+                        existing_tables = set()
+                    for table_name in unique_header_tables:
+                        if table_name not in existing_tables:
+                            row_counts[table_name] = 0
+                            continue
                         try:
                             cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
                             count_row = cursor.fetchone()
@@ -3941,6 +3955,15 @@ END;"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
+                    # Oracleテーブル存在チェック（DROP TABLE後などに備えて）
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1",
+                        [table_name_upper]
+                    )
+                    if int(cursor.fetchone()[0] or 0) == 0:
+                        return {"success": False, "message": "テーブルが存在しません",
+                                "table_name": table_name_upper, "columns": [], "rows": [], "total": 0}
+
                     # 総件数取得
                     cursor.execute(f"SELECT COUNT(*) FROM {table_name_upper}")
                     total = cursor.fetchone()[0]
@@ -3981,11 +4004,7 @@ END;"""
         if not rowid:
             return {"success": False, "message": "row_id が指定されていません"}
 
-        allowed = self._get_allowed_table_set()
         table_name_upper = table_name.upper()
-        if table_name_upper not in allowed:
-            logger.warning("許可されていないテーブルへの削除試行: %s", table_name)
-            return {"success": False, "message": "許可されていないテーブルです"}
 
         if not self._is_safe_table_name(table_name_upper):
             return {"success": False, "message": "不正なテーブル名です"}
@@ -3993,8 +4012,17 @@ END;"""
         if not re.match(r"^[A-Za-z0-9+/=]+$", rowid):
             return {"success": False, "message": "不正な row_id 形式です"}
 
+        # get_allowed_table_names() を1回だけ呼び出し、許可チェックとリレーション取得を兼ねる
+        entries = self.get_allowed_table_names()
+        allowed = self._build_allowed_table_set_from_entries(entries)
+        allowed.update(self._TABLE_BROWSER_TARGETS)
+        if table_name_upper not in allowed:
+            logger.warning("許可されていないテーブルへの削除試行: %s", table_name)
+            return {"success": False, "message": "許可されていないテーブルです"}
+
+        relation = self._find_allowed_table_relation(table_name_upper, entries=entries)
+
         try:
-            relation = self._find_allowed_table_relation(table_name_upper)
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     detail_deleted = 0
@@ -4010,11 +4038,17 @@ END;"""
                         header_id = header_row[0]
                         line_table_name = str(relation.get("line_table_name") or "").upper()
                         if line_table_name and self._is_safe_table_name(line_table_name):
+                            # ラインテーブルが物理的に存在する場合のみ削除（ORA-00942防止）
                             cursor.execute(
-                                f"DELETE FROM {line_table_name} WHERE {_HEADER_ID_COLUMN_NAME} = :header_id",
-                                {"header_id": header_id}
+                                "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1",
+                                [line_table_name]
                             )
-                            detail_deleted = int(cursor.rowcount or 0)
+                            if int(cursor.fetchone()[0] or 0) > 0:
+                                cursor.execute(
+                                    f"DELETE FROM {line_table_name} WHERE {_HEADER_ID_COLUMN_NAME} = :header_id",
+                                    {"header_id": header_id}
+                                )
+                                detail_deleted = int(cursor.rowcount or 0)
 
                     cursor.execute(
                         f"DELETE FROM {table_name_upper} WHERE ROWID = CHARTOROWID(:rid)",
@@ -4035,9 +4069,13 @@ END;"""
             logger.error("ROWID削除エラー (%s, %s): %s", table_name_upper, rowid, e, exc_info=True)
             return {"success": False, "message": f"削除エラー: {str(e)}"}
 
-    def _find_allowed_table_relation(self, table_name: str) -> Dict[str, Any]:
+    def _find_allowed_table_relation(
+        self, table_name: str, entries: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
         table_name_upper = (table_name or "").upper()
-        for entry in self.get_allowed_table_names():
+        if entries is None:
+            entries = self.get_allowed_table_names()
+        for entry in entries:
             header_table_name = str(entry.get("header_table_name") or "").upper()
             line_table_name = str(entry.get("line_table_name") or "").upper()
             if table_name_upper == header_table_name:
