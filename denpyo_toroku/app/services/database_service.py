@@ -1425,27 +1425,33 @@ END;"""
     # ── カテゴリ管理 ─────────────────────────────────
 
     def get_categories(self) -> List[Dict[str, Any]]:
-        """全カテゴリ一覧をヘッダーテーブル件数付きで取得"""
+        """全カテゴリ一覧をDENPYO_REGISTRATIONS件数付きで取得"""
         if not self._ensure_management_tables():
             return []
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
+                    # カテゴリ一覧とDENPYO_REGISTRATIONS件数を1クエリで結合取得
+                    # registration_count は delete_category の削除可否チェックと一致させるため
+                    # DENPYO_REGISTRATIONS を参照する（Oracle テーブル行数ではない）
                     cursor.execute(
                         """SELECT c.ID, c.CATEGORY_NAME, c.CATEGORY_NAME_EN,
                                   c.HEADER_TABLE_NAME, c.LINE_TABLE_NAME,
                                   c.DESCRIPTION, c.SELECT_AI_PROFILE_NAME, c.SELECT_AI_TEAM_NAME,
                                   c.SELECT_AI_READY, c.SELECT_AI_SYNCED_AT, c.SELECT_AI_CONFIG_HASH,
-                                  c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT
+                                  c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT,
+                                  COUNT(r.ID) AS REGISTRATION_COUNT
                         FROM DENPYO_CATEGORIES c
+                        LEFT JOIN DENPYO_REGISTRATIONS r ON r.CATEGORY_ID = c.ID
+                        GROUP BY c.ID, c.CATEGORY_NAME, c.CATEGORY_NAME_EN,
+                                 c.HEADER_TABLE_NAME, c.LINE_TABLE_NAME,
+                                 c.DESCRIPTION, c.SELECT_AI_PROFILE_NAME, c.SELECT_AI_TEAM_NAME,
+                                 c.SELECT_AI_READY, c.SELECT_AI_SYNCED_AT, c.SELECT_AI_CONFIG_HASH,
+                                 c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT
                         ORDER BY c.CREATED_AT DESC"""
                     )
                     categories = []
-                    header_table_names: List[str] = []
                     for row in cursor.fetchall():
-                        header_table_name = (row[3] or "").upper()
-                        if self._is_safe_table_name(header_table_name):
-                            header_table_names.append(header_table_name)
                         categories.append({
                             "id": row[0],
                             "category_name": row[1],
@@ -1462,36 +1468,8 @@ END;"""
                             "is_active": bool(row[12]),
                             "created_at": str(row[13]) if row[13] else "",
                             "updated_at": str(row[14]) if row[14] else "",
-                            "registration_count": 0,
+                            "registration_count": int(row[15] or 0),
                         })
-
-                    row_counts: Dict[str, int] = {}
-                    unique_header_tables = sorted(set(header_table_names))
-                    if unique_header_tables:
-                        bind_map = {f"tn{i}": name for i, name in enumerate(unique_header_tables)}
-                        in_clause = ", ".join([f":tn{i}" for i in range(len(unique_header_tables))])
-                        cursor.execute(
-                            f"SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME IN ({in_clause})",
-                            bind_map
-                        )
-                        existing_tables = {str(r[0]).upper() for r in cursor.fetchall()}
-                    else:
-                        existing_tables = set()
-                    for table_name in unique_header_tables:
-                        if table_name not in existing_tables:
-                            row_counts[table_name] = 0
-                            continue
-                        try:
-                            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                            count_row = cursor.fetchone()
-                            row_counts[table_name] = int(count_row[0]) if count_row and count_row[0] is not None else 0
-                        except Exception as count_error:
-                            logger.warning("カテゴリ件数取得スキップ (%s): %s", table_name, count_error)
-                            row_counts[table_name] = 0
-
-                    for category in categories:
-                        header_table_name = str(category.get("header_table_name") or "").upper()
-                        category["registration_count"] = row_counts.get(header_table_name, 0)
                     return categories
         except Exception as e:
             logger.error("カテゴリ一覧取得エラー: %s", e, exc_info=True)
