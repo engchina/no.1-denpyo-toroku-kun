@@ -319,3 +319,28 @@ def test_delete_category_returns_success_for_missing_physical_table_inconsistenc
     assert response.status_code == 200
     assert response.get_json()["data"]["success"] is True
     assert response.get_json()["data"]["message"] == "カテゴリを削除しました"
+
+
+def test_delete_category_returns_success_when_category_is_already_missing(monkeypatch):
+    client = _create_client()
+
+    class StubDatabaseService:
+        def delete_category(self, category_id):
+            return {
+                "success": True,
+                "message": "カテゴリは既に削除されています",
+                "category_name": "",
+                "dropped_tables": [],
+                "already_missing": True,
+            }
+
+    monkeypatch.setattr(api_bp, "DatabaseService", StubDatabaseService)
+
+    response = client.delete("/api/v1/categories/1")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"] == {
+        "success": True,
+        "message": "カテゴリは既に削除されています",
+        "already_missing": True,
+    }

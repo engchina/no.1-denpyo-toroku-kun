@@ -1246,3 +1246,53 @@ def test_delete_category_succeeds_when_physical_table_is_missing(monkeypatch, ca
         and "カテゴリ削除時にテーブルが既に存在しません" in record.message
         for record in caplog.records
     )
+
+
+def test_delete_category_succeeds_when_category_row_is_already_missing(monkeypatch):
+    service = DatabaseService()
+    commit_calls = []
+
+    class FakeCursor:
+        def __init__(self):
+            self.rowcount = 0
+            self._fetchone_result = None
+
+        def execute(self, sql, params=None):
+            normalized_sql = " ".join(sql.split())
+            if normalized_sql == "SELECT CATEGORY_NAME, HEADER_TABLE_NAME, LINE_TABLE_NAME FROM DENPYO_CATEGORIES WHERE ID = :1":
+                self._fetchone_result = None
+                return
+            raise AssertionError(f"unexpected sql: {normalized_sql}")
+
+        def fetchone(self):
+            return self._fetchone_result
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            commit_calls.append(True)
+
+    @contextmanager
+    def fake_get_connection():
+        yield FakeConnection()
+
+    monkeypatch.setattr(service, "get_connection", fake_get_connection)
+
+    result = service.delete_category(1)
+
+    assert result == {
+        "success": True,
+        "message": "カテゴリは既に削除されています",
+        "category_name": "",
+        "dropped_tables": [],
+        "already_missing": True,
+    }
+    assert commit_calls == []

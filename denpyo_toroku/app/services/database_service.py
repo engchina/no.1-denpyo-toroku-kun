@@ -1799,7 +1799,13 @@ END;"""
                     )
                     category_row = cursor.fetchone()
                     if not category_row:
-                        return {"success": False, "message": "カテゴリが見つかりません"}
+                        return {
+                            "success": True,
+                            "message": "カテゴリは既に削除されています",
+                            "category_name": "",
+                            "dropped_tables": [],
+                            "already_missing": True,
+                        }
 
                     category_name = category_row[0] or ""
                     header_table_name = str(category_row[1] or "").strip().upper()
@@ -1868,7 +1874,13 @@ END;"""
                     "category_name": category_name,
                     "dropped_tables": dropped_tables,
                 }
-            return {"success": False, "message": "カテゴリが見つかりません"}
+            return {
+                "success": True,
+                "message": "カテゴリは既に削除されています",
+                "category_name": category_name if "category_name" in locals() else "",
+                "dropped_tables": dropped_tables if "dropped_tables" in locals() else [],
+                "already_missing": True,
+            }
         except Exception as e:
             logger.error("カテゴリ削除エラー (id=%s): %s", category_id, e, exc_info=True)
             return {"success": False, "message": str(e)}

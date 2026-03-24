@@ -5096,17 +5096,16 @@ def delete_category(category_id: int):
     try:
         db_service = DatabaseService()
 
-        existing = db_service.get_category_by_id(category_id)
-        if not existing:
-            g.response.add_error_message("カテゴリが見つかりません")
-            return jsonify(g.response.get_result()), 404
-
         result = db_service.delete_category(category_id)
         if not result["success"]:
             g.response.add_error_message(result["message"])
             return jsonify(g.response.get_result()), 400
 
-        g.response.set_data({"success": True, "message": result["message"]})
+        g.response.set_data({
+            "success": True,
+            "message": result["message"],
+            "already_missing": bool(result.get("already_missing")),
+        })
         return jsonify(g.response.get_result())
     except Exception as e:
         logging.error("カテゴリ削除エラー (id=%s): %s", category_id, e, exc_info=True)
