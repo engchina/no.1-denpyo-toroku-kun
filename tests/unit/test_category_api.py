@@ -290,3 +290,32 @@ def test_create_category_select_ai_profile_returns_404_for_missing_category(monk
 
     assert response.status_code == 404
     assert response.get_json()["errorMessages"][0] == "カテゴリが見つかりません"
+
+
+def test_delete_category_returns_success_for_missing_physical_table_inconsistency(monkeypatch):
+    client = _create_client()
+
+    class StubDatabaseService:
+        def get_category_by_id(self, category_id):
+            return {
+                "id": category_id,
+                "category_name": "歯科検診問診票",
+                "header_table_name": "DENTAL_CHECKUP_QUESTIONNAIRE_H",
+                "line_table_name": "",
+            }
+
+        def delete_category(self, category_id):
+            return {
+                "success": True,
+                "message": "カテゴリを削除しました",
+                "category_name": "歯科検診問診票",
+                "dropped_tables": [],
+            }
+
+    monkeypatch.setattr(api_bp, "DatabaseService", StubDatabaseService)
+
+    response = client.delete("/api/v1/categories/1")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"]["success"] is True
+    assert response.get_json()["data"]["message"] == "カテゴリを削除しました"

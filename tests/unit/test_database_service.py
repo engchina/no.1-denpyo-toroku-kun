@@ -1180,3 +1180,69 @@ def test_get_connection_recreates_pool_once_when_shared_pool_was_closed(monkeypa
         assert len(created_pools[1].released) == 1
     finally:
         DatabaseService.close_shared_pool()
+
+
+def test_delete_category_succeeds_when_physical_table_is_missing(monkeypatch, caplog):
+    service = DatabaseService()
+    executed = []
+    commit_calls = []
+
+    class FakeCursor:
+        def __init__(self):
+            self.rowcount = 0
+            self._fetchone_result = None
+
+        def execute(self, sql, params=None):
+            normalized_sql = " ".join(sql.split())
+            executed.append((normalized_sql, params))
+            if normalized_sql == "SELECT CATEGORY_NAME, HEADER_TABLE_NAME, LINE_TABLE_NAME FROM DENPYO_CATEGORIES WHERE ID = :1":
+                self._fetchone_result = ("歯科検診問診票", "DENTAL_CHECKUP_QUESTIONNAIRE_H", "")
+                return
+            if normalized_sql == "SELECT COUNT(*) FROM DENPYO_REGISTRATIONS WHERE CATEGORY_ID = :1":
+                self._fetchone_result = (0,)
+                return
+            if normalized_sql == "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1":
+                self._fetchone_result = (0,)
+                return
+            if normalized_sql == "DELETE FROM DENPYO_CATEGORIES WHERE ID = :1":
+                self.rowcount = 1
+                return
+            raise AssertionError(f"unexpected sql: {normalized_sql}")
+
+        def fetchone(self):
+            return self._fetchone_result
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            commit_calls.append(True)
+
+    @contextmanager
+    def fake_get_connection():
+        yield FakeConnection()
+
+    monkeypatch.setattr(service, "get_connection", fake_get_connection)
+
+    with caplog.at_level(logging.WARNING, logger=database_service_module.logger.name):
+        result = service.delete_category(1)
+
+    assert result == {
+        "success": True,
+        "message": "カテゴリを削除しました",
+        "category_name": "歯科検診問診票",
+        "dropped_tables": [],
+    }
+    assert commit_calls == [True]
+    assert any(
+        record.levelno == logging.WARNING
+        and "カテゴリ削除時にテーブルが既に存在しません" in record.message
+        for record in caplog.records
+    )

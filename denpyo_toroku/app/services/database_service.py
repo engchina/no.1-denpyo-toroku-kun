@@ -1794,6 +1794,18 @@ END;"""
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
+                        "SELECT CATEGORY_NAME, HEADER_TABLE_NAME, LINE_TABLE_NAME FROM DENPYO_CATEGORIES WHERE ID = :1",
+                        [category_id],
+                    )
+                    category_row = cursor.fetchone()
+                    if not category_row:
+                        return {"success": False, "message": "カテゴリが見つかりません"}
+
+                    category_name = category_row[0] or ""
+                    header_table_name = str(category_row[1] or "").strip().upper()
+                    line_table_name = str(category_row[2] or "").strip().upper()
+
+                    cursor.execute(
                         "SELECT COUNT(*) FROM DENPYO_REGISTRATIONS WHERE CATEGORY_ID = :1",
                         [category_id]
                     )
@@ -1804,6 +1816,44 @@ END;"""
                             "message": f"登録済みデータが {reg_count} 件あるため削除できません"
                         }
 
+                    dropped_tables: List[str] = []
+                    for table_name in [line_table_name, header_table_name]:
+                        if not table_name:
+                            continue
+                        if not self._is_safe_table_name(table_name):
+                            logger.warning(
+                                "カテゴリ削除時に不正なテーブル名をスキップします (category_id=%s, table=%s)",
+                                category_id,
+                                table_name,
+                            )
+                            continue
+
+                        try:
+                            cursor.execute(
+                                "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1",
+                                [table_name],
+                            )
+                            if int(cursor.fetchone()[0] or 0) == 0:
+                                logger.warning(
+                                    "カテゴリ削除時にテーブルが既に存在しません (category_id=%s, table=%s)",
+                                    category_id,
+                                    table_name,
+                                )
+                                continue
+
+                            cursor.execute(f"DROP TABLE {table_name} PURGE")
+                            dropped_tables.append(table_name)
+                        except Exception as table_error:
+                            if self._is_missing_table_error(table_error):
+                                logger.warning(
+                                    "カテゴリ削除時にテーブルが既に存在しません (category_id=%s, table=%s): %s",
+                                    category_id,
+                                    table_name,
+                                    table_error,
+                                )
+                                continue
+                            raise
+
                     cursor.execute(
                         "DELETE FROM DENPYO_CATEGORIES WHERE ID = :1",
                         [category_id]
@@ -1812,7 +1862,12 @@ END;"""
                 conn.commit()
 
             if deleted > 0:
-                return {"success": True, "message": "カテゴリを削除しました"}
+                return {
+                    "success": True,
+                    "message": "カテゴリを削除しました",
+                    "category_name": category_name,
+                    "dropped_tables": dropped_tables,
+                }
             return {"success": False, "message": "カテゴリが見つかりません"}
         except Exception as e:
             logger.error("カテゴリ削除エラー (id=%s): %s", category_id, e, exc_info=True)
