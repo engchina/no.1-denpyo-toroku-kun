@@ -199,125 +199,37 @@ visual shape more closely matches the actual ink strokes in the image.
 
 ## Rule 1: Tables and Grid-Based Forms
 
-### Step A — Column structure (analyze BEFORE transcribing any row)
-0. Identify the row-label area FIRST: determine how many leftmost columns serve \
-exclusively as row-label columns (they contain categorical labels that organize \
-the rows, NOT measured or recorded values). Call this count M (M = 0 when all \
-columns are data columns, M ≥ 1 when row labels occupy one or more columns). \
-CRITICAL — a cell that spans the intersection of the row-label area and the \
-column-header rows (the top-left corner cell) is a descriptor for the row axis \
-only; do NOT treat it as a data column header.
-1. Count how many header rows are stacked at the top of the DATA-column area — \
-the columns to the right of the M row-label columns (there may be multiple layers).
-2. Determine the total number of LEAF DATA columns — the finest-grained columns \
-to the right of the row-label area that actually hold data values.
-3. Build a fully-qualified name for each leaf data column by concatenating the \
-texts of all ancestor header cells from outermost (top) to innermost (bottom), \
-joined with a single space. A header cell that visually spans N leaf columns \
-contributes its text as a prefix to all N leaf-column names beneath it. If a \
-header cell is visually empty (blank or contains only whitespace), skip it — do \
-not insert a space segment for it; use only the non-empty ancestor and leaf texts.
-4. Fix M, the leaf-data-column count, and all fully-qualified column names for \
-the entire table. These values must not change for any data row.
-5. Body-embedded column-group labels: Some tables embed a column-group label as a \
-VERTICALLY MERGED cell within the data body rather than in the column-header rows \
-at the top. Identify these cells BEFORE transcribing any row by the following \
-criteria — ALL must hold: \
-(a) the cell spans two or more data rows (rowspan ≥ 2); \
-(b) the cell is NOT within the M leftmost row-label columns; \
-(c) the cell does NOT appear in the column-header rows at the top; \
-(d) the cell contains descriptive text (a category name, measurement-dimension \
-label, or unit group name) rather than a numeric or structured data value. \
-When this pattern is detected: treat the cell's text as an additional column-group \
-prefix for every leaf data column that falls within the same visual column region \
-(the span covered by that merged cell horizontally); prepend this prefix — \
-separated by a single space — to the fully-qualified name of each affected leaf \
-column, exactly as if it had appeared as a spanning header in the column-header \
-rows. Do NOT emit the cell's text as a data value in any row. If multiple such \
-body-embedded labels exist in the same table, process each one independently and \
-apply its prefix only to the columns within its horizontal span.
+Output every table as a single GitHub-Flavored Markdown table. One physical table in the document = exactly one Markdown table in the output.
 
-### Step B — Row label hierarchy (analyze BEFORE transcribing any row)
-1. Row labels occupy the M leftmost columns identified in Step A-0. They may \
-span two or more levels of nesting across those columns (outermost level in the \
-leftmost column, innermost level in the M-th column).
-2. A cell in the row-label area that visually spans multiple rows (merged cell, \
-bold/indented section title, or a cell with no corresponding data value in that \
-row) is a group-header. Propagate its exact text to every data row it covers.
-3. Build the fully-qualified row label for each data row by concatenating ALL \
-ancestor group-header texts and the row's own label, separated by a single space, \
-from outermost to innermost. Use the EXACT text as printed — do NOT rephrase, \
-abbreviate, or reorder any segment. Always preserve the outermost group label \
-even when the column axis also carries a group label of its own — the full row \
-path must be retained verbatim so that downstream tools can look up values by \
-matching on a trailing segment of the row label.
-4. CRITICAL — pre-enumerate all rows: before writing any output, scan the entire \
-table and list every data row with its fully-qualified row label. This prevents \
-row labels from shifting or being lost mid-table.
+### Column Analysis
+1. **Row-label columns (M):** Count how many leftmost columns serve as row labels (categorical identifiers, not data values). A corner cell at the intersection of row-label columns and header rows describes the row axis only — it is NOT a data column header.
+2. **Header layers:** Identify all header rows stacked above the data columns (right of the M row-label columns). There may be multiple layers of grouped/spanning headers.
+3. **Leaf data columns:** Determine the total number of finest-grained data columns.
+4. **Fully-qualified column names:** For each leaf column, concatenate all ancestor header texts top-to-bottom, joined by a space. Skip empty/blank ancestor cells. Example: if a spanning header "売上" covers two sub-headers "数量" and "金額", the leaf names are "売上 数量" and "売上 金額".
+5. **Body-embedded group labels:** If a vertically merged cell in the data body contains a category/group label (not a data value), prepend its text as an additional prefix to all leaf columns within its horizontal span.
 
-### Step C — Output
-- Render every table using GitHub-Flavored Markdown table syntax.
-- The Markdown header row must use the fully-qualified column names from Step A.
-- If the table has row labels (M ≥ 1 from Step A-0): the first (leftmost) \
-Markdown column must contain the fully-qualified row label. Use the corner cell \
-text (Step A-0) as that column's header; if the corner cell is empty or contains \
-only whitespace, use a generic descriptor (e.g., "項目"). For tables with NO \
-row-label columns (M = 0), the first column is simply the first data column.
-- Each LOGICAL data row occupies exactly ONE Markdown table row.
-- CRITICAL — column integrity: every row must have exactly (1 + leaf-data-column-count) \
-cells when M ≥ 1, or exactly leaf-data-column-count cells when M = 0 — as fixed \
-in Step A. Never merge values from adjacent columns into one cell, and never \
-shift a value left or right into a wrong column.
-- Merged data cells (colspan): repeat the cell's value in each column it spans.
-- Merged data cells (rowspan): repeat the cell's value in each row it spans.
-- CRITICAL — cross-indexed tables (M ≥ 1 AND the column headers have two or more \
-levels of hierarchy, i.e., any column's fully-qualified name contains a space from \
-ancestor concatenation) MUST be output as ONE complete, standalone Markdown table \
-with the following requirements: \
-(1) Output ALL data rows identified in Step B and ALL leaf data columns identified \
-in Step A — no row and no column may be omitted or combined. \
-(2) Every (row, column) cell must appear. If a physical cell is blank or empty, \
-output an empty string "" for that cell — do NOT skip the cell or collapse \
-adjacent cells. \
-(3) Do NOT split the table into multiple sub-tables grouped by row-group section \
-or column group. One physical table in the document → exactly one Markdown table \
-in the output, regardless of how many row-group levels or column-group levels exist. \
-(4) Do NOT insert any text, commentary, or heading BETWEEN the rows of the table. \
-(5) Precede the Markdown table with a Markdown section heading (## descriptive title) \
-derived from the document context (section title, form label, or the dominant \
-measurement-category name visible near the table); if no clear title exists, \
-compose a brief descriptor from the row-group label and column-group labels \
-separated by " / ".
-- To locate column boundaries when grid lines are faint or absent, align each \
-value with its fully-qualified header. If a cell appears to contain text belonging \
-to the next column, split at the header-alignment boundary.
-- If a cell's content wraps across multiple visual lines within the same cell \
-boundary, join them with a single space.
-- If a single cell contains multiple sub-values separated by "/" or a line break \
-that are NOT divided by separate grid columns, preserve them as-is in one cell value.
-- Always include a header row; if no headers are printed, infer short descriptive \
-names (Column1, Column2, …).
+### Row Analysis
+1. Row labels occupy the M leftmost columns and may have nested levels (outermost = leftmost).
+2. **Merged/group-header cells** that span multiple rows: propagate their text to every data row they cover.
+3. **Fully-qualified row labels:** Concatenate all ancestor group labels + the row's own label, outermost to innermost, separated by spaces. Preserve exact printed text — do not rephrase or reorder.
+4. Before writing output, enumerate all data rows with their fully-qualified row labels to prevent omissions.
 
-### Step D — Form-style tables (alternating label / value columns)
-Japanese inspection and specification forms (検査表, 仕様書, etc.) often use a \
-grid where each row intermixes label cells and value cells horizontally. The \
-pattern looks like: "| CategoryA | SubLabel1 | Primary | (value) | SubLabel2 | \
-(value) | SubLabel3 | (value) |", where CategoryA and each SubLabel are labels \
-and the parenthesized cells are their corresponding values. \
-In this pattern there is no dedicated header row; the "header" information is \
-encoded inside the leftmost cells and the alternating sub-label cells.
-Detect this pattern when: (a) most rows contain cells that serve as category or \
-sub-category labels followed immediately by value cells, and (b) there is no \
-distinct top-level header row whose cells span the full column set. \
-For such tables, DO NOT use generic column names (e.g., "Section", "Specification", \
-"Value", "Column1"). Instead, reconstruct fully-qualified column names by \
-concatenating ALL ancestor label cells that precede each value cell in reading \
-order (left to right within the row, top to bottom across rows), joined with a \
-single space. If a row spans multiple visual rows for the same logical record, \
-propagate ancestor labels across those rows. Emit the result as a Markdown table \
-whose header row uses those fully-qualified names and whose single data row \
-contains the corresponding values. Apply this same logic within each section \
-block when a document has multiple such sections.
+### Output Format
+- Use GitHub-Flavored Markdown table syntax with a header row of fully-qualified column names.
+- When M ≥ 1: the first column contains fully-qualified row labels. Use the corner cell text as its header (or "項目" if the corner is blank).
+- Each logical data row = exactly one Markdown row.
+- **Column count is fixed:** every row must have the same number of cells (row-label column + all leaf data columns).
+- **Merged cells:** repeat the value in every row/column the cell spans.
+- **Empty cells:** output as empty string — never skip or collapse them.
+- **Multi-line cell content:** join with a single space.
+- **Sub-values** separated by "/" or line breaks within a single cell: preserve as-is.
+- Precede the table with a `##` heading derived from document context (section title, form label, or a brief descriptor).
+- Always include a header row; if none is printed, infer short descriptive names (Column1, Column2, …).
+
+### Form-Style Tables (Alternating Label/Value Grids)
+Japanese inspection and specification forms (検査表, 仕様書, etc.) often use grids where label cells and value cells alternate horizontally within each row, with no dedicated header row. Example pattern: `| カテゴリ | 項目1 | (値) | 項目2 | (値) |`
+
+When this pattern is detected: reconstruct fully-qualified column names by concatenating all ancestor label cells that precede each value cell (left-to-right, top-to-bottom), joined by a space. Emit as a Markdown table whose header uses these names and whose data row(s) contain the corresponding values. Do NOT use generic column names like "Section", "Value", "Column1".
 
 ## Rule 2: Key-Value / Label-Value Fields
 Applies ONLY to standalone label-value fields that are NOT part of a formal table or grid structure (Rule 1 takes precedence inside tables).
