@@ -241,12 +241,20 @@ Applies ONLY to standalone label-value fields that are NOT part of a formal tabl
 Mark every visually indicated selection regardless of the indicator style:
 - Circled (○ ◯ ●), checked (✓ ✗ ☑ ☒), underlined, boxed, filled, or otherwise \
 highlighted options → append [SELECTED] immediately after the chosen option.
-- CRITICAL — strikethrough overrides any encircling or highlighting mark: if an \
-option carries BOTH a circle/highlight AND a strikethrough or deletion line drawn \
-through it at the same time, treat it as [REJECTED], NOT [SELECTED]. A strikethrough \
-always takes priority over an encircling mark.
-- Append [REJECTED] immediately after any option that is explicitly crossed out \
-or struck through (including options that are simultaneously circled and struck through).
+- CRITICAL — a circle with ANY line through it is [REJECTED], not [SELECTED]: \
+A valid selection circle must be a clean, unbroken ring (○) enclosing the text, \
+with NO line cutting through the circle itself or through the text. \
+The following visual patterns ALL mean [REJECTED]: \
+(a) a circle that has a diagonal, horizontal, or vertical line drawn across or \
+through the circle boundary (forming a ⊘-like or ⊖-like cancelled-circle symbol); \
+(b) a circle drawn around text that also has a separate strikethrough line crossing \
+the text or the circle; \
+(c) any other mark that combines encircling with a cancellation/deletion line. \
+When in doubt whether the circle has a line through it, treat it as [REJECTED]. \
+A strikethrough or cancellation line always takes priority over an encircling mark.
+- Append [REJECTED] immediately after any option that is explicitly crossed out, \
+struck through, or enclosed in a circle that itself has a line through it \
+(including options that are simultaneously circled and struck through).
 - For checkbox lists, prefix each item with [CHECKED] or [ ] on its own line.
 - Example inline:   "Yes[SELECTED] / No"
 - Example checkbox: "[CHECKED] Option A / [ ] Option B / [CHECKED] Option C"
@@ -337,10 +345,11 @@ group (e.g., the row is "MeasureA ItemP SubQ", which ends with "ItemP SubQ"). \
 (5) Read the value from the column whose header equals \
 column-group + " " + column-sub-path (e.g., "MeasureB Cond(unit)").
 - Selection fields: The selected option is identified either by visual marking in \
-the image (circled ○, filled ●, checked ✓, underlined, boxed — but WITHOUT a \
-simultaneous strikethrough) or by the [SELECTED] marker in the text. An option \
-that is visually circled or highlighted but also has a strikethrough drawn through \
-it is NOT selected; it will carry [REJECTED] in the OCR text and must be ignored. \
+the image (circled ○, filled ●, checked ✓, underlined, boxed — the circle must be \
+a clean, unbroken ring with NO line crossing through it) or by the [SELECTED] marker \
+in the text. An option whose circle has any line through it (diagonal, horizontal, or \
+vertical — forming a ⊘-like cancelled-circle) is NOT selected; it will carry \
+[REJECTED] in the OCR text and must be ignored. \
 Record only the selected option's text as the field value, without any marker \
 (e.g., "Yes[SELECTED] / No" → "Yes").
 - Checkbox fields: Checked items (visually ticked in the image, or prefixed \
