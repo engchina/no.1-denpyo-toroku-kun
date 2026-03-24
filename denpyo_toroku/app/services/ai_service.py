@@ -384,7 +384,7 @@ NUMBER(1)."""
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PROMPT_EXTRACT_TEXT_VALUE_RULES_DEFAULT: str = """\
-1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する。通常、ラベルは文書に記載された原文テキストをそのまま使用しており、意味解釈や言い換えを行っていない。ただし、手書きメモ・スタンプ・署名・バーコードなど特殊OCRマーカーから生成されたカラムは例外で、ラベルには位置説明的な名称（例: 手書き1、承認スタンプ）が付けられており、文書の原文に直接対応しない。これらのカラムの値は後掲の「構造化データ読み取りルール」に記載の特殊OCRタグルール（`<HANDWRITTEN: text>` → 内側テキストを使用、`<STAMP: text>` → 内側テキストを使用、`<SIGNATURE>` → "1" を使用、など）に従って抽出すること。ラベル文字列でのOCR検索は行わない。階層的な行ラベルの場合は全ての祖先ラベルと末端ラベルを外側から内側の順にスペースで連結した形（例: "祖父 親 子"）で表現されているため、その連結表記のまま（どの階層も分割・再解釈せずに）対応する値を検索すること。ただし「計測次元優先形式」の論理名（列グループ名が先頭にあり、行サブラベル、列サブパスが続く形式）については、後掲の「Cell lookup」および「Measurement-dimension precedence」ルールを優先的に適用し、行ラベルのサフィックス一致で行を特定してから列ヘッダーで値を読み取ること
+1. 各カラムの日本語ラベル（-- 以降）に対応する項目をテキスト内で探し、値を転記する。ラベルは文書に記載された原文テキスト（キー）をそのまま使用しており、意味解釈や言い換えを行っていない。値が `<HANDWRITTEN: text>` / `<STAMP: text>` / `<BARCODE: value>` などの特殊OCRタグで表現されている場合は、ラベル検索でフィールドの位置を特定した後、後掲の「構造化データ読み取りルール」に従ってタグの内側テキストを値として抽出すること（タグ文字列ごと値にしない）。ただし、ラベルが OCR テキスト内に存在しない場合（「手書き1」「スタンプ1」のような位置説明的な名称の場合）は、ラベル文字列での検索を試みず、文書内の対応する特殊OCRタグを出現順・位置から特定して内側テキストを抽出すること。階層的な行ラベルの場合は全ての祖先ラベルと末端ラベルを外側から内側の順にスペースで連結した形（例: "祖父 親 子"）で表現されているため、その連結表記のまま（どの階層も分割・再解釈せずに）対応する値を検索すること。ただし「計測次元優先形式」の論理名（列グループ名が先頭にあり、行サブラベル、列サブパスが続く形式）については、後掲の「Cell lookup」および「Measurement-dimension precedence」ルールを優先的に適用し、行ラベルのサフィックス一致で行を特定してから列ヘッダーで値を読み取ること
 2. 数値（金額・数量・単価）: 桁区切りカンマ・通貨記号を除去した数字文字列（例: "¥1,234,567" → "1234567"）
 3. 日付: 元号名（令和・平成・昭和・大正・明治）が文書上に明示されている場合のみ ISO 8601形式 YYYY-MM-DD に変換する（例: "令和6年1月15日" → "2024-01-15"、"平成27年11月5日" → "2015-11-05"）。元号名が記載されておらず数字のみの年（例: "27年11月5日"）は西暦を推測・変換せず、OCRテキストをそのまま転記する（例: "27年11月5日" → "27年11月5日"）。
 4. テキスト: OCRテキストの文字をそのまま転記。
@@ -400,8 +400,9 @@ _PROMPT_GENERATE_SQL_REQUIREMENTS_DEFAULT: str = """\
 ### 2. Naming Conventions
 - **Table name**: Romanized Katakana in UPPERCASE alphabet (e.g., RYOUSHUUSHO for 領収書, SEIKYUUSHO for 請求書, NOUHINNSHO for 納品書).
 - **Physical column names**: Romanized Katakana in UPPERCASE alphabet with underscores (e.g., HAKKOOBI for 発行日, GOUKEI_KINGAKU for 合計金額, ATESAKI_MEI for 宛先名).
-- **Logical column names**: Japanese (Kanji) via comment. CRITICAL — always derive the logical name from the **exact label text as it appears in the document**. For hierarchical tables where ancestor group-headers (two or more levels) apply to sub-rows, form the logical name by concatenating ALL ancestor labels and the leaf label with single spaces, in order from outermost to innermost, exactly as written in the document (e.g., grandparent label + " " + parent label + " " + leaf label). Never reinterpret, paraphrase, restructure, or infer new terminology that does not appear in the document.
-- **Strict verbatim rule for logical names**: The logical name MUST be an exact copy of the document label — do NOT append, prepend, or insert any qualifier or descriptor of any kind (e.g., do NOT add 印, 欄, コード, フラグ, 番号, or any similar suffix/prefix). The physical column name and Oracle data type already communicate the field's role; the logical name exists so that the value-extraction step can locate the correct label in the OCR output by exact string matching. Any deviation from the verbatim label will cause extraction to fail. **Exception**: columns derived from unlabeled data (Step 4-C) or special OCR markers such as `<HANDWRITTEN:…>`, `<STAMP:…>`, `<SIGNATURE>`, `<BARCODE:…>`, `<ILLEGIBLE>`, `<REDACTED>` (Step 4-D) have no verbatim document label; for these, use a descriptive Japanese label as specified in those steps. Value extraction for these columns relies on OCR tag matching or positional context, not label string matching.
+- **Logical column names**: Japanese (Kanji) via comment. CRITICAL — for every field that has a document label, always derive the logical name from the **exact label text as it appears in the document**. For hierarchical tables where ancestor group-headers (two or more levels) apply to sub-rows, form the logical name by concatenating ALL ancestor labels and the leaf label with single spaces, in order from outermost to innermost, exactly as written in the document (e.g., grandparent label + " " + parent label + " " + leaf label). Never reinterpret, paraphrase, restructure, or infer new terminology for labeled fields. For fields with no document label, apply Step 4-C or Step 4-D as appropriate.
+- **comment = field label, never field value**: The comment is always the label or name that identifies what the field represents — it must NEVER be the actual data value stored in that field. A field label describes the field's role or type (e.g., `会社名`, `発行日`, `合計金額`); a field value is the concrete data recorded in the document. This distinction is absolute and applies to every column without exception.
+- **Strict verbatim rule for logical names**: The logical name MUST be an exact copy of the document label — do NOT append, prepend, or insert any qualifier or descriptor of any kind (e.g., do NOT add 印, 欄, コード, フラグ, 番号, or any similar suffix/prefix). The physical column name and Oracle data type already communicate the field's role; the logical name exists so that the value-extraction step can locate the correct label in the OCR output by exact string matching. Any deviation from the verbatim label will cause extraction to fail. **Exception**: for fields with no document label — unlabeled data (Step 4-C) or special OCR markers where no surrounding label exists (Step 4-D) — a descriptive or positional Japanese label is used instead; value extraction for these relies on OCR tag matching or positional context rather than label string matching. Special OCR marker columns that DO have a surrounding document label follow the verbatim rule like any other labeled field.
 - **Physical column names for hierarchical or parenthesized labels**: When deriving the romanized physical name from a concatenated hierarchical logical name, apply the following in order: (1) remove all parentheses and the text enclosed within them from the label before romanizing; (2) romanize the remaining words and join them with underscores; (3) if the resulting name would exceed 30 characters, abbreviate each component to its most meaningful prefix while keeping the name uniquely identifiable. The romanization itself must still follow Hepburn rules.
 - Use consistent Hepburn romanization rules (e.g., しょ→SHO, きゅう→KYUU, おう→OU).
 
@@ -435,10 +436,14 @@ Completeness is mandatory.
 
 **Step 4-C: Best-effort naming for unlabeled or ambiguous content**
 When a value appears without a clear document label (e.g., a standalone number, a value in \
-an unlabeled cell, content inside a special marker), infer a descriptive name from its \
+an unlabeled cell), infer a descriptive name from its \
 position, surrounding context, or document section title. Never silently drop unlabeled data. \
 If no better descriptor exists, use a positional name (e.g., 備考欄1, 未ラベル値_第2行) — \
-but always include the column.
+but always include the column. \
+CRITICAL — the inferred name must describe the field's role or type (what kind of data \
+the field holds), NOT copy or echo the actual data value found in that cell. Derive \
+the name solely from surrounding context, section headings, adjacent labels, or positional \
+description — never from the cell's data content.
 
 **Step 4-D: Special OCR markers — each occurrence MUST have a dedicated column**
 - `<STAMP: text>` : one VARCHAR2(200) column per stamp location; name by surrounding label or position.
@@ -447,13 +452,17 @@ but always include the column.
 - `<BARCODE: value>` : one VARCHAR2(200) column per barcode.
 - `<ILLEGIBLE>` / `<REDACTED>` : one column per occurrence (records that the field existed, \
   even though its value is unreadable; use VARCHAR2(200)).
-- **CRITICAL — comment (logical name) for special marker columns**: The `comment` field for \
-  columns derived from special OCR markers (`<HANDWRITTEN:…>`, `<STAMP:…>`, `<SIGNATURE>`, \
-  `<BARCODE:…>`, `<ILLEGIBLE>`, `<REDACTED>`) MUST be a descriptive Japanese label inferred \
-  from the surrounding document context (e.g., a nearby field label, section heading, or \
-  positional description). NEVER use the raw OCR tag string (e.g., `<HANDWRITTEN: 1/5>`) as \
-  the comment. Good examples: `手書きメモ1`, `承認スタンプ`, `担当者サイン`, `バーコード`. \
-  If no context is available, use a positional label such as `手書き1`, `手書き2`, `スタンプ1`.
+- **CRITICAL — comment (logical name) for special marker columns**: Special OCR marker tags \
+  such as `<HANDWRITTEN: text>`, `<STAMP: text>`, `<BARCODE: value>` represent the **value** \
+  of a field — the text inside the tag is the data value, NOT a field label. The `comment` \
+  field must ALWAYS be the document's **key (field label)** associated with that area, never \
+  the value data inside the tag. Rule: look at the surrounding document context for the label \
+  or key that names this field (e.g., a nearby cell label, row header, or section title). \
+  Use that label verbatim as the comment — exactly as the verbatim rule requires for all \
+  labeled fields. Example: if the OCR shows `指定納期: <HANDWRITTEN: 11月16日>`, the key is \
+  `指定納期` and the comment MUST be `指定納期` — not `<HANDWRITTEN: 11月16日>` and not `11月16日`. \
+  Only when no document label exists anywhere near the marker should you fall back to a \
+  positional label such as `手書き1`, `手書き2`, `スタンプ1`.
 
 **Step 4-E: Multi-table and multi-section documents**
 When the OCR text contains multiple distinct tables or document sections (separated by ## \
@@ -2264,7 +2273,7 @@ Output ONLY a valid JSON object with this exact structure. The header_columns ar
   "header_columns": [
     {{
       "column_name": "<UPPERCASE_COLUMN_NAME>",
-      "comment": "<日本語ラベル（文書の原文ラベルをそのまま使用。ただし<HANDWRITTEN:…>/<STAMP:…>/<SIGNATURE>/<BARCODE:…>/<ILLEGIBLE>/<REDACTED>などの特殊OCRマーカーには周辺コンテキストから推測した日本語説明を使用すること。例: 手書き1、承認スタンプ、担当者サイン）>",
+      "comment": "<日本語キー（ラベル）。常に文書上のフィールド名（キー）を verbatim で使用すること。特殊OCRタグ（<HANDWRITTEN: text> / <STAMP: text> 等）のタグ内テキストは値データであり、キーではないため絶対に使用しない。例: OCRが「指定納期: <HANDWRITTEN: 11月16日>」の場合、commentは「指定納期」であり「11月16日」や「<HANDWRITTEN: 11月16日>」ではない。文書上にキーが存在しない場合のみ「手書き1」「スタンプ1」等の位置説明的名称を使用する>",
       "data_type": "<VARCHAR2|NUMBER|DATE|TIMESTAMP>",
       "data_length": <integer_or_null>,
       "is_nullable": <true|false>
