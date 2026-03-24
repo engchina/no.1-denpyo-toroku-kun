@@ -3939,8 +3939,10 @@ END;"""
                         [table_name_upper]
                     )
                     if int(cursor.fetchone()[0] or 0) == 0:
-                        return {"success": False, "message": "テーブルが存在しません",
-                                "table_name": table_name_upper, "columns": [], "rows": [], "total": 0}
+                        # 物理テーブルが存在しない場合は空データとして正常返却
+                        return {"success": True, "table_name": table_name_upper,
+                                "columns": [], "rows": [], "total": 0,
+                                "limit": limit, "offset": offset}
 
                     # 総件数取得
                     cursor.execute(f"SELECT COUNT(*) FROM {table_name_upper}")
@@ -3972,10 +3974,12 @@ END;"""
                     }
         except Exception as e:
             # ORA-00942: テーブルが存在しない（USER_TABLES確認後に削除されたレースコンディション含む）
+            # 物理テーブルが存在しない場合は空データとして正常返却
             if "ORA-00942" in str(e):
                 logger.warning("テーブルが存在しません (%s): %s", table_name_upper, e)
-                return {"success": False, "message": "テーブルが存在しません",
-                        "table_name": table_name_upper, "columns": [], "rows": [], "total": 0}
+                return {"success": True, "table_name": table_name_upper,
+                        "columns": [], "rows": [], "total": 0,
+                        "limit": limit, "offset": offset}
             logger.error("テーブルデータ取得エラー (%s): %s", table_name, e, exc_info=True)
             return {"success": False, "message": f"データ取得エラー: {str(e)}",
                     "table_name": table_name, "columns": [], "rows": [], "total": 0}
