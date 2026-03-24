@@ -61,6 +61,40 @@ load_env_if_present
 PID_FILE="${SERVICE_DIR}/gunicorn.pid"
 SOCK_FILE="${SERVICE_DIR}/denpyo_toroku.sock"
 LOG_DIR="${SERVICE_DIR}/log"
+PROC_NAME="denpyo_toroku_service"
+
+find_running_master_pids() {
+    ps -ef | awk -v proc_name="$PROC_NAME" '
+        index($0, "gunicorn: master [" proc_name "]") > 0 && $2 != "" { print $2 }
+    '
+}
+
+write_pid_file() {
+    local pid="$1"
+    if [ -n "$pid" ]; then
+        printf '%s
+' "$pid" > "$PID_FILE"
+    fi
+}
+
+stop_pid_if_running() {
+    local pid="$1"
+    if [ -z "$pid" ]; then
+        return 1
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+
+    kill -TERM "$pid"
+    sleep 2
+
+    if kill -0 "$pid" 2>/dev/null; then
+        log_warn "Forcing shutdown for PID $pid..."
+        kill -9 "$pid"
+    fi
+    return 0
+}
 
 # Start Gunicorn (daemon mode)
 start_gunicorn() {
@@ -68,7 +102,6 @@ start_gunicorn() {
     log_info "Starting Gunicorn (daemon mode)..."
     mkdir -p "$LOG_DIR"
 
-    # Check if already running
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
@@ -77,46 +110,74 @@ start_gunicorn() {
         fi
     fi
 
+    RUNNING_PIDS="$(find_running_master_pids)"
+    if [ -n "$RUNNING_PIDS" ]; then
+        PID="$(printf '%s
+' "$RUNNING_PIDS" | head -n 1)"
+        write_pid_file "$PID"
+        log_warn "Gunicorn master is already running but PID file was stale. Synced PID: $PID"
+        return 0
+    fi
+
     cd "$SERVICE_DIR"
     GUNICORN_DAEMON=true gunicorn -c "$GUNICORN_CONFIG" --pid "$PID_FILE" wsgi:app
 
     sleep 2
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            log_info "Gunicorn started (PID: $PID)"
+            log_info "Logs: $LOG_DIR/gunicorn.log"
+            return 0
+        fi
+    fi
+
+    RUNNING_PIDS="$(find_running_master_pids)"
+    if [ -n "$RUNNING_PIDS" ]; then
+        PID="$(printf '%s
+' "$RUNNING_PIDS" | head -n 1)"
+        write_pid_file "$PID"
         log_info "Gunicorn started (PID: $PID)"
         log_info "Logs: $LOG_DIR/gunicorn.log"
-    else
-        log_error "Failed to start Gunicorn"
-        exit 1
+        return 0
     fi
+
+    log_error "Failed to start Gunicorn"
+    exit 1
 }
 
 # Stop Gunicorn
 stop_gunicorn() {
     log_info "Stopping Gunicorn..."
+    stopped_any=0
 
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
-            kill -TERM "$PID"
-            sleep 2
-
-            # Force kill if still running
-            if kill -0 "$PID" 2>/dev/null; then
-                log_warn "Forcing shutdown..."
-                kill -9 "$PID"
-            fi
-
-            log_info "Gunicorn stopped"
+        if stop_pid_if_running "$PID"; then
+            stopped_any=1
+            log_info "Gunicorn stopped (PID: $PID)"
         else
-            log_warn "Gunicorn process not found (stale PID file)"
+            log_warn "Gunicorn process not found from PID file (stale PID file)"
         fi
         rm -f "$PID_FILE"
     else
-        log_warn "PID file not found, Gunicorn may not be running"
+        log_warn "PID file not found, scanning for running Gunicorn masters"
     fi
 
-    # Cleanup socket file
+    RUNNING_PIDS="$(find_running_master_pids)"
+    if [ -n "$RUNNING_PIDS" ]; then
+        for pid in $RUNNING_PIDS; do
+            if stop_pid_if_running "$pid"; then
+                stopped_any=1
+                log_info "Gunicorn stopped (discovered PID: $pid)"
+            fi
+        done
+    fi
+
+    if [ "$stopped_any" -eq 0 ]; then
+        log_warn "No running Gunicorn master process was found"
+    fi
+
     rm -f "$SOCK_FILE"
 }
 
@@ -134,14 +195,21 @@ status_gunicorn() {
         if kill -0 "$PID" 2>/dev/null; then
             log_info "Gunicorn is running (PID: $PID)"
             return 0
-        else
-            log_warn "Gunicorn PID file exists but process not running"
-            return 1
         fi
-    else
-        log_info "Gunicorn is not running"
-        return 1
+        log_warn "Gunicorn PID file exists but process not running"
     fi
+
+    RUNNING_PIDS="$(find_running_master_pids)"
+    if [ -n "$RUNNING_PIDS" ]; then
+        PID="$(printf '%s
+' "$RUNNING_PIDS" | head -n 1)"
+        write_pid_file "$PID"
+        log_warn "Recovered stale PID file. Gunicorn is running (PID: $PID)"
+        return 0
+    fi
+
+    log_info "Gunicorn is not running"
+    return 1
 }
 
 # View logs
