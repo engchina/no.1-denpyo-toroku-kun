@@ -986,9 +986,11 @@ END;"""
 
         def _replace(m: re.Match) -> str:
             orig = m.group(1).strip('"')
-            # 既に「TABLE_NAME_」で始まっていれば二重プレフィックスを避けてスキップ
-            if orig.upper().startswith(prefix):
-                return m.group(0)
+            normalized_orig = orig.upper()
+            # 既に「TABLE_NAME_」で始まっている場合も、長すぎる識別子は安全な長さへ正規化する
+            if normalized_orig.startswith(prefix):
+                safe_name = orig if len(orig) <= _MAX_IDENT else _make_name(orig[len(prefix):])
+                return f"CONSTRAINT {safe_name}"
             return f"CONSTRAINT {_make_name(orig)}"
 
         return re.sub(
@@ -2334,11 +2336,43 @@ END;"""
         return f"{base_name}-{type_code}"
 
     @staticmethod
+    def _build_table_scoped_object_name(
+        prefix: str,
+        table_name: str,
+        suffix: str = "",
+        *,
+        max_length: int = 128,
+    ) -> str:
+        normalized_prefix = re.sub(r"[^A-Z0-9_]+", "_", (prefix or "").strip().upper()).strip("_") or "OBJ"
+        normalized_table_name = re.sub(r"[^A-Z0-9_]+", "_", (table_name or "").strip().upper()).strip("_") or "DENPYO"
+        normalized_suffix = re.sub(r"[^A-Z0-9_]+", "_", (suffix or "").strip().upper()).strip("_")
+        digest_source = "::".join(part for part in (normalized_prefix, normalized_table_name, normalized_suffix) if part)
+        digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest().upper()[:8]
+
+        parts = [normalized_prefix, normalized_table_name, digest]
+        if normalized_suffix:
+            parts.append(normalized_suffix)
+        candidate = "_".join(parts)
+        if len(candidate) <= max_length:
+            return candidate
+
+        reserved_length = len(normalized_prefix) + len(digest) + 2
+        if normalized_suffix:
+            reserved_length += len(normalized_suffix) + 1
+        available_table_length = max(1, max_length - reserved_length)
+        trimmed_table_name = normalized_table_name[:available_table_length].rstrip("_") or normalized_table_name[:available_table_length]
+
+        trimmed_parts = [normalized_prefix, trimmed_table_name, digest]
+        if normalized_suffix:
+            trimmed_parts.append(normalized_suffix)
+        return "_".join(trimmed_parts)
+
+    @staticmethod
     def _build_id_immutability_trigger_ddl(table_name: str, id_column_name: str) -> str:
         if id_column_name not in _USER_TABLE_SYSTEM_ID_COLUMN_NAMES:
             raise ValueError(f"サポートされていないシステム列です: {id_column_name}")
         normalized_table_name = (table_name or "").strip().upper()
-        trigger_name = f"TRG_{normalized_table_name[:20]}_ID_IMM"
+        trigger_name = DatabaseService._build_table_scoped_object_name("TRG", normalized_table_name, "ID_IMM")
         return f"""
 CREATE OR REPLACE TRIGGER {trigger_name}
 BEFORE UPDATE OF {id_column_name} ON {normalized_table_name}

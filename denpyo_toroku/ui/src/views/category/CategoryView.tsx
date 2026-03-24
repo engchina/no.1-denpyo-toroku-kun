@@ -119,7 +119,7 @@ function buildDDLPreview(tableName: string, columns: TableColumnDef[]): string {
   });
   const pkCols = columns.filter(c => c.is_primary_key).map(c => c.column_name.toUpperCase());
   if (pkCols.length > 0) {
-    const pkName = `PK_${tableName.substring(0, 20).toUpperCase()}`;
+    const pkName = `PK_${tableName.toUpperCase()}`;
     colDefs.push(`    CONSTRAINT ${pkName} PRIMARY KEY (${pkCols.join(', ')})`);
   }
   return `CREATE TABLE ${tableName.toUpperCase()} (\n${colDefs.join(',\n')}\n)`;
