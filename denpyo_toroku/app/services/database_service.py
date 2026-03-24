@@ -1433,33 +1433,27 @@ END;"""
     # ── カテゴリ管理 ─────────────────────────────────
 
     def get_categories(self) -> List[Dict[str, Any]]:
-        """全カテゴリ一覧をDENPYO_REGISTRATIONS件数付きで取得"""
+        """全カテゴリ一覧を実テーブルの行数付きで取得"""
         if not self._ensure_management_tables():
             return []
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    # カテゴリ一覧とDENPYO_REGISTRATIONS件数を1クエリで結合取得
-                    # registration_count は delete_category の削除可否チェックと一致させるため
-                    # DENPYO_REGISTRATIONS を参照する（Oracle テーブル行数ではない）
                     cursor.execute(
                         """SELECT c.ID, c.CATEGORY_NAME, c.CATEGORY_NAME_EN,
                                   c.HEADER_TABLE_NAME, c.LINE_TABLE_NAME,
                                   c.DESCRIPTION, c.SELECT_AI_PROFILE_NAME, c.SELECT_AI_TEAM_NAME,
                                   c.SELECT_AI_READY, c.SELECT_AI_SYNCED_AT, c.SELECT_AI_CONFIG_HASH,
-                                  c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT,
-                                  COUNT(r.ID) AS REGISTRATION_COUNT
+                                  c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT
                         FROM DENPYO_CATEGORIES c
-                        LEFT JOIN DENPYO_REGISTRATIONS r ON r.CATEGORY_ID = c.ID
-                        GROUP BY c.ID, c.CATEGORY_NAME, c.CATEGORY_NAME_EN,
-                                 c.HEADER_TABLE_NAME, c.LINE_TABLE_NAME,
-                                 c.DESCRIPTION, c.SELECT_AI_PROFILE_NAME, c.SELECT_AI_TEAM_NAME,
-                                 c.SELECT_AI_READY, c.SELECT_AI_SYNCED_AT, c.SELECT_AI_CONFIG_HASH,
-                                 c.SELECT_AI_LAST_ERROR, c.IS_ACTIVE, c.CREATED_AT, c.UPDATED_AT
                         ORDER BY c.CREATED_AT DESC"""
                     )
                     categories = []
+                    header_table_names: List[str] = []
                     for row in cursor.fetchall():
+                        header_table_name = str(row[3] or "").strip().upper()
+                        if self._is_safe_table_name(header_table_name):
+                            header_table_names.append(header_table_name)
                         categories.append({
                             "id": row[0],
                             "category_name": row[1],
@@ -1476,8 +1470,13 @@ END;"""
                             "is_active": bool(row[12]),
                             "created_at": str(row[13]) if row[13] else "",
                             "updated_at": str(row[14]) if row[14] else "",
-                            "registration_count": int(row[15] or 0),
+                            "registration_count": 0,
                         })
+
+                    row_count_map = self._get_existing_table_row_counts(cursor, header_table_names)
+                    for category in categories:
+                        header_table_name = str(category.get("header_table_name") or "").strip().upper()
+                        category["registration_count"] = int(row_count_map.get(header_table_name, 0))
                     return categories
         except Exception as e:
             logger.error("カテゴリ一覧取得エラー: %s", e, exc_info=True)
@@ -1811,16 +1810,17 @@ END;"""
                     header_table_name = str(category_row[1] or "").strip().upper()
                     line_table_name = str(category_row[2] or "").strip().upper()
 
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM DENPYO_REGISTRATIONS WHERE CATEGORY_ID = :1",
-                        [category_id]
-                    )
-                    reg_count = cursor.fetchone()[0]
+                    reg_count = self._get_table_row_count_if_exists(cursor, header_table_name)
                     if reg_count > 0:
                         return {
                             "success": False,
                             "message": f"登録済みデータが {reg_count} 件あるため削除できません"
                         }
+
+                    cursor.execute(
+                        "DELETE FROM DENPYO_REGISTRATIONS WHERE CATEGORY_ID = :1",
+                        [category_id]
+                    )
 
                     dropped_tables: List[str] = []
                     for table_name in [line_table_name, header_table_name]:
@@ -1884,6 +1884,67 @@ END;"""
         except Exception as e:
             logger.error("カテゴリ削除エラー (id=%s): %s", category_id, e, exc_info=True)
             return {"success": False, "message": str(e)}
+
+    def _get_existing_table_row_counts(self, cursor, table_names: List[str]) -> Dict[str, int]:
+        """存在するユーザーテーブルの実行数を返す。未存在テーブルは 0 件扱い。"""
+        normalized_names: List[str] = []
+        seen_names = set()
+        for table_name in table_names:
+            normalized_name = str(table_name or "").strip().upper()
+            if not self._is_safe_table_name(normalized_name) or normalized_name in seen_names:
+                continue
+            seen_names.add(normalized_name)
+            normalized_names.append(normalized_name)
+
+        if not normalized_names:
+            return {}
+
+        bind_map = {f"tn{i}": name for i, name in enumerate(normalized_names)}
+        in_clause = ", ".join(f":tn{i}" for i in range(len(normalized_names)))
+
+        cursor.execute(
+            f"""SELECT TABLE_NAME
+                  FROM USER_TABLES
+                 WHERE TABLE_NAME IN ({in_clause})""",
+            bind_map,
+        )
+        existing_table_names = {
+            str(row[0] or "").strip().upper()
+            for row in cursor.fetchall()
+            if row and row[0]
+        }
+
+        row_count_map: Dict[str, int] = {}
+        for table_name in normalized_names:
+            if table_name not in existing_table_names:
+                row_count_map[table_name] = 0
+                continue
+            row_count_map[table_name] = self._get_table_row_count_if_exists(cursor, table_name)
+        return row_count_map
+
+    def _get_table_row_count_if_exists(self, cursor, table_name: str) -> int:
+        """対象テーブルが存在する場合のみ実行数を返す。未存在時は 0。"""
+        normalized_table_name = str(table_name or "").strip().upper()
+        if not self._is_safe_table_name(normalized_table_name):
+            return 0
+
+        cursor.execute(
+            "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1",
+            [normalized_table_name],
+        )
+        if int(cursor.fetchone()[0] or 0) == 0:
+            return 0
+
+        try:
+            cursor.execute(f"SELECT COUNT(*) FROM {normalized_table_name}")
+            count_row = cursor.fetchone()
+            return int(count_row[0] or 0) if count_row else 0
+        except Exception as e:
+            if self._is_missing_table_error(e):
+                logger.warning("テーブル行数取得時にテーブルが存在しません (%s): %s", normalized_table_name, e)
+                return 0
+            logger.warning("テーブル行数取得エラー (%s): %s", normalized_table_name, e)
+            return 0
 
     # ── カテゴリ作成フロー ──────────────────────────────
 
