@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import logging
 
 import pytest
 
@@ -242,6 +243,58 @@ def test_get_table_data_serializes_lob_and_memoryview_values(monkeypatch):
             "RAW_BYTES": "<BLOB 2 bytes>",
         }
     ]
+
+
+def test_get_table_data_returns_success_when_table_disappears_mid_query(monkeypatch, caplog):
+    service = DatabaseService()
+
+    class FakeCursor:
+        def execute(self, sql, params=None):
+            if sql == "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1":
+                return None
+            if sql == "SELECT COUNT(*) FROM RECEIPT_H":
+                raise RuntimeError(
+                    'ORA-00942: table or view "ADMIN"."RECEIPT_H" does not exist'
+                )
+            raise AssertionError(f'unexpected sql: {sql}')
+
+        def fetchone(self):
+            return (1,)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+    @contextmanager
+    def fake_get_connection():
+        yield FakeConnection()
+
+    monkeypatch.setattr(service, "get_connection", fake_get_connection)
+    monkeypatch.setattr(service, "_get_allowed_table_set", lambda: {"RECEIPT_H"})
+
+    with caplog.at_level(logging.WARNING, logger="denpyo_toroku.app.services.database_service"):
+        result = service.get_table_data("RECEIPT_H", limit=20, offset=40)
+
+    assert result == {
+        "success": True,
+        "table_name": "RECEIPT_H",
+        "columns": [],
+        "rows": [],
+        "total": 0,
+        "limit": 20,
+        "offset": 40,
+    }
+    assert any(
+        record.levelno == logging.WARNING and "テーブルが存在しません (RECEIPT_H)" in record.message
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 def test_delete_table_row_by_rowid_cascades_line_rows_when_deleting_header(monkeypatch):

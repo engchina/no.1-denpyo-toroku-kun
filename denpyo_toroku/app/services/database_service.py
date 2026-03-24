@@ -308,6 +308,14 @@ class DatabaseService:
         upper_message = message.upper()
         return "DPY-1002" in upper_message or "CONNECTION POOL IS NOT OPEN" in upper_message
 
+    @staticmethod
+    def _is_missing_table_error(error: Exception) -> bool:
+        message = str(error or "")
+        upper_message = message.upper()
+        return "ORA-00942" in upper_message or (
+            "TABLE OR VIEW" in upper_message and "DOES NOT EXIST" in upper_message
+        )
+
     def _parse_connection_string(self) -> Dict[str, str]:
         """環境変数から接続文字列をパース"""
         conn_str = os.environ.get("ORACLE_26AI_CONNECTION_STRING", "")
@@ -3975,7 +3983,7 @@ END;"""
         except Exception as e:
             # ORA-00942: テーブルが存在しない（USER_TABLES確認後に削除されたレースコンディション含む）
             # 物理テーブルが存在しない場合は空データとして正常返却
-            if "ORA-00942" in str(e):
+            if self._is_missing_table_error(e):
                 logger.warning("テーブルが存在しません (%s): %s", table_name_upper, e)
                 return {"success": True, "table_name": table_name_upper,
                         "columns": [], "rows": [], "total": 0,
@@ -4053,7 +4061,7 @@ END;"""
                 }
             return {"success": False, "message": "対象レコードが見つかりません"}
         except Exception as e:
-            if "ORA-00942" in str(e):
+            if self._is_missing_table_error(e):
                 logger.warning("テーブルが存在しません (%s): %s", table_name_upper, e)
                 return {"success": False, "message": "テーブルが存在しません"}
             logger.error("ROWID削除エラー (%s, %s): %s", table_name_upper, rowid, e, exc_info=True)
