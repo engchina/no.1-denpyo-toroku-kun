@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 import logging
+import re
 from contextlib import contextmanager
 
 import denpyo_toroku.app.services.database_service as database_service_module
@@ -190,7 +191,10 @@ def test_execute_ddl_wraps_trigger_ddl_in_execute_immediate(monkeypatch):
     assert result["success"] is True
     assert executed[0][1] is None
     assert executed[0][0].startswith("BEGIN EXECUTE IMMEDIATE q'")
-    assert "CREATE OR REPLACE TRIGGER TRG_RECEIPT_H_ID_IMM" in executed[0][0]
+    assert re.search(
+        r"CREATE OR REPLACE TRIGGER TRG_RECEIPT_H_[A-F0-9]{8}_ID_IMM",
+        executed[0][0],
+    )
     assert ":OLD.HEADER_ID" in executed[0][0]
     assert ":NEW.HEADER_ID" in executed[0][0]
     assert executed[1] == ("COMMIT", None)
