@@ -1075,9 +1075,11 @@ def test_get_categories_uses_header_table_row_counts(monkeypatch):
     class FakeCursor:
         def __init__(self):
             self._sql = ""
+            self._params = None
 
         def execute(self, sql, params=None):
             self._sql = sql
+            self._params = params
 
         def fetchall(self):
             if "FROM DENPYO_CATEGORIES c" in self._sql:
@@ -1091,11 +1093,16 @@ def test_get_categories_uses_header_table_row_counts(monkeypatch):
                         4, "領収書_4", "receipt_4", "RECEIPT_H_4", "",
                         "", "", "", 0, None, "",
                         "", 1, "2026-03-08 17:00:00", "2026-03-08 17:25:52",
-                    ),
-                ]
+                        ),
+                    ]
+            if "FROM USER_TABLES" in self._sql:
+                return [("RECEIPT_H_5",), ("RECEIPT_H_4",)]
             return []
 
         def fetchone(self):
+            if "SELECT COUNT(*) FROM USER_TABLES" in self._sql:
+                table_name = (self._params or [""])[0]
+                return (1 if table_name in ("RECEIPT_H_5", "RECEIPT_H_4") else 0,)
             if "SELECT COUNT(*) FROM RECEIPT_H_5" in self._sql:
                 return (7,)
             if "SELECT COUNT(*) FROM RECEIPT_H_4" in self._sql:
@@ -1203,6 +1210,9 @@ def test_delete_category_succeeds_when_physical_table_is_missing(monkeypatch, ca
                 return
             if normalized_sql == "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1":
                 self._fetchone_result = (0,)
+                return
+            if normalized_sql == "DELETE FROM DENPYO_REGISTRATIONS WHERE CATEGORY_ID = :1":
+                self.rowcount = 0
                 return
             if normalized_sql == "DELETE FROM DENPYO_CATEGORIES WHERE ID = :1":
                 self.rowcount = 1

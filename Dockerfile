@@ -1,4 +1,4 @@
-# Denpyo Toroku Service
+# お任せ！伝ぴょん
 # Based on Oracle Linux 8 (reference architecture pattern)
 FROM container-registry.oracle.com/os/oraclelinux:8
 

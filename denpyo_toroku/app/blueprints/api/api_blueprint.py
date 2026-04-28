@@ -39,12 +39,12 @@ api_blueprint = Blueprint("api_blueprint", __name__)
 if Counter is not None and Histogram is not None:
     REQUEST_COUNT = Counter(
         "denpyo_toroku_http_requests_total",
-        "Total HTTP requests handled by Denpyo Toroku API",
+        "Total HTTP requests handled by お任せ！伝ぴょん API",
         ["method", "endpoint", "status_code"],
     )
     REQUEST_LATENCY_SECONDS = Histogram(
         "denpyo_toroku_http_request_duration_seconds",
-        "HTTP request latency in seconds for Denpyo Toroku API",
+        "HTTP request latency in seconds for お任せ！伝ぴょん API",
         ["method", "endpoint"],
     )
 else:
@@ -137,6 +137,155 @@ def _to_optional_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _sanitize_training_items(items: Any):
+    accepted = []
+    stats = {
+        "empty_text_count": 0,
+        "missing_field_count": 0,
+        "invalid_item_count": 0,
+    }
+    if not isinstance(items, list):
+        stats["invalid_item_count"] += 1
+        return accepted, stats
+
+    for item in items:
+        if not isinstance(item, dict):
+            stats["invalid_item_count"] += 1
+            continue
+        if "text" not in item or "label" not in item:
+            stats["missing_field_count"] += 1
+            continue
+
+        text = _normalize_text(item.get("text"))
+        label = _normalize_text(item.get("label"))
+        if not text:
+            stats["empty_text_count"] += 1
+            continue
+        if not label:
+            stats["missing_field_count"] += 1
+            continue
+
+        accepted.append({"text": text, "label": label})
+
+    return accepted, stats
+
+
+def _build_training_profile(items: Any) -> Dict[str, Any]:
+    sanitized, sanitize_stats = _sanitize_training_items(items)
+    total_samples = len(sanitized)
+    class_counts: Dict[str, int] = {}
+    for item in sanitized:
+        label = item["label"]
+        class_counts[label] = class_counts.get(label, 0) + 1
+
+    num_classes = len(class_counts)
+    largest_class_count = max(class_counts.values()) if class_counts else 0
+    smallest_class_count = min(class_counts.values()) if class_counts else 0
+    imbalance_ratio = (
+        round(largest_class_count / smallest_class_count, 2)
+        if smallest_class_count > 0
+        else 0.0
+    )
+
+    issue_details = []
+    if total_samples < 20:
+        issue_details.append({
+            "level": "error",
+            "code": "too_few_samples",
+            "message": "Training data should contain at least 20 samples.",
+        })
+    if num_classes < 2:
+        issue_details.append({
+            "level": "error",
+            "code": "too_few_classes",
+            "message": "Training data should contain at least 2 classes.",
+        })
+    if smallest_class_count and smallest_class_count < 2:
+        issue_details.append({
+            "level": "error",
+            "code": "too_few_samples_per_class",
+            "message": "Every class should contain at least 2 samples.",
+        })
+    if imbalance_ratio >= 3:
+        issue_details.append({
+            "level": "warning",
+            "code": "class_imbalance",
+            "message": "Training data is imbalanced across classes.",
+        })
+
+    quality_gate_passed = not any(issue["level"] == "error" for issue in issue_details)
+    health_score = 100
+    health_score -= 25 * sum(1 for issue in issue_details if issue["level"] == "error")
+    health_score -= 15 * sum(1 for issue in issue_details if issue["level"] == "warning")
+    health_score -= sanitize_stats["invalid_item_count"] * 5
+    health_score -= sanitize_stats["missing_field_count"] * 5
+    health_score -= sanitize_stats["empty_text_count"] * 5
+    health_score = max(0, min(100, health_score))
+
+    if health_score >= 85 and quality_gate_passed:
+        readiness = "high"
+    elif health_score >= 60 and quality_gate_passed:
+        readiness = "medium"
+    else:
+        readiness = "low"
+
+    test_size = 0.2
+    if total_samples < 50:
+        test_size = 0.3
+    elif total_samples >= 200:
+        test_size = 0.15
+
+    return {
+        "total_samples": total_samples,
+        "num_classes": num_classes,
+        "class_counts": class_counts,
+        "largest_class_count": largest_class_count,
+        "smallest_class_count": smallest_class_count,
+        "imbalance_ratio": imbalance_ratio,
+        "quality_gate_passed": quality_gate_passed,
+        "readiness": readiness,
+        "health_score": health_score,
+        "issue_details": issue_details,
+        "sanitize_stats": sanitize_stats,
+        "suggested_params": {
+            "test_size": min(0.40, max(0.05, test_size)),
+            "rebalance_strategy": "balanced_upsample" if imbalance_ratio >= 3 else "none",
+        },
+    }
+
+
+def _build_model_comparison(previous_metrics: Any, current_metrics: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(previous_metrics, dict) or not isinstance(current_metrics, dict):
+        return None
+
+    metric_keys = (
+        "test_accuracy",
+        "test_macro_f1",
+        "overfitting_gap",
+        "selection_score",
+    )
+    comparison: Dict[str, Any] = {}
+    for key in metric_keys:
+        previous_value = previous_metrics.get(key)
+        current_value = current_metrics.get(key)
+        if previous_value is None or current_value is None:
+            continue
+        try:
+            comparison[f"{key}_delta"] = round(float(current_value) - float(previous_value), 6)
+        except (TypeError, ValueError):
+            continue
+
+    score_delta = comparison.get("selection_score_delta", 0)
+    accuracy_delta = comparison.get("test_accuracy_delta", 0)
+    macro_f1_delta = comparison.get("test_macro_f1_delta", 0)
+    overfitting_delta = comparison.get("overfitting_gap_delta", 0)
+    comparison["improved"] = (
+        score_delta > 0
+        or (accuracy_delta > 0 and macro_f1_delta > 0 and overfitting_delta <= 0)
+    )
+    return comparison
 
 
 def _is_session_authenticated() -> bool:
@@ -2741,7 +2890,7 @@ def reset_prompt_settings():
 def get_version():
     """Version endpoint."""
     g.response.set_data({
-        "service": "Denpyo Toroku Service",
+        "service": "お任せ！伝ぴょん",
         "version": "1.0.0",
         "status": "running",
         "endpoints": {
@@ -2769,7 +2918,7 @@ def health_check():
     """Health check endpoint."""
     g.response.set_data({
         "status": "healthy",
-        "message": "Denpyo Toroku Service is running",
+        "message": "お任せ！伝ぴょん is running",
         "version": "1.0.0"
     })
     return jsonify(g.response.get_result())

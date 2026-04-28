@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Gunicorn configuration for Denpyo Toroku Service
+Gunicorn configuration for お任せ！伝ぴょん
 
 Based on reference architecture (ahf_service gunicorn_config pattern).
 Uses Unix socket binding with gevent worker class.

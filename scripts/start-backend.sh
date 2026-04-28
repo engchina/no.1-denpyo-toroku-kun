@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Denpyo Toroku Service - Backend Startup Script
+# お任せ！伝ぴょん - Backend Startup Script
 # Runs Gunicorn in foreground mode (logs visible in terminal)
 
 set -e

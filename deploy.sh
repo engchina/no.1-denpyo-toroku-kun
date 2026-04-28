@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Denpyo Toroku Service - Deploy Script
+# お任せ！伝ぴょん - Deploy Script
 # Usage: ./deploy.sh [start|stop|restart|status|logs]
 
 set -e
@@ -43,7 +43,7 @@ check_environment() {
 
 # Start service
 start_service() {
-    log_info "Starting Denpyo Toroku Service..."
+    log_info "Starting お任せ！伝ぴょん..."
     setup_directories
     check_environment
 
@@ -76,7 +76,7 @@ start_service() {
 
 # Stop service
 stop_service() {
-    log_info "Stopping Denpyo Toroku Service..."
+    log_info "Stopping お任せ！伝ぴょん..."
     cd "$BASE_DIR"
     if [ -z "$DOCKER_COMPOSE_CMD" ]; then
         if ! DOCKER_COMPOSE_CMD="$(docker_compose_cmd)"; then
@@ -90,7 +90,7 @@ stop_service() {
 
 # Restart service
 restart_service() {
-    log_info "Restarting Denpyo Toroku Service..."
+    log_info "Restarting お任せ！伝ぴょん..."
     stop_service
     sleep 2
     start_service

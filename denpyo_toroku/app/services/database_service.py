@@ -198,7 +198,7 @@ _SELECT_AI_TEAM_PREFIX = "DTAITM_"
 _SELECT_AI_MAX_IDENTIFIER_LENGTH = 30
 _SELECT_AI_DEFAULT_RESPONSE_LANGUAGE = "日本語"
 _SELECT_AI_AGENT_ROLE = (
-    "You are the Denpyo registration application's Oracle data search agent. "
+    "You are the Oracle data search agent for お任せ！伝ぴょん. "
     "Translate user questions into one safe Oracle SELECT statement by using the SQL tool. "
     "Never invent tables or columns."
 )
@@ -2346,16 +2346,16 @@ END;"""
         normalized_prefix = re.sub(r"[^A-Z0-9_]+", "_", (prefix or "").strip().upper()).strip("_") or "OBJ"
         normalized_table_name = re.sub(r"[^A-Z0-9_]+", "_", (table_name or "").strip().upper()).strip("_") or "DENPYO"
         normalized_suffix = re.sub(r"[^A-Z0-9_]+", "_", (suffix or "").strip().upper()).strip("_")
-        digest_source = "::".join(part for part in (normalized_prefix, normalized_table_name, normalized_suffix) if part)
-        digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest().upper()[:8]
 
-        parts = [normalized_prefix, normalized_table_name, digest]
+        simple_parts = [normalized_prefix, normalized_table_name]
         if normalized_suffix:
-            parts.append(normalized_suffix)
-        candidate = "_".join(parts)
+            simple_parts.append(normalized_suffix)
+        candidate = "_".join(simple_parts)
         if len(candidate) <= max_length:
             return candidate
 
+        digest_source = "::".join(part for part in (normalized_prefix, normalized_table_name, normalized_suffix) if part)
+        digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest().upper()[:8]
         reserved_length = len(normalized_prefix) + len(digest) + 2
         if normalized_suffix:
             reserved_length += len(normalized_suffix) + 1

@@ -119,9 +119,9 @@ def test_get_table_data_keeps_row_id_meta_and_hides_internal_rid(monkeypatch):
         {"ROW_ID_META": "CCCDDD==", "ID": "ID-002", "FILE_NAME": "sample-2.png"},
     ]
     assert "RID" not in result["rows"][0]
-    assert "FROM USER_CONSTRAINTS" in executed[1][0]
-    assert "ORDER BY t.ID" in executed[2][0]
-    assert "ROWIDTOCHAR(t.ROWID) AS ROW_ID_META" in executed[2][0]
+    assert "FROM USER_CONSTRAINTS" in executed[2][0]
+    assert "ORDER BY t.ID" in executed[3][0]
+    assert "ROWIDTOCHAR(t.ROWID) AS ROW_ID_META" in executed[3][0]
 
 
 def test_get_table_data_orders_by_header_id_primary_key(monkeypatch):
@@ -177,7 +177,7 @@ def test_get_table_data_orders_by_header_id_primary_key(monkeypatch):
     assert result["rows"] == [
         {"ROW_ID_META": "AAABBB==", "HEADER_ID": "HDR-001", "TENPOU_MEI": "本店"},
     ]
-    assert "ORDER BY t.HEADER_ID" in executed[2][0]
+    assert "ORDER BY t.HEADER_ID" in executed[3][0]
 
 
 def test_get_table_data_serializes_lob_and_memoryview_values(monkeypatch):
@@ -313,6 +313,8 @@ def test_delete_table_row_by_rowid_cascades_line_rows_when_deleting_header(monke
             if normalized_sql.startswith("SELECT HEADER_ID FROM RECEIPT_H"):
                 self._fetchone_result = ("HDR-001",)
                 self.rowcount = 1
+            elif normalized_sql == "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1":
+                self._fetchone_result = (1,)
             elif normalized_sql.startswith("DELETE FROM RECEIPT_L"):
                 self.rowcount = 2
             elif normalized_sql.startswith("DELETE FROM RECEIPT_H"):
@@ -366,6 +368,7 @@ def test_delete_table_row_by_rowid_cascades_line_rows_when_deleting_header(monke
     assert commit_calls == [True]
     assert executed == [
         ("SELECT HEADER_ID FROM RECEIPT_H WHERE ROWID = CHARTOROWID(:rid)", {"rid": "AAABBB=="}),
+        ("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = :1", ["RECEIPT_L"]),
         ("DELETE FROM RECEIPT_L WHERE HEADER_ID = :header_id", {"header_id": "HDR-001"}),
         ("DELETE FROM RECEIPT_H WHERE ROWID = CHARTOROWID(:rid)", {"rid": "AAABBB=="}),
     ]

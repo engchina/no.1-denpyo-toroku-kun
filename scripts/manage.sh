@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Denpyo Toroku Service - Gunicorn Management Script
+# お任せ！伝ぴょん - Gunicorn Management Script
 # Usage: ./manage.sh [start|stop|restart|status]
 # Manages the Gunicorn process (daemon mode)
 

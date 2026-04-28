@@ -1,7 +1,7 @@
 {
     "name": "denpyo-toroku-ui",
     "version": "1.0.0",
-    "description": "Denpyo Toroku Service - Oracle JET 18.0.3 VDOM Frontend",
+    "description": "お任せ！伝ぴょん - Oracle JET 18.0.3 VDOM Frontend",
     "private": true,
     "dependencies": {
         "@oracle/oraclejet": "18.0.3",

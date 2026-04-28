@@ -447,7 +447,7 @@ fi
 # Setup no.1-denpyo-toroku-kun project
 PROJECT_DIR="${INSTALL_DIR}/no.1-denpyo-toroku-kun"
 if [ -d "$PROJECT_DIR" ]; then
-    echo "伝票登録くんプロジェクトをセットアップ中..."
+    echo "お任せ！伝ぴょんプロジェクトをセットアップ中..."
     cd "$PROJECT_DIR"
     
     # Make scripts executable
@@ -636,13 +636,13 @@ export TNS_ADMIN="${ORACLE_CLIENT_LIB_DIR}/network/admin"
 export LD_LIBRARY_PATH="${ORACLE_CLIENT_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 export PATH="${ORACLE_CLIENT_LIB_DIR}:$PATH"
 
-echo "伝票登録くんバックエンドサービスを起動中..."
+echo "お任せ！伝ぴょんバックエンドサービスを起動中..."
 # Gunicornで起動 (gunicorn_config.py にbind/chdir/wsgi_app設定あり)
 nohup .venv/bin/gunicorn -c gunicorn_config/gunicorn_config.py > /var/log/app-backend.log 2>&1 &
 
 sleep 5
 
-echo "伝票登録くんサービスが起動しました。"
+echo "お任せ！伝ぴょんサービスが起動しました。"
 EOF
 
 chmod +x "${INSTALL_DIR}/start_denpyo_toroku_services.sh"
@@ -653,7 +653,7 @@ CRON_CMD="@reboot ${INSTALL_DIR}/start_denpyo_toroku_services.sh"
 (crontab -l 2>/dev/null | grep -v "$CRON_CMD" || true; echo "$CRON_CMD") | crontab -
 
 # Start services
-echo "伝票登録くんサービスを起動中..."
+echo "お任せ！伝ぴょんサービスを起動中..."
 "${INSTALL_DIR}/start_denpyo_toroku_services.sh"
 
 echo "初期化が完了しました。"

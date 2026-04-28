@@ -8,7 +8,7 @@
 'use strict';
 
 /**
- * RequireJS bootstrap for Denpyo Toroku Service
+ * RequireJS bootstrap for お任せ！伝ぴょん
  * Uses Oracle JET CDN for all library dependencies.
  * CDN bundles-config.js (loaded before this file) defines all paths and bundles.
  * Only baseUrl needs to be set here.

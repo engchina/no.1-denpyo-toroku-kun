@@ -10,7 +10,7 @@ const initialState: ApplicationGlobalType = {
   isDrawerOpen: false,
   isSidebarCollapsed: false,
   userName: 'hello@oracle.com',
-  appTitle: 'AI Database Private Agent Factory'
+  appTitle: 'お任せ！伝ぴょん'
 };
 
 const applicationSlice = createSlice({

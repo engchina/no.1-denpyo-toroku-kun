@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Denpyo Toroku Service - Frontend Startup Script
+# お任せ！伝ぴょん - Frontend Startup Script
 # Runs Oracle JET development server in foreground mode
 
 set -e

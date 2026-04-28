@@ -170,7 +170,7 @@ def test_natural_language_search_falls_back_to_direct_llm_when_select_ai_agent_f
                 "message": 'ORA-00904: "TEAM_NAME": invalid identifier',
             }
 
-        def get_table_columns(self, table_name):
+        def get_table_columns(self, table_name, **kwargs):
             calls["get_table_columns"].append(table_name)
             return [
                 {
@@ -194,7 +194,7 @@ def test_natural_language_search_falls_back_to_direct_llm_when_select_ai_agent_f
             }
 
     class StubAIService:
-        def text_to_sql(self, query, table_schemas):
+        def text_to_sql(self, query, table_schemas, **kwargs):
             calls["text_to_sql"] += 1
             assert query == "最新の領収書を1件表示"
             assert table_schemas == [
@@ -278,7 +278,7 @@ def test_natural_language_search_falls_back_to_direct_llm_on_select_ai_endpoint_
                 "fallback_to_direct_llm": True,
             }
 
-        def get_table_columns(self, table_name):
+        def get_table_columns(self, table_name, **kwargs):
             return [
                 {
                     "column_name": "HEADER_ID",
@@ -297,7 +297,7 @@ def test_natural_language_search_falls_back_to_direct_llm_on_select_ai_endpoint_
             }
 
     class StubAIService:
-        def text_to_sql(self, query, table_schemas):
+        def text_to_sql(self, query, table_schemas, **kwargs):
             calls["text_to_sql"] += 1
             return {
                 "success": True,

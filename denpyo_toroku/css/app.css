@@ -1,5 +1,5 @@
 /*
-    Denpyo Toroku Service - Application Styles
+    お任せ！伝ぴょん - Application Styles
     Based on Oracle JET Redwood Theme
 */
 
@@ -12,9 +12,13 @@
     overflow: hidden;
 }
 
-.demo-oracle-icon {
-    width: 137px;
-    height: 18px;
+.legacy-app-brand-icon {
+    display: block;
+    flex: 0 0 auto;
+    width: 64px;
+    height: 36px;
+    margin-right: 8px;
+    object-fit: contain;
 }
 
 .demo-appheader-avatar {

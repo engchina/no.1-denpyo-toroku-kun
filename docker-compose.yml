@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Denpyo Toroku Service
+  # お任せ！伝ぴょん
   denpyo-toroku:
     build: .
     container_name: denpyo-toroku-service

@@ -32,7 +32,7 @@ output "ssh_to_instance" {
 }
 
 output "application_url" {
-  description = "URL to access the Denpyo Toroku application"
+  description = "URL to access the お任せ！伝ぴょん application"
   value       = "http://${local.instance_access_ip}"
 }
 

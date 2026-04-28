@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Denpyo Toroku Service - Quick Restart Script
+# お任せ！伝ぴょん - Quick Restart Script
 # Usage: ./scripts/restart.sh
 
 set -e

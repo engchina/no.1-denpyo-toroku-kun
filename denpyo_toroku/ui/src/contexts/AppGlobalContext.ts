@@ -10,5 +10,5 @@ export const AppGlobalContext = createContext<ApplicationGlobalType>({
   isDrawerOpen: false,
   isSidebarCollapsed: false,
   userName: 'developer@oracle.com',
-  appTitle: '伝票登録くん'
+  appTitle: 'お任せ！伝ぴょん'
 });

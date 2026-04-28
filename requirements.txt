@@ -1,4 +1,4 @@
-# Denpyo Toroku Service - Dependencies
+# お任せ！伝ぴょん - Dependencies
 # Flask + Gunicorn backend with OCI GenAI / OCR / Database integration
 
 # Web Framework

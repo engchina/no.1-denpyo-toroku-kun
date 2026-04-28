@@ -9,6 +9,11 @@ declare module '*.styles.css' {
   export default content;
 }
 
+declare module '*.png' {
+  const src: string;
+  export default src;
+}
+
 // Ensure @oracle/oraclejet-preact subpath imports resolve
 declare module '@oracle/oraclejet-preact/UNSAFE_Button' {
   export { Button } from '@oracle/oraclejet-preact/UNSAFE_Button/index';

@@ -1,4 +1,4 @@
-# 伝票登録くん
+# お任せ！伝ぴょん
 
 OCI GenAI (VLM / LLM / Embedding) と Oracle Autonomous Database を活用した伝票登録サービス。
 Flask / Gunicorn バックエンドと Oracle JET (Redwood) フロントエンドで構成。
@@ -409,7 +409,7 @@ curl -s http://localhost:8080/api/v1/health | python3 -m json.tool
 {
     "data": {
         "status": "healthy",
-        "message": "Denpyo Toroku Service is running",
+        "message": "お任せ！伝ぴょん is running",
         "version": "1.0.0"
     }
 }
