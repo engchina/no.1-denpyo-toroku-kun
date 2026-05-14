@@ -692,7 +692,7 @@ class AIService:
         self._client = None
         self._region = os.environ.get("OCI_REGION", "ap-osaka-1")
         self._compartment_id = os.environ.get("OCI_CONFIG_COMPARTMENT", "")
-        self._llm_model_id = os.environ.get("LLM_MODEL_ID", "xai.grok-4-1-fast-reasoning")
+        self._llm_model_id = os.environ.get("LLM_MODEL_ID", "xai.grok-4.3")
         self._vlm_model_id = os.environ.get("VLM_MODEL_ID", "google.gemini-2.5-pro")
         self._max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "128000"))
         self._vlm_max_tokens = int(os.environ.get("VLM_MAX_TOKENS", "63356"))

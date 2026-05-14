@@ -48,7 +48,7 @@ Oracle Autonomous Database (Select AI) を活用した自然言語検索機能�
 │  │  └─ Global error handler                      │
 │  ├─ AI Service                                   │
 │  │  ├─ VLM: google.gemini-2.5-pro (OCR/解析)    │
-│  │  ├─ LLM: xai.grok-4-1-fast-reasoning (構造化)│
+│  │  ├─ LLM: xai.grok-4.3 (構造化)               │
 │  │  └─ OCI GenAI Embedding (cohere.embed-v4.0)   │
 │  ├─ Database Service                             │
 │  │  ├─ 伝票・分類・設定データ管理                 │
@@ -285,7 +285,7 @@ export OCI_CONFIG_COMPARTMENT=ocid1.compartment.oc1..xxxxx  # 自身の Compartm
 export OCI_REGION=ap-osaka-1
 export OCI_SERVICE_ENDPOINT=https://inference.generativeai.us-chicago-1.oci.oraclecloud.com
 export VLM_MODEL_ID=google.gemini-2.5-pro
-export LLM_MODEL_ID=xai.grok-4-1-fast-reasoning
+export LLM_MODEL_ID=xai.grok-4.3
 export EMBEDDING_MODEL_ID=cohere.embed-v4.0
 export LOG_LEVEL=INFO
 ```
@@ -573,7 +573,7 @@ python scripts/client_example.py
 | 変数名 | デフォルト値 | 説明 |
 |--------|-------------|------|
 | `VLM_MODEL_ID` | `google.gemini-2.5-pro` | 画像解析モデル (VLM) |
-| `LLM_MODEL_ID` | `xai.grok-4-1-fast-reasoning` | テキスト処理モデル (LLM) |
+| `LLM_MODEL_ID` | `xai.grok-4.3` | テキスト処理モデル (LLM) |
 | `EMBEDDING_MODEL_ID` | `cohere.embed-v4.0` | Embedding モデル ID |
 | `LLM_MAX_TOKENS` | `65536` | LLM 最大トークン数 |
 | `LLM_TEMPERATURE` | `0.0` | LLM 温度パラメータ |
@@ -588,7 +588,7 @@ python scripts/client_example.py
 |--------|-------------|------|
 | `SELECT_AI_ENABLED` | `true` | Select AI 機能の有効/無効 |
 | `SELECT_AI_REGION` | `us-chicago-1` | Select AI 使用リージョン |
-| `SELECT_AI_MODEL_ID` | `xai.grok-4-1-fast-reasoning` | Select AI 使用モデル |
+| `SELECT_AI_MODEL_ID` | `xai.grok-4.3` | Select AI 使用モデル |
 | `SELECT_AI_EMBEDDING_MODEL_ID` | (`EMBEDDING_MODEL_ID` と同じ) | Select AI Embedding モデル |
 | `SELECT_AI_MAX_TOKENS` | `32768` | Select AI 最大トークン数 |
 | `SELECT_AI_ENDPOINT_ID` | (空) | Select AI エンドポイント ID |
